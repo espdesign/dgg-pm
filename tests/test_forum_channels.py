@@ -22,18 +22,20 @@ def _create_mock_tag(tag_id: int, name: str) -> MagicMock:
 
 
 def test_resolve_forum_tags_matching():
-    """Verify resolve_forum_tags correctly matches status and priority tags while preserving custom tags."""
+    """Verify resolve_forum_tags correctly matches status, priority, and unassigned tags."""
     mock_forum = MagicMock(spec=discord.ForumChannel)
     tag_todo = _create_mock_tag(1, "To Do")
     tag_wip = _create_mock_tag(2, "In Progress")
     tag_done = _create_mock_tag(3, "Completed")
     tag_high = _create_mock_tag(4, "🔴 High Priority")
     tag_norm = _create_mock_tag(5, "🟡 Normal")
-    tag_custom = _create_mock_tag(6, "Backend")
+    tag_unassigned = _create_mock_tag(6, "👤 Unassigned")
+    tag_custom = _create_mock_tag(7, "Backend")
 
-    mock_forum.available_tags = [tag_todo, tag_wip, tag_done, tag_high, tag_norm, tag_custom]
+    mock_forum.available_tags = [tag_todo, tag_wip, tag_done, tag_high, tag_norm, tag_unassigned, tag_custom]
 
-    task = Task(
+    # 1. Unassigned task (assignee_discord_id is None)
+    task_unassigned = Task(
         id=uuid4(),
         short_id="AUTH-1",
         guild_id=12345,
@@ -41,14 +43,32 @@ def test_resolve_forum_tags_matching():
         creator_discord_id=1001,
         status=TaskStatus.IN_PROGRESS,
         priority=PriorityLevel.HIGH,
+        assignee_discord_id=None,
     )
 
-    # Resolve with custom tag preserved
-    tags = resolve_forum_tags(mock_forum, task, existing_tags=[tag_custom, tag_todo])
+    tags = resolve_forum_tags(mock_forum, task_unassigned, existing_tags=[tag_custom, tag_todo])
     assert tag_wip in tags
     assert tag_high in tags
+    assert tag_unassigned in tags
     assert tag_custom in tags
     assert tag_todo not in tags  # Old status tag replaced
+
+    # 2. Assigned task (assignee_discord_id is set) -> Unassigned tag is removed
+    task_assigned = Task(
+        id=uuid4(),
+        short_id="AUTH-1",
+        guild_id=12345,
+        title="Implement Auth",
+        creator_discord_id=1001,
+        status=TaskStatus.IN_PROGRESS,
+        priority=PriorityLevel.HIGH,
+        assignee_discord_id=9999,
+    )
+    tags_assigned = resolve_forum_tags(mock_forum, task_assigned, existing_tags=[tag_unassigned, tag_custom])
+    assert tag_unassigned not in tags_assigned
+    assert tag_wip in tags_assigned
+    assert tag_high in tags_assigned
+    assert tag_custom in tags_assigned
 
 
 @pytest.mark.asyncio

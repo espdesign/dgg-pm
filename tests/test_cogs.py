@@ -415,3 +415,34 @@ async def test_settings_cog_my_settings(services):
 
     pref = await user_srv.get_preference(123456789, 987654321)
     assert pref == NotificationPreference.BOTH
+
+
+def test_seed_script_production_safety_guards(monkeypatch):
+    """Verify check_production_safety_guard blocks execution in unsafe environments."""
+    from scripts.seed_dev_data import check_production_safety_guard
+    from src.config import settings
+
+    # 1. Blocks if ENVIRONMENT is production
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    with pytest.raises(RuntimeError, match="cannot be run in production"):
+        check_production_safety_guard(1543430283250901023)
+
+    # 2. Blocks if DISCORD_GUILD_ID is not configured
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(settings, "DISCORD_GUILD_ID", None)
+    with pytest.raises(RuntimeError, match="requires DISCORD_GUILD_ID"):
+        check_production_safety_guard(1543430283250901023)
+
+    # 3. Blocks if target guild does not match dev guild
+    monkeypatch.setattr(settings, "DISCORD_GUILD_ID", 1543430283250901023)
+    with pytest.raises(RuntimeError, match="does not match configured dev guild"):
+        check_production_safety_guard(999999999999999999)
+
+    # 4. Blocks if DATABASE_URL points to a production cloud database
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+asyncpg://postgres:pass@production-db.rds.amazonaws.com:5432/dgg_pm",
+    )
+    with pytest.raises(RuntimeError, match="appears to point to a production/cloud database"):
+        check_production_safety_guard(1543430283250901023)

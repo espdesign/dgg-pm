@@ -280,6 +280,8 @@ class TaskCog(commands.Cog):
             embed = build_task_embed(updated_task)
             if hasattr(self.bot, "sync_root_task_message"):
                 await self.bot.sync_root_task_message(updated_task)
+            if hasattr(self.bot, "sync_task_thread"):
+                await self.bot.sync_task_thread(updated_task)
             await interaction.followup.send(f"✅ {msg}", embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 

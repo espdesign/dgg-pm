@@ -25,6 +25,8 @@ PRIORITY_KEYWORDS = {
     PriorityLevel.LOW: ["low", "minor", "p3", "low priority", "p:low"],
 }
 
+UNASSIGNED_KEYWORDS = ["unassigned", "not assigned", "un-assigned", "no assignee", "needs assignee"]
+
 STANDARD_PM_TAG_DEFINITIONS = [
     {"name": "Not Started", "emoji": "⏳", "keywords": ["not started", "to do", "todo", "backlog", "open"]},
     {"name": "In Progress", "emoji": "🟡", "keywords": ["in progress", "doing", "active", "wip", "in-progress"]},
@@ -36,6 +38,11 @@ STANDARD_PM_TAG_DEFINITIONS = [
     },
     {"name": "Normal Priority", "emoji": "🟡", "keywords": ["normal", "medium", "p2", "normal priority", "p:normal"]},
     {"name": "Low Priority", "emoji": "🟢", "keywords": ["low", "minor", "p3", "low priority", "p:low"]},
+    {
+        "name": "Unassigned",
+        "emoji": "👤",
+        "keywords": UNASSIGNED_KEYWORDS,
+    },
     {"name": "Bug", "emoji": "🐛", "keywords": ["bug", "defect", "fix", "issue"]},
     {"name": "Feature", "emoji": "✨", "keywords": ["feature", "feat", "enhancement"]},
     {"name": "Task", "emoji": "🔧", "keywords": ["task", "chore", "infra"]},
@@ -58,11 +65,12 @@ def resolve_forum_tags(
     *,
     status: TaskStatus | None = None,
     priority: PriorityLevel | None = None,
+    is_unassigned: bool | None = None,
     existing_tags: list[discord.ForumTag] | None = None,
 ) -> list[discord.ForumTag]:
-    """Finds matching ForumTag objects for a task's status and priority.
+    """Finds matching ForumTag objects for a task's status, priority, and unassigned state.
 
-    Preserves any non-status and non-priority custom tags already applied on the thread
+    Preserves any non-status/priority/unassigned custom tags already applied on the thread
     (up to Discord's maximum limit of 5 applied tags per thread).
     """
     if not hasattr(forum_channel, "available_tags") or not forum_channel.available_tags:
@@ -71,9 +79,12 @@ def resolve_forum_tags(
     if task is not None:
         status = status or task.status
         priority = priority or task.priority
+        if is_unassigned is None:
+            is_unassigned = task.assignee_discord_id is None
 
     target_status = status or TaskStatus.NOT_STARTED
     target_priority = priority or PriorityLevel.NORMAL
+    unassigned_flag = bool(is_unassigned)
 
     available = forum_channel.available_tags
     applied: list[discord.ForumTag] = []
@@ -93,14 +104,24 @@ def resolve_forum_tags(
                 applied.append(tag)
             break
 
-    # 3. Preserve custom tags that don't represent status or priority
+    # 3. Match Unassigned tag if unassigned
+    if unassigned_flag:
+        for tag in available:
+            if _matches_keyword(tag.name, UNASSIGNED_KEYWORDS):
+                if tag not in applied:
+                    applied.append(tag)
+                break
+
+    # 4. Preserve custom tags that don't represent status, priority, or unassigned state
     if existing_tags:
-        all_status_prio_kws = [
-            kw for kws in list(STATUS_KEYWORDS.values()) + list(PRIORITY_KEYWORDS.values()) for kw in kws
+        all_managed_kws = [
+            kw
+            for kws in list(STATUS_KEYWORDS.values()) + list(PRIORITY_KEYWORDS.values()) + [UNASSIGNED_KEYWORDS]
+            for kw in kws
         ]
         for tag in existing_tags:
-            # If tag is not a recognized status/priority tag and not already added
-            if not _matches_keyword(tag.name, all_status_prio_kws):
+            # If tag is not a recognized status/priority/unassigned tag and not already added
+            if not _matches_keyword(tag.name, all_managed_kws):
                 if tag not in applied:
                     applied.append(tag)
 

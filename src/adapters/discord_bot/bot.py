@@ -255,6 +255,7 @@ class DggPmBot(commands.Bot):
                 )
                 await self._update_interaction_view(interaction, updated_task)
                 await self.sync_root_task_message(updated_task)
+                await self.sync_task_thread(updated_task)
                 return
             except Exception as e:
                 logger.exception("Error handling dynamic unassign: %s", e)
@@ -298,6 +299,7 @@ class DggPmBot(commands.Bot):
                     )
                     await self._update_interaction_view(interaction, updated_task)
                     await self.sync_root_task_message(updated_task)
+                    await self.sync_task_thread(updated_task)
                     return
                 except Exception as e:
                     logger.exception("Error handling dynamic assignee change: %s", e)

@@ -11,6 +11,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import discord  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 from src.adapters.db.postgres_repo import (  # noqa: E402
     PostgresOutboxRepo,
@@ -308,8 +309,8 @@ CHANNEL_BINDINGS = [
 ]
 
 
-async def seed_scale_project_100_tasks(guild_id: int, bot_user_id: int) -> None:
-    """Seeds 100 comprehensive tasks for the Scale Testing Platform project in PostgreSQL."""
+async def seed_scale_project_100_tasks(guild_id: int, bot_user_id: int, scale_channel_id: int | None = None) -> None:
+    """Seeds 100 comprehensive tasks for the Scale Testing Platform project in PostgreSQL with working Discord links."""
     task_repo = PostgresTaskRepo(async_session_factory)
     project_repo = PostgresProjectRepo(async_session_factory)
     outbox_repo = PostgresOutboxRepo(async_session_factory)
@@ -329,32 +330,41 @@ async def seed_scale_project_100_tasks(guild_id: int, bot_user_id: int) -> None:
             category="QA & Testing",
         )
 
+    target_channel_id = scale_channel_id or scale_project.discord_channel_id
+
     existing_tasks, total_existing = await task_service.list_tasks(guild_id, project_id=scale_project.id, limit=200)
-    existing_titles = {t.title.lower() for t in existing_tasks}
+    existing_tasks_by_title = {t.title.lower(): t for t in existing_tasks}
     logger.info(f"Scale Testing Platform [SCALE] currently has {total_existing} tasks in DB.")
 
     created_count = 0
     for title, priority, status, days_offset in SCALE_100_TASK_TEMPLATES:
-        if title.lower() in existing_titles:
-            continue
+        task = existing_tasks_by_title.get(title.lower())
         due_at = (datetime.now(UTC) + timedelta(days=days_offset)) if days_offset is not None else None
-        task = await task_service.create_task(
-            guild_id=guild_id,
-            title=title,
-            creator_discord_id=bot_user_id,
-            project_id=scale_project.id,
-            due_at=due_at,
-            priority=priority,
-            body=f"Automated test workload requirements for '{title}'. Part of the 100-task scale verification suite.",
-        )
-        if status != TaskStatus.NOT_STARTED:
-            await task_service.update_status(
-                task_id=task.id,
-                new_status=status,
-                expected_version=task.version,
-                actor_discord_id=bot_user_id,
+        if not task:
+            task = await task_service.create_task(
+                guild_id=guild_id,
+                title=title,
+                creator_discord_id=bot_user_id,
+                project_id=scale_project.id,
+                due_at=due_at,
+                priority=priority,
+                body=(
+                    f"Automated test workload requirements for '{title}'. "
+                    "Part of the 100-task scale verification suite."
+                ),
             )
-        created_count += 1
+            if status != TaskStatus.NOT_STARTED:
+                task = await task_service.update_status(
+                    task_id=task.id,
+                    new_status=status,
+                    expected_version=task.version,
+                    actor_discord_id=bot_user_id,
+                )
+            created_count += 1
+
+        # Ensure all tasks have a Discord link set
+        if not task.discord_thread_id and target_channel_id:
+            await task_service.update_discord_message_ids(task.id, 0, target_channel_id)
 
     all_tasks, total_final = await task_service.list_tasks(guild_id, project_id=scale_project.id, limit=200)
     not_started_cnt = sum(1 for t in all_tasks if t.status == TaskStatus.NOT_STARTED)
@@ -556,14 +566,152 @@ async def seed_discord_channels_and_tasks(guild_id: int) -> None:
             except Exception as e:
                 logger.error(f"Failed to create/post sample task '{title}': {e}")
 
+        if prefix == "SCALE":
+            scale_channel_id = target_channel.id
+
     # Seed 100 comprehensive tasks for Scale Testing Platform
-    await seed_scale_project_100_tasks(guild_id, bot_user_id)
+    await seed_scale_project_100_tasks(guild_id, bot_user_id, scale_channel_id=scale_channel_id)
 
     await client.close()
     await close_db()
 
 
-async def seed_data(guild_id: int) -> None:
+def check_production_safety_guard(guild_id: int) -> None:
+    """Strictly prevents dev seeding and destructive reset operations in production environments."""
+    env = getattr(settings, "ENVIRONMENT", "development").lower().strip()
+    if env in ("production", "prod", "live"):
+        raise RuntimeError(f"⛔ SAFETY BLOCK: seed_dev_data.py cannot be run in production (ENVIRONMENT='{env}').")
+
+    # Require explicit dev guild lock
+    if not settings.DISCORD_GUILD_ID:
+        raise RuntimeError("⛔ SAFETY BLOCK: seed_dev_data.py requires DISCORD_GUILD_ID configured in .env.")
+
+    if guild_id != settings.DISCORD_GUILD_ID:
+        raise RuntimeError(
+            f"⛔ SAFETY BLOCK: Target guild ({guild_id}) does not match "
+            f"configured dev guild ({settings.DISCORD_GUILD_ID})."
+        )
+
+    # Check DATABASE_URL for dangerous production hostnames/keywords
+    db_url = settings.DATABASE_URL.lower()
+    dangerous_keywords = ("prod", "production", "rds.amazonaws.com", "azure.com", "supabase.com", "elephantsql.com")
+    if any(keyword in db_url for keyword in dangerous_keywords):
+        raise RuntimeError("⛔ SAFETY BLOCK: DATABASE_URL appears to point to a production/cloud database.")
+
+
+async def clean_guild_data(guild_id: int) -> None:
+    """Purges all PostgreSQL records and Discord channels/categories for the target guild."""
+    check_production_safety_guard(guild_id)
+
+    logger.info("=" * 60)
+    logger.info(f"🧹 Purging testing server & database data for Guild {guild_id}...")
+    logger.info("=" * 60)
+
+    # 1. Purge PostgreSQL database
+    logger.info("1. Purging PostgreSQL database records...")
+    await init_db()
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                text("DELETE FROM task_watchers WHERE task_id IN (SELECT id FROM tasks WHERE guild_id = :gid)"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM task_history WHERE task_id IN (SELECT id FROM tasks WHERE guild_id = :gid)"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM tasks WHERE guild_id = :gid"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM project_teams WHERE project_id IN (SELECT id FROM projects WHERE guild_id = :gid)"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM projects WHERE guild_id = :gid"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM team_members WHERE team_id IN (SELECT id FROM teams WHERE guild_id = :gid)"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM teams WHERE guild_id = :gid"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM user_preferences WHERE guild_id = :gid"),
+                {"gid": guild_id},
+            )
+            await session.execute(
+                text("DELETE FROM outbox_events"),
+            )
+    logger.info("   ✔ Database tables purged successfully.")
+
+    # 2. Purge Discord channels & category
+    if not settings.DISCORD_BOT_TOKEN:
+        logger.warning("DISCORD_BOT_TOKEN not configured; skipping Discord channels cleanup.")
+        return
+
+    logger.info("2. Connecting to Discord to clean up channels and categories...")
+    client = discord.Client(intents=discord.Intents.default())
+    await client.login(settings.DISCORD_BOT_TOKEN)
+
+    try:
+        guild = await client.fetch_guild(guild_id)
+        channels = await guild.fetch_channels()
+
+        category = next(
+            (c for c in channels if isinstance(c, discord.CategoryChannel) and c.name == "📁 DGG-PM Projects"), None
+        )
+        seeded_names = {chan_name.lower() for chan_name, *_ in CHANNEL_BINDINGS}
+
+        deleted_count = 0
+        for channel in channels:
+            is_in_cat = bool(category and getattr(channel, "category_id", None) == category.id)
+            is_seeded_name = any(
+                channel.name.lower() == s
+                or channel.name.lower().endswith(
+                    s.replace("🧪-", "")
+                    .replace("📱-", "")
+                    .replace("☁️-", "")
+                    .replace("🎨-", "")
+                    .replace("🔒-", "")
+                    .replace("🔍-", "")
+                    .replace("🛠️-", "")
+                    .replace("💳-", "")
+                    .replace("📊-", "")
+                )
+                for s in seeded_names
+            )
+            if (is_in_cat or is_seeded_name) and not isinstance(channel, discord.CategoryChannel):
+                try:
+                    logger.info(f"   • Deleting channel: #{channel.name} ({channel.id})")
+                    await channel.delete(reason="dgg-pm development environment reset")
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error(f"   ❌ Failed to delete channel #{channel.name}: {e}")
+
+        if category:
+            try:
+                logger.info(f"   • Deleting Category: {category.name} ({category.id})")
+                await category.delete(reason="dgg-pm development environment reset")
+            except Exception as e:
+                logger.error(f"   ❌ Failed to delete category {category.name}: {e}")
+
+        logger.info(f"   ✔ Deleted {deleted_count} Discord channels and the project category.")
+    finally:
+        await client.close()
+        await close_db()
+
+
+async def seed_data(guild_id: int, reset: bool = False) -> None:
+    check_production_safety_guard(guild_id)
+
+    if reset:
+        await clean_guild_data(guild_id)
+
     logger.info("Initializing database schema if not present...")
     await init_db()
 
@@ -632,9 +780,22 @@ def main() -> None:
         default=default_guild,
         help=f"Target Discord Guild ID (default: {default_guild})",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Purge all existing database records and Discord project channels before reseeding from scratch.",
+    )
+    parser.add_argument(
+        "--clean-only",
+        action="store_true",
+        help="Purge all existing database records and Discord project channels without reseeding.",
+    )
     args = parser.parse_args()
 
-    asyncio.run(seed_data(args.guild_id))
+    if args.clean_only:
+        asyncio.run(clean_guild_data(args.guild_id))
+    else:
+        asyncio.run(seed_data(args.guild_id, reset=args.reset))
 
 
 if __name__ == "__main__":
