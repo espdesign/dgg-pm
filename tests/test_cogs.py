@@ -151,6 +151,19 @@ async def test_task_action_view_and_modals(services):
     assert f"task:due:{task.id}" in custom_ids
     assert f"task:watchers:{task.id}" in custom_ids
 
+    # Completed view has Reopen button
+    from src.domain.enums import TaskStatus
+
+    completed_view = TaskActionView(
+        task_id=task.id,
+        current_status=TaskStatus.COMPLETED,
+        current_priority=task.priority,
+        task_service=task_srv,
+    )
+    completed_ids = [item.custom_id for item in completed_view.children if hasattr(item, "custom_id")]
+    assert f"task:reopen:{task.id}" in completed_ids
+    assert f"task:start:{task.id}" not in completed_ids
+
     # 2. Test unassign button via dynamic dispatcher
     from src.adapters.discord_bot.bot import DggPmBot
 

@@ -31,25 +31,34 @@ class TaskActionView(discord.ui.View):
         self.current_priority = current_priority
 
         # Row 0: Primary Action Buttons
-        self.start_btn = discord.ui.Button(
-            label="In Progress",
-            emoji="🟡",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"task:start:{task_id}",
-            disabled=(current_status == TaskStatus.IN_PROGRESS or current_status == TaskStatus.COMPLETED),
-            row=0,
-        )
-        self.add_item(self.start_btn)
+        if current_status == TaskStatus.COMPLETED:
+            self.reopen_btn = discord.ui.Button(
+                label="Reopen / Undo",
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"task:reopen:{task_id}",
+                row=0,
+            )
+            self.add_item(self.reopen_btn)
+        else:
+            self.start_btn = discord.ui.Button(
+                label="In Progress",
+                emoji="🟡",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"task:start:{task_id}",
+                disabled=(current_status == TaskStatus.IN_PROGRESS),
+                row=0,
+            )
+            self.add_item(self.start_btn)
 
-        self.complete_btn = discord.ui.Button(
-            label="Complete",
-            emoji="🟢",
-            style=discord.ButtonStyle.success,
-            custom_id=f"task:complete:{task_id}",
-            disabled=(current_status == TaskStatus.COMPLETED),
-            row=0,
-        )
-        self.add_item(self.complete_btn)
+            self.complete_btn = discord.ui.Button(
+                label="Complete",
+                emoji="🟢",
+                style=discord.ButtonStyle.success,
+                custom_id=f"task:complete:{task_id}",
+                row=0,
+            )
+            self.add_item(self.complete_btn)
 
         self.note_btn = discord.ui.Button(
             label="Add Note",

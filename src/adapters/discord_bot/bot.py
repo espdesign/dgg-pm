@@ -291,14 +291,15 @@ class DggPmBot(commands.Bot):
                     await interaction.followup.send(f"❌ Failed to update watchers: {e}", ephemeral=True)
                 return
 
-        target_status = TaskStatus.IN_PROGRESS if action == "start" else TaskStatus.COMPLETED
+        target_status = TaskStatus.IN_PROGRESS if action in ("start", "reopen") else TaskStatus.COMPLETED
         try:
+            note_action = "reopened" if action == "reopen" else f"updated to {target_status.value}"
             updated_task = await self.task_service.update_status(
                 task_id=task_id,
                 new_status=target_status,
                 expected_version=task.version,
                 actor_discord_id=interaction.user.id,
-                notes=f"Status updated to {target_status.value} via button",
+                notes=f"Status {note_action} via button",
             )
             await self._update_interaction_view(interaction, updated_task)
             await self.sync_root_task_message(updated_task)
