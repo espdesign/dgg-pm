@@ -2,124 +2,145 @@
 
 Generates high-resolution Civilization-style tech trees as PNG buffers directly
 usable in Discord messages. Handles layered DAG depth calculation, dummy slot
-routing around intermediate nodes, barycenter edge crossing reduction, and
-dynamic status theming.
+routing around intermediate nodes, barycenter edge crossing reduction, smooth
+cubic Bézier curve routing with directional arrowheads, and dynamic status theming.
 """
 
 from __future__ import annotations
 
 import io
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
 # --- Color Palette & Aesthetics ---
-BG_COLOR = "#0b0c0f"
-GRID_COLOR = "#14171c"
-BANNER_BG_START = "#0c1b29"
-BANNER_BG_END = "#0b0c0f"
-BORDER_LINE = "#232830"
+BG_COLOR = "#0b0e14"
+GRID_COLOR = "#151b24"
+BANNER_BG_START = "#0f172a"
+BORDER_LINE = "#1e293b"
 
 THEME: dict[str, dict[str, str]] = {
     "complete": {
-        "fill": "#12281e",
-        "edge": "#31c77a",
-        "text": "#e5fff0",
-        "accent": "#31c77a",
-        "badge_bg": "#1d4731",
-        "badge_text": "#4ee396",
+        "fill": "#0d2818",
+        "edge": "#22c55e",
+        "glow": "#15803d",
+        "text": "#f0fdf4",
+        "desc": "#bbf7d0",
+        "accent": "#22c55e",
+        "badge_bg": "#14532d",
+        "badge_text": "#86efac",
     },
     "active": {
-        "fill": "#112d45",
-        "edge": "#49b7ff",
-        "text": "#f4f9ff",
-        "accent": "#49b7ff",
-        "badge_bg": "#1d4468",
-        "badge_text": "#80d0ff",
+        "fill": "#082f49",
+        "edge": "#38bdf8",
+        "glow": "#0369a1",
+        "text": "#f0f9ff",
+        "desc": "#bae6fd",
+        "accent": "#38bdf8",
+        "badge_bg": "#0c4a6e",
+        "badge_text": "#7dd3fc",
     },
     "available": {
-        "fill": "#10283b",
-        "edge": "#1098f7",
-        "text": "#f4f9ff",
-        "accent": "#1098f7",
-        "badge_bg": "#163a56",
-        "badge_text": "#54b8ff",
+        "fill": "#1e1b4b",
+        "edge": "#818cf8",
+        "glow": "#4338ca",
+        "text": "#e0e7ff",
+        "desc": "#c7d2fe",
+        "accent": "#818cf8",
+        "badge_bg": "#312e81",
+        "badge_text": "#a5b4fc",
     },
     "locked": {
-        "fill": "#17191d",
-        "edge": "#343941",
-        "text": "#9ba5b5",
-        "accent": "#596270",
-        "badge_bg": "#252a32",
-        "badge_text": "#7a8494",
+        "fill": "#11141a",
+        "edge": "#334155",
+        "glow": "#1e293b",
+        "text": "#94a3b8",
+        "desc": "#64748b",
+        "accent": "#64748b",
+        "badge_bg": "#1e293b",
+        "badge_text": "#94a3b8",
     },
     "blocked": {
-        "fill": "#241416",
-        "edge": "#d94848",
-        "text": "#ffebeb",
-        "accent": "#d94848",
-        "badge_bg": "#421c20",
-        "badge_text": "#ff8585",
+        "fill": "#3b0d0c",
+        "edge": "#ef4444",
+        "glow": "#991b1b",
+        "text": "#fef2f2",
+        "desc": "#fecaca",
+        "accent": "#ef4444",
+        "badge_bg": "#7f1d1d",
+        "badge_text": "#fca5a5",
     },
 }
 
 LABEL: dict[str, str] = {
-    "complete": "COMPLETE",
+    "complete": "COMPLETED",
     "active": "IN PROGRESS",
     "available": "READY TO START",
     "locked": "LOCKED",
     "blocked": "BLOCKED",
 }
 
-NODE_W = 300
-NODE_H = 175
-DUMMY_W = 28
-DUMMY_H = 22
-H_GAP = 80
-V_GAP = 32
-MAX_EDGE = 3600
-PAD = 44
-TITLE_H = 86
+NODE_W = 320
+NODE_H = 185
+DUMMY_W = 36
+DUMMY_H = 28
+H_GAP = 95
+V_GAP = 36
+MAX_EDGE = 3800
+PAD = 48
+TITLE_H = 96
+
+# Font search paths: check bundled assets folder first
+_FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 
 def _load_font(bold: bool, size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
-    names = (
-        (
-            "DejaVuSans-Bold.ttf",
-            "arialbd.ttf",
-            "LiberationSans-Bold.ttf",
-        )
+    """Loads bundled TrueType fonts with robust fallback to system fonts."""
+    font_name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    bundled_path = _FONT_DIR / font_name
+    if bundled_path.is_file():
+        try:
+            return ImageFont.truetype(str(bundled_path), size)
+        except OSError:
+            pass
+
+    fallback_names = (
+        ("DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "Arial-Bold.ttf", "arialbd.ttf")
         if bold
-        else (
-            "DejaVuSans.ttf",
-            "arial.ttf",
-            "LiberationSans-Regular.ttf",
-        )
+        else ("DejaVuSans.ttf", "LiberationSans-Regular.ttf", "Arial.ttf", "arial.ttf")
     )
-    roots = (
+    search_roots = (
         "/usr/share/fonts/truetype/dejavu",
         "/usr/share/fonts/TTF",
         "/usr/share/fonts/truetype/liberation",
+        "/nix/var/nix/profiles/default/share/fonts",
         "C:/Windows/Fonts",
         "/System/Library/Fonts",
         "",
     )
-    for root in roots:
-        for name in names:
+    for root in search_roots:
+        for name in fallback_names:
             try:
-                return ImageFont.truetype(f"{root}/{name}" if root else name, size)
+                path = f"{root}/{name}" if root else name
+                return ImageFont.truetype(path, size)
             except OSError:
                 continue
-    return ImageFont.load_default()
+
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
-F_TITLE = _load_font(True, 26)
-F_SUBTITLE = _load_font(False, 13)
-F_NAME = _load_font(True, 15)
-F_SMALL = _load_font(False, 12)
-F_TAG = _load_font(True, 10)
-F_PILL = _load_font(False, 10)
+F_TITLE = _load_font(True, 30)
+F_SUBTITLE = _load_font(False, 15)
+F_BADGE = _load_font(True, 12)
+F_KEY = _load_font(True, 13)
+F_NAME = _load_font(True, 16)
+F_DESC = _load_font(False, 13)
+F_PILL = _load_font(True, 12)
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: Any, max_w: int, max_lines: int = 2) -> list[str]:
@@ -147,7 +168,7 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: Any, max_w: int, max_lines
     return lines
 
 
-# --- Layer Calculation & Routing ---
+# --- Layer Calculation & Layout Planning ---
 
 
 def compute_layers(nodes: list[dict[str, Any]], edges: list[tuple[str, str]]) -> dict[str, int]:
@@ -224,9 +245,9 @@ def plan_layout(
 
     reindex()
 
-    # Barycenter sweeps
+    # Barycenter crossing minimization sweeps
     max_d = max(order.keys(), default=0)
-    for _ in range(4):
+    for _ in range(5):
         for d in range(1, max_d + 1):
             scored = []
             for k in order[d]:
@@ -250,6 +271,29 @@ def plan_layout(
     return order, chains, depth
 
 
+def _bezier_points(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    steps: int = 28,
+) -> list[tuple[int, int]]:
+    """Generates discrete sampled points along a cubic Bézier spline."""
+    pts: list[tuple[int, int]] = []
+    for i in range(steps + 1):
+        t = i / steps
+        t2 = t * t
+        t3 = t2 * t
+        mt = 1 - t
+        mt2 = mt * mt
+        mt3 = mt2 * mt
+
+        x = mt3 * p0[0] + 3 * mt2 * t * p1[0] + 3 * mt * t2 * p2[0] + t3 * p3[0]
+        y = mt3 * p0[1] + 3 * mt2 * t * p1[1] + 3 * mt * t2 * p2[1] + t3 * p3[1]
+        pts.append((round(x), round(y)))
+    return pts
+
+
 def render_tree(
     nodes: list[dict[str, Any]],
     edges: list[tuple[str, str]],
@@ -263,14 +307,14 @@ def render_tree(
 
     # Handle empty state
     if not nodes:
-        img = Image.new("RGB", (700, 260), BG_COLOR)
+        img = Image.new("RGB", (750, 280), BG_COLOR)
         draw = ImageDraw.Draw(img)
-        draw.text((350, 90), title, font=F_TITLE, fill="#f4f9ff", anchor="mm")
+        draw.text((375, 100), title, font=F_TITLE, fill="#f8fafc", anchor="mm")
         draw.text(
-            (350, 140),
+            (375, 160),
             "No tasks found in this project.",
-            font=F_NAME,
-            fill="#7a8494",
+            font=F_SUBTITLE,
+            fill="#64748b",
             anchor="mm",
         )
         buf = io.BytesIO()
@@ -281,7 +325,7 @@ def render_tree(
     order, chains, depth = plan_layout(nodes, edges)
     num_layers = max(order.keys(), default=0) + 1
 
-    # Compute layer sizes
+    # Compute layer spans
     layer_sizes: dict[int, int] = {}
     for d, ks in order.items():
         layer_sizes[d] = sum(DUMMY_H if k.startswith("\x00") else NODE_H for k in ks) + max(0, len(ks) - 1) * V_GAP
@@ -289,24 +333,24 @@ def render_tree(
 
     # Canvas dimensions
     if tb:
-        width = PAD * 2 + max(max_layer_span, 600)
+        width = PAD * 2 + max(max_layer_span, 700)
         height = PAD * 2 + TITLE_H + num_layers * NODE_H + max(0, num_layers - 1) * H_GAP
     else:
-        width = PAD * 2 + max(num_layers * NODE_W + max(0, num_layers - 1) * H_GAP, 700)
+        width = PAD * 2 + max(num_layers * NODE_W + max(0, num_layers - 1) * H_GAP, 800)
         height = PAD * 2 + TITLE_H + max_layer_span
 
     img = Image.new("RGB", (width, height), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
-    # Grid background lines
-    for gx in range(0, width, 40):
+    # Grid background pattern
+    for gx in range(0, width, 48):
         draw.line([(gx, 0), (gx, height)], fill=GRID_COLOR, width=1)
-    for gy in range(0, height, 40):
+    for gy in range(0, height, 48):
         draw.line([(0, gy), (width, gy)], fill=GRID_COLOR, width=1)
 
     # Header Banner
     draw.rectangle([0, 0, width, TITLE_H], fill=BANNER_BG_START)
-    draw.line([(0, TITLE_H), (width, TITLE_H)], fill=BORDER_LINE, width=1)
+    draw.line([(0, TITLE_H), (width, TITLE_H)], fill=BORDER_LINE, width=2)
 
     # Title & Subtitle / Stats
     completed_n = sum(1 for n in nodes if n.get("state") == "complete")
@@ -315,7 +359,7 @@ def render_tree(
     locked_n = sum(1 for n in nodes if n.get("state") == "locked")
     pct_val = int((completed_n / len(nodes)) * 100) if nodes else 0
 
-    draw.text((PAD, 24), title, font=F_TITLE, fill="#f4f9ff")
+    draw.text((PAD, 22), title, font=F_TITLE, fill="#ffffff")
     if subtitle:
         stats_text = subtitle
     else:
@@ -323,17 +367,17 @@ def render_tree(
             f"{len(nodes)} Tasks  •  {completed_n} Complete  •  {active_n} In Progress  •  "
             f"{avail_n} Ready  •  {locked_n} Locked  •  {pct_val}% Done"
         )
-    draw.text((PAD, 58), stats_text, font=F_SUBTITLE, fill="#8b9bb0")
+    draw.text((PAD, 62), stats_text, font=F_SUBTITLE, fill="#94a3b8")
 
     # Progress bar on banner right
-    prog_w = min(220, width // 4)
+    prog_w = min(240, width // 4)
     prog_x = width - PAD - prog_w
-    prog_y = 36
-    draw.rounded_rectangle([prog_x, prog_y, prog_x + prog_w, prog_y + 14], radius=6, fill="#1c2128")
+    prog_y = 38
+    draw.rounded_rectangle([prog_x, prog_y, prog_x + prog_w, prog_y + 18], radius=8, fill="#1e293b")
     if pct_val > 0:
-        fill_px = max(10, int(prog_w * (pct_val / 100)))
-        draw.rounded_rectangle([prog_x, prog_y, prog_x + fill_px, prog_y + 14], radius=6, fill="#31c77a")
-    draw.text((prog_x + prog_w // 2, prog_y + 7), f"{pct_val}%", font=F_TAG, fill="#ffffff", anchor="mm")
+        fill_px = max(14, int(prog_w * (pct_val / 100)))
+        draw.rounded_rectangle([prog_x, prog_y, prog_x + fill_px, prog_y + 18], radius=8, fill="#22c55e")
+    draw.text((prog_x + prog_w // 2, prog_y + 9), f"{pct_val}%", font=F_BADGE, fill="#ffffff", anchor="mm")
 
     # Node coordinate calculation
     coords: dict[str, tuple[int, int, int, int]] = {}
@@ -370,103 +414,163 @@ def render_tree(
         b = box(k)
         return (b[1] + b[3]) // 2
 
-    # Draw Edges (first so nodes render over them)
+    # Group edges by source and target for port offset calculations
+    out_edges: dict[str, list[str]] = {}
+    in_edges: dict[str, list[str]] = {}
+    for s, t in edges:
+        if s in depth and t in depth:
+            out_edges.setdefault(s, []).append(t)
+            in_edges.setdefault(t, []).append(s)
+
+    # Sort target nodes by vertical position so fan-out lines don't cross each other at port
+    for s in out_edges:
+        out_edges[s].sort(key=lambda t: mid_y(t) if not tb else mid_x(t))
+    for t in in_edges:
+        in_edges[t].sort(key=lambda s: mid_y(s) if not tb else mid_x(s))
+
+    # --- Draw Edges with Smooth Bézier Splines & Arrowheads ---
     for src, dst in edges:
         if src not in depth or dst not in depth:
             continue
-        lit = by_key.get(src, {}).get("state") == "complete"
-        edge_color = "#31c77a" if lit else "#353d4a"
-        edge_w = 3 if lit else 2
+
+        src_state = by_key.get(src, {}).get("state", "locked")
+        if src_state == "complete":
+            edge_color = "#22c55e"
+            edge_width = 3
+        elif src_state == "active":
+            edge_color = "#38bdf8"
+            edge_width = 3
+        elif src_state == "available":
+            edge_color = "#818cf8"
+            edge_width = 2
+        elif src_state == "blocked":
+            edge_color = "#ef4444"
+            edge_width = 2
+        else:
+            # Clearly visible slate for locked/pending prerequisites
+            edge_color = "#64748b"
+            edge_width = 2
+
+        # Compute port offsets
+        s_list = out_edges.get(src, [])
+        s_idx = s_list.index(dst) if dst in s_list else 0
+        s_offset = (s_idx - (len(s_list) - 1) / 2) * 12 if len(s_list) > 1 else 0
+
+        d_list = in_edges.get(dst, [])
+        d_idx = d_list.index(src) if src in d_list else 0
+        d_offset = (d_idx - (len(d_list) - 1) / 2) * 12 if len(d_list) > 1 else 0
 
         if tb:
-            waypoints = [(mid_x(src), box(src)[3])]
+            start_pt = (mid_x(src) + int(s_offset), box(src)[3])
+            waypoints = [start_pt]
             for dk in chains.get((src, dst), []):
                 _, ly0, _, ly1 = box(dk)
                 waypoints.extend([(mid_x(dk), ly0), (mid_x(dk), ly1)])
-            waypoints.append((mid_x(dst), box(dst)[1]))
+            end_pt = (mid_x(dst) + int(d_offset), box(dst)[1])
+            waypoints.append(end_pt)
         else:
-            waypoints = [(box(src)[2], mid_y(src))]
+            start_pt = (box(src)[2], mid_y(src) + int(s_offset))
+            waypoints = [start_pt]
             for dk in chains.get((src, dst), []):
                 lx0, _, lx1, _ = box(dk)
                 waypoints.extend([(lx0, mid_y(dk)), (lx1, mid_y(dk))])
-            waypoints.append((box(dst)[0], mid_y(dst)))
+            end_pt = (box(dst)[0], mid_y(dst) + int(d_offset))
+            waypoints.append(end_pt)
 
+        # Draw smooth Bézier curve segments through waypoints
         for (ax, ay), (bx, by) in pairwise(waypoints):
             if tb:
-                mid = ay + (by - ay) // 2
-                draw.line([(ax, ay), (ax, mid)], fill=edge_color, width=edge_w)
-                draw.line([(ax, mid), (bx, mid)], fill=edge_color, width=edge_w)
-                draw.line([(bx, mid), (bx, by)], fill=edge_color, width=edge_w)
+                dy = by - ay
+                p0 = (float(ax), float(ay))
+                p1 = (float(ax), float(ay + dy * 0.5))
+                p2 = (float(bx), float(by - dy * 0.5))
+                p3 = (float(bx), float(by))
             else:
-                mid = ax + (bx - ax) // 2
-                draw.line([(ax, ay), (mid, ay)], fill=edge_color, width=edge_w)
-                draw.line([(mid, ay), (mid, by)], fill=edge_color, width=edge_w)
-                draw.line([(mid, by), (bx, by)], fill=edge_color, width=edge_w)
+                dx = bx - ax
+                p0 = (float(ax), float(ay))
+                p1 = (float(ax + dx * 0.5), float(ay))
+                p2 = (float(bx - dx * 0.5), float(by))
+                p3 = (float(bx), float(by))
 
-        # Draw terminal connection dot
-        term_x, term_y = waypoints[-1]
-        draw.ellipse([term_x - 5, term_y - 5, term_x + 5, term_y + 5], fill=edge_color)
+            curve_pts = _bezier_points(p0, p1, p2, p3, steps=32)
+            draw.line(curve_pts, fill=edge_color, width=edge_width, joint="curve")
 
-    # Draw Real Nodes
+        # Source Port Anchor Dot
+        sx, sy = waypoints[0]
+        draw.ellipse([sx - 4, sy - 4, sx + 4, sy + 4], fill=edge_color)
+
+        # Target Port Arrowhead Indicator
+        tx, ty = waypoints[-1]
+        if tb:
+            draw.polygon([(tx, ty), (tx - 6, ty - 9), (tx + 6, ty - 9)], fill=edge_color)
+        else:
+            draw.polygon([(tx, ty), (tx - 9, ty - 6), (tx - 9, ty + 6)], fill=edge_color)
+
+    # --- Draw Task Cards ---
     for n in nodes:
         k = n["key"]
         state = n.get("state", "locked")
         t = THEME.get(state, THEME["locked"])
         x0, y0, x1, y1 = box(k)
-        inner_w = NODE_W - 32
+        inner_w = NODE_W - 36
 
-        # Card shadow and body
-        draw.rounded_rectangle([x0 + 3, y0 + 4, x1 + 3, y1 + 4], radius=10, fill="#05070a")
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=10, fill=t["fill"], outline=t["edge"], width=2)
-        # Left color indicator stripe
-        draw.rounded_rectangle([x0, y0, x0 + 6, y1], radius=3, fill=t["accent"])
+        # Card shadow & background container
+        draw.rounded_rectangle([x0 + 4, y0 + 6, x1 + 4, y1 + 6], radius=12, fill="#040609")
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=12, fill=t["fill"], outline=t["edge"], width=2)
 
-        # Top Bar: Tag badge
+        # Left accent stripe
+        draw.rounded_rectangle([x0, y0, x0 + 6, y1], radius=4, fill=t["accent"])
+
+        # Top Bar: Status Badge
         badge_label = LABEL.get(state, "LOCKED")
-        tag_w = draw.textlength(badge_label, font=F_TAG)
-        draw.rounded_rectangle([x0 + 16, y0 + 12, x0 + 26 + tag_w, y0 + 30], radius=5, fill=t["badge_bg"])
-        draw.text((x0 + 21, y0 + 16), badge_label, font=F_TAG, fill=t["badge_text"])
+        tag_w = draw.textlength(badge_label, font=F_BADGE)
+        draw.rounded_rectangle([x0 + 16, y0 + 14, x0 + 28 + tag_w, y0 + 34], radius=6, fill=t["badge_bg"])
+        draw.text((x0 + 22, y0 + 17), badge_label, font=F_BADGE, fill=t["badge_text"])
 
-        # Top Bar: Short ID (e.g., [ENG-12])
+        # Top Bar: Short ID tag (e.g., [TREE-1])
         short_id = n.get("short_id", k)
-        draw.text((x1 - 16, y0 + 16), short_id, font=F_TAG, fill=t["accent"], anchor="ra")
+        draw.text((x1 - 16, y0 + 17), short_id, font=F_KEY, fill=t["accent"], anchor="ra")
 
-        # Task Name / Title
-        cur_y = y0 + 42
-        for line in _wrap(draw, n.get("name", "Untitled"), F_NAME, inner_w, 2):
+        # Task Name / Title (High contrast & bold)
+        cur_y = y0 + 46
+        title_lines = _wrap(draw, n.get("name", "Untitled"), F_NAME, inner_w, 2)
+        for line in title_lines:
             draw.text((x0 + 16, cur_y), line, font=F_NAME, fill=t["text"])
-            cur_y += 20
+            cur_y += 22
 
-        # Description / Blocker note
+        # Task Description / Details
         desc = (n.get("description") or "").strip()
         if desc:
-            cur_y += 2
-            for line in _wrap(draw, desc, F_SMALL, inner_w, 2):
-                if cur_y + 14 > y1 - 42:
+            cur_y += 3
+            desc_lines = _wrap(draw, desc, F_DESC, inner_w, 2)
+            for line in desc_lines:
+                if cur_y + 16 > y1 - 42:
                     break
-                draw.text((x0 + 16, cur_y), line, font=F_SMALL, fill="#929ea8")
-                cur_y += 15
+                draw.text((x0 + 16, cur_y), line, font=F_DESC, fill=t["desc"])
+                cur_y += 18
 
-        # Bottom Bar: Progress / Assignee
-        bottom_y = y1 - 28
-        draw.line([(x0 + 16, bottom_y - 6), (x1 - 16, bottom_y - 6)], fill=BORDER_LINE, width=1)
+        # Bottom Bar: Divider
+        bottom_y = y1 - 32
+        draw.line([(x0 + 16, bottom_y - 8), (x1 - 16, bottom_y - 8)], fill=BORDER_LINE, width=1)
 
-        # Assignee pill or text
+        # Assignee label
         assignee = n.get("assignee")
         if assignee:
-            assignee_label = f"👤 {assignee[:14]}"
-            draw.text((x0 + 16, bottom_y), assignee_label, font=F_PILL, fill="#b5c4d4")
+            assignee_label = f"Assignee: {assignee[:14]}"
+            draw.text((x0 + 16, bottom_y), assignee_label, font=F_PILL, fill="#cbd5e1")
         else:
-            draw.text((x0 + 16, bottom_y), "👤 Unassigned", font=F_PILL, fill="#626d7d")
+            draw.text((x0 + 16, bottom_y), "Unassigned", font=F_PILL, fill="#64748b")
 
-        # Priority tag on bottom right
-        priority = n.get("priority", "normal").upper()
+        # Priority Badge on bottom right
+        priority = (n.get("priority") or "normal").upper()
         if priority in ("HIGH", "URGENT", "CRITICAL"):
-            draw.text((x1 - 16, bottom_y), f"⚡ {priority}", font=F_PILL, fill="#ff8080", anchor="ra")
+            draw.text((x1 - 16, bottom_y), "HIGH PRIORITY", font=F_PILL, fill="#f87171", anchor="ra")
         elif priority == "LOW":
-            draw.text((x1 - 16, bottom_y), "🌱 LOW", font=F_PILL, fill="#80c080", anchor="ra")
+            draw.text((x1 - 16, bottom_y), "LOW PRIORITY", font=F_PILL, fill="#4ade80", anchor="ra")
+        else:
+            draw.text((x1 - 16, bottom_y), "NORMAL", font=F_PILL, fill="#94a3b8", anchor="ra")
 
-    # Downscale if exceeding Discord maximum edge limit
+    # Downscale if exceeding Discord max upload limit
     if max(img.size) > MAX_EDGE:
         scale = MAX_EDGE / max(img.size)
         img = img.resize((int(width * scale), int(height * scale)), Image.Resampling.LANCZOS)
