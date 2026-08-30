@@ -39,7 +39,7 @@ class TeamCog(commands.Cog):
             await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             team = await self.team_service.create_team(
                 guild_id=interaction.guild.id,
@@ -53,6 +53,9 @@ class TeamCog(commands.Cog):
                 color=discord.Color.teal(),
             )
             await interaction.followup.send(embed=embed)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create team: {e}", ephemeral=True)
 
@@ -96,7 +99,7 @@ class TeamCog(commands.Cog):
         if not interaction.guild:
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             team = await self.team_service.get_by_name(interaction.guild.id, team_name)
             if not team:
@@ -126,6 +129,9 @@ class TeamCog(commands.Cog):
                 f"to team **{team.name}** (<@&{team.discord_role_id}>)."
             )
             await interaction.followup.send(msg)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to assign team member: {e}", ephemeral=True)
 
@@ -133,10 +139,13 @@ class TeamCog(commands.Cog):
     async def team_list(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         teams = await self.team_service.list_teams(interaction.guild.id)
         if not teams:
             await interaction.followup.send("👥 No teams created yet. Use `/team-create` to set one up.")
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
             return
 
         embed = discord.Embed(title="👥 Server Teams", color=discord.Color.teal())
@@ -144,11 +153,16 @@ class TeamCog(commands.Cog):
             embed.add_field(name=f"**{t.name}**", value=f"Role: <@&{t.discord_role_id}>", inline=False)
 
         await interaction.followup.send(embed=embed)
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        await menu_manager.register_menu(interaction)
 
     @app_commands.command(name="team-menu", description="Open interactive Team Management Control Center.")
     async def team_menu(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
         from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
 
         embed = build_team_menu_embed()
         view = TeamMenuView(self.team_service, self.project_service, self.task_service)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await menu_manager.register_menu(interaction)

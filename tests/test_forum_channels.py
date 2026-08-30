@@ -80,7 +80,7 @@ async def test_project_create_with_forum_channel(services):
         category="Security",
     )
 
-    interaction.response.defer.assert_awaited_once_with(ephemeral=False)
+    interaction.response.defer.assert_awaited_once_with(ephemeral=True)
     interaction.followup.send.assert_awaited_once()
 
     send_call_args = interaction.followup.send.call_args

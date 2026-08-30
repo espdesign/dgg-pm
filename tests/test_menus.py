@@ -5,11 +5,18 @@ import pytest
 
 from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
 from src.adapters.discord_bot.views.project_menu import (
+    ProjectActiveListView,
+    ProjectArchiveConfirmView,
+    ProjectArchiveSelectView,
     ProjectAssignTeamView,
     ProjectAssignTimelineModal,
     ProjectChannelSelectView,
     ProjectCreateModal,
     ProjectMenuView,
+    ProjectRestoreConfirmView,
+    ProjectRestoreSelectView,
+    ProjectSearchModal,
+    build_active_projects_embed,
     build_project_menu_embed,
 )
 from src.adapters.discord_bot.views.settings_menu import (
@@ -18,6 +25,9 @@ from src.adapters.discord_bot.views.settings_menu import (
 from src.adapters.discord_bot.views.task_menu import (
     TaskCreateModal,
     TaskMenuView,
+    TaskProjectSearchModal,
+    TaskSelectProjectView,
+    build_task_board_embed,
     build_task_menu_embed,
 )
 from src.adapters.discord_bot.views.team_menu import (
@@ -245,11 +255,15 @@ async def test_task_menu_and_modal(services):
 
     project = await proj_srv.create_project(guild_id=guild_id, name="Security Ops", prefix="SEC")
 
-    # 1. Test TaskMenuView and embed
+    # 1. Test TaskMenuView and embeds
     view = TaskMenuView(task_srv, proj_srv, team_service=services["team"], projects=[project])
     embed = build_task_menu_embed()
     assert "Task Operations Control Center" in embed.title
-    assert len(view.children) == 8  # New, Standalone, Reset, PM Main Menu, Project, Status, Assignee, Clear Member
+    assert len(view.children) == 9
+
+    board_embed = build_task_board_embed([], 0, "Global Scope", "Active", "All")
+    assert "Task Board" in board_embed.title
+    assert "No Tasks Found" in board_embed.fields[0].name
 
     # Test project filter callback
     project_interaction = MagicMock(spec=discord.Interaction)
@@ -435,3 +449,409 @@ async def test_task_menu_and_list_excludes_completed_by_default(services):
     completed_tasks, total_completed = await task_srv.list_tasks(guild_id=guild_id, status=TaskStatus.COMPLETED)
     assert total_completed == 1
     assert completed_tasks[0].title == "Done 1"
+
+
+@pytest.mark.asyncio
+async def test_project_archive_and_restore_confirmation_flows(services):
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 9995554443
+
+    # 1. Setup project and task
+    project = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Security Audit",
+        prefix="SEC",
+        description="Quarterly security audit",
+        discord_channel_id=123456,
+    )
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Penetration Testing",
+        creator_discord_id=1,
+        project_id=project.id,
+    )
+    await task_srv.update_discord_message_ids(task_id=task.id, discord_message_id=111222, discord_thread_id=987654321)
+
+    # 2. Test ProjectMenuView -> Archive Project button opens ProjectArchiveSelectView
+    menu_view = ProjectMenuView(proj_srv, team_srv, task_srv)
+    archive_btn_interaction = MagicMock(spec=discord.Interaction)
+    archive_btn_interaction.guild = MagicMock()
+    archive_btn_interaction.guild.id = guild_id
+    archive_btn_interaction.response = MagicMock()
+    archive_btn_interaction.response.edit_message = AsyncMock()
+
+    await menu_view.archive_btn.callback(archive_btn_interaction)
+    archive_btn_interaction.response.edit_message.assert_awaited_once()
+    select_view = archive_btn_interaction.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(select_view, ProjectArchiveSelectView)
+
+    # 3. Test Selecting project from ProjectArchiveSelectView opens ProjectArchiveConfirmView
+    select_view.select._values = [str(project.id)]
+    select_interaction = MagicMock(spec=discord.Interaction)
+    select_interaction.guild = MagicMock()
+    select_interaction.guild.id = guild_id
+    select_interaction.response = MagicMock()
+    select_interaction.response.edit_message = AsyncMock()
+
+    await select_view._on_select(select_interaction)
+    select_interaction.response.edit_message.assert_awaited_once()
+    confirm_view = select_interaction.response.edit_message.call_args.kwargs["view"]
+    confirm_embed = select_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert isinstance(confirm_view, ProjectArchiveConfirmView)
+    assert "Confirm Project Archival" in confirm_embed.title
+    assert "Security Audit" in confirm_embed.description
+
+    # 4. Test clicking Cancel on ProjectArchiveConfirmView aborts and returns to ProjectMenuView
+    cancel_interaction = MagicMock(spec=discord.Interaction)
+    cancel_interaction.response = MagicMock()
+    cancel_interaction.response.edit_message = AsyncMock()
+
+    await confirm_view.cancel_btn.callback(cancel_interaction)
+    cancel_interaction.response.edit_message.assert_awaited_once()
+    returned_view = cancel_interaction.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(returned_view, ProjectMenuView)
+
+    # Project is still active
+    unchanged_proj = await proj_srv.get_by_id(project.id)
+    assert unchanged_proj is not None
+    assert not unchanged_proj.is_archived
+
+    # 5. Test clicking Confirm Archive on ProjectArchiveConfirmView archives project and syncs threads
+    client_mock = MagicMock()
+    client_mock.sync_task_thread = AsyncMock()
+    confirm_archive_interaction = MagicMock(spec=discord.Interaction)
+    confirm_archive_interaction.guild = MagicMock()
+    confirm_archive_interaction.guild.id = guild_id
+    confirm_archive_interaction.client = client_mock
+    confirm_archive_interaction.response = MagicMock()
+    confirm_archive_interaction.response.edit_message = AsyncMock()
+
+    await confirm_view.confirm_btn.callback(confirm_archive_interaction)
+    confirm_archive_interaction.response.edit_message.assert_awaited_once()
+    archived_embed = confirm_archive_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert "Project Archived!" in archived_embed.description
+
+    # Project is now archived
+    archived_proj = await proj_srv.get_by_id(project.id)
+    assert archived_proj is not None
+    assert archived_proj.is_archived
+    client_mock.sync_task_thread.assert_awaited_once()
+
+    # 6. Test ProjectMenuView -> Restore Project button opens ProjectRestoreSelectView
+    restore_btn_interaction = MagicMock(spec=discord.Interaction)
+    restore_btn_interaction.guild = MagicMock()
+    restore_btn_interaction.guild.id = guild_id
+    restore_btn_interaction.response = MagicMock()
+    restore_btn_interaction.response.edit_message = AsyncMock()
+
+    await menu_view.restore_btn.callback(restore_btn_interaction)
+    restore_btn_interaction.response.edit_message.assert_awaited_once()
+    restore_select_view = restore_btn_interaction.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(restore_select_view, ProjectRestoreSelectView)
+
+    # 7. Test Selecting project from ProjectRestoreSelectView opens ProjectRestoreConfirmView
+    restore_select_view.select._values = [str(project.id)]
+    restore_select_interaction = MagicMock(spec=discord.Interaction)
+    restore_select_interaction.guild = MagicMock()
+    restore_select_interaction.guild.id = guild_id
+    restore_select_interaction.response = MagicMock()
+    restore_select_interaction.response.edit_message = AsyncMock()
+
+    await restore_select_view._on_select(restore_select_interaction)
+    restore_select_interaction.response.edit_message.assert_awaited_once()
+    restore_confirm_view = restore_select_interaction.response.edit_message.call_args.kwargs["view"]
+    restore_confirm_embed = restore_select_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert isinstance(restore_confirm_view, ProjectRestoreConfirmView)
+    assert "Confirm Project Restoration" in restore_confirm_embed.title
+    assert "Security Audit" in restore_confirm_embed.description
+
+    # 8. Test clicking Cancel on ProjectRestoreConfirmView aborts and returns to ProjectMenuView
+    restore_cancel_interaction = MagicMock(spec=discord.Interaction)
+    restore_cancel_interaction.response = MagicMock()
+    restore_cancel_interaction.response.edit_message = AsyncMock()
+
+    await restore_confirm_view.cancel_btn.callback(restore_cancel_interaction)
+    restore_cancel_interaction.response.edit_message.assert_awaited_once()
+    assert isinstance(restore_cancel_interaction.response.edit_message.call_args.kwargs["view"], ProjectMenuView)
+
+    # Project is still archived
+    still_archived_proj = await proj_srv.get_by_id(project.id)
+    assert still_archived_proj.is_archived
+
+    # 9. Test clicking Confirm Restore on ProjectRestoreConfirmView reactivates project
+    client_mock.reset_mock()
+    confirm_restore_interaction = MagicMock(spec=discord.Interaction)
+    confirm_restore_interaction.guild = MagicMock()
+    confirm_restore_interaction.guild.id = guild_id
+    confirm_restore_interaction.client = client_mock
+    confirm_restore_interaction.response = MagicMock()
+    confirm_restore_interaction.response.edit_message = AsyncMock()
+
+    await restore_confirm_view.confirm_btn.callback(confirm_restore_interaction)
+    confirm_restore_interaction.response.edit_message.assert_awaited_once()
+    restored_embed = confirm_restore_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert "Project Restored!" in restored_embed.description
+
+    # Project is reactivated
+    restored_proj = await proj_srv.get_by_id(project.id)
+    assert not restored_proj.is_archived
+    client_mock.sync_task_thread.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_project_search_and_pagination_flows(services):
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 9991112233
+
+    # 1. Create 30 projects for testing pagination (> 25 items)
+    created_projects = []
+    for i in range(1, 31):
+        p = await proj_srv.create_project(
+            guild_id=guild_id,
+            name=f"Project Alpha {i:02d}",
+            prefix=f"P{i:02d}",
+            description=f"Description for project {i}",
+        )
+        created_projects.append(p)
+
+    # 2. Test ProjectActiveListView pagination
+    active_view = ProjectActiveListView(
+        projects=created_projects,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        page_size=8,
+    )
+    # 30 items / 8 per page = 4 pages
+    assert active_view.current_page == 0
+    embed = build_active_projects_embed(created_projects, 0, len(created_projects), page_size=8)
+    assert "Active Projects (30)" in embed.title
+    assert len(embed.fields) == 8
+    assert "Project Alpha 01" in embed.fields[0].name
+
+    # Next page callback
+    next_interaction = MagicMock(spec=discord.Interaction)
+    next_interaction.response = MagicMock()
+    next_interaction.response.edit_message = AsyncMock()
+    await active_view._on_next_clicked(next_interaction)
+    next_interaction.response.edit_message.assert_awaited_once()
+    assert active_view.current_page == 1
+
+    # Prev page callback
+    prev_interaction = MagicMock(spec=discord.Interaction)
+    prev_interaction.response = MagicMock()
+    prev_interaction.response.edit_message = AsyncMock()
+    await active_view._on_prev_clicked(prev_interaction)
+    prev_interaction.response.edit_message.assert_awaited_once()
+    assert active_view.current_page == 0
+
+    # 3. Test Search in ProjectActiveListView and ProjectSearchModal
+    search_cb_mock = AsyncMock()
+    modal = ProjectSearchModal(on_search_callback=search_cb_mock, current_query="Alpha")
+    modal.query_input._value = "Alpha 12"
+    modal_interaction = MagicMock(spec=discord.Interaction)
+    await modal.on_submit(modal_interaction)
+    search_cb_mock.assert_awaited_once_with(modal_interaction, "Alpha 12")
+
+    search_interaction = MagicMock(spec=discord.Interaction)
+    search_interaction.response = MagicMock()
+    search_interaction.response.edit_message = AsyncMock()
+    await active_view._apply_search(search_interaction, query="Alpha 12")
+    search_interaction.response.edit_message.assert_awaited_once()
+    search_embed = search_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert "Filter: `Alpha 12`" in search_embed.title
+    assert len(search_embed.fields) == 1
+    assert "Project Alpha 12" in search_embed.fields[0].name
+
+    # Clear search filter
+    clear_interaction = MagicMock(spec=discord.Interaction)
+    clear_interaction.response = MagicMock()
+    clear_interaction.response.edit_message = AsyncMock()
+    await active_view._on_clear_filter_clicked(clear_interaction)
+    clear_interaction.response.edit_message.assert_awaited_once()
+    cleared_embed = clear_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert len(cleared_embed.fields) == 8
+
+    # 4. Test ProjectArchiveSelectView with 30 items
+    archive_select_view = ProjectArchiveSelectView(
+        projects=created_projects,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+    )
+    # Page 0 has 25 items (max select options)
+    assert len(archive_select_view.select.options) == 25
+    assert archive_select_view.current_page == 0
+
+    # Next page switch in archive select view
+    archive_next_interaction = MagicMock(spec=discord.Interaction)
+    archive_next_interaction.response = MagicMock()
+    archive_next_interaction.response.edit_message = AsyncMock()
+    await archive_select_view._on_next_clicked(archive_next_interaction)
+    archive_next_interaction.response.edit_message.assert_awaited_once()
+    assert archive_select_view.current_page == 1
+    assert len(archive_select_view.select.options) == 5  # remaining 5 items
+
+    # Search in archive select view
+    archive_search_interaction = MagicMock(spec=discord.Interaction)
+    archive_search_interaction.response = MagicMock()
+    archive_search_interaction.response.edit_message = AsyncMock()
+    await archive_select_view._apply_search(archive_search_interaction, query="P29")
+    archive_search_interaction.response.edit_message.assert_awaited_once()
+    assert len(archive_select_view.select.options) == 1
+    assert "P29" in archive_select_view.select.options[0].label
+
+    # 5. Test ProjectRestoreSelectView with 30 archived items
+    for p in created_projects:
+        await proj_srv.archive_project(p.id)
+
+    archived_list = await proj_srv.list_projects(guild_id, include_archived=True)
+    archived_projects = [p for p in archived_list if p.is_archived]
+    assert len(archived_projects) == 30
+
+    restore_select_view = ProjectRestoreSelectView(
+        projects=archived_projects,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+    )
+    assert len(restore_select_view.select.options) == 25
+    assert restore_select_view.current_page == 0
+
+    # Next page in restore select view
+    restore_next_interaction = MagicMock(spec=discord.Interaction)
+    restore_next_interaction.response = MagicMock()
+    restore_next_interaction.response.edit_message = AsyncMock()
+    await restore_select_view._on_next_clicked(restore_next_interaction)
+    restore_next_interaction.response.edit_message.assert_awaited_once()
+    assert restore_select_view.current_page == 1
+    assert len(restore_select_view.select.options) == 5
+
+    # Search in restore select view
+    restore_search_interaction = MagicMock(spec=discord.Interaction)
+    restore_search_interaction.response = MagicMock()
+    restore_search_interaction.response.edit_message = AsyncMock()
+    await restore_select_view._apply_search(restore_search_interaction, query="Alpha 07")
+    restore_search_interaction.response.edit_message.assert_awaited_once()
+    assert len(restore_select_view.select.options) == 1
+    assert "Project Alpha 07" in restore_select_view.select.options[0].label
+
+
+@pytest.mark.asyncio
+async def test_task_menu_channel_scoping_and_global_search(services):
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 999333444
+
+    # 1. Setup two projects, one bound to channel 12345
+    proj_a = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Mobile iOS",
+        prefix="IOS",
+        discord_channel_id=12345,
+    )
+    proj_b = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Backend Microservices",
+        prefix="BACK",
+        discord_channel_id=67890,
+    )
+    all_projects = [proj_a, proj_b]
+
+    # Create tasks for proj_a
+    await task_srv.create_task(
+        guild_id=guild_id,
+        title="SwiftUI Navigation Flow",
+        creator_discord_id=1,
+        project_id=proj_a.id,
+    )
+
+    # 2. Test opening TaskMenuView in channel 12345 (channel-bound to proj_a)
+    view_channel = TaskMenuView(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=team_srv,
+        projects=all_projects,
+        current_channel_id=12345,
+    )
+    # Verify default scope is automatically proj_a
+    assert view_channel.selected_project_id == proj_a.id
+    assert view_channel.new_task_btn.label == "New Task [IOS]"
+
+    # Verify channel project is marked with "📍 (This Channel)"
+    this_chan_option = next((opt for opt in view_channel.project_select.options if opt.value == str(proj_a.id)), None)
+    assert this_chan_option is not None
+    assert "📍" in this_chan_option.label
+    assert this_chan_option.default is True
+
+    # 3. Test opening TaskMenuView in an unbound channel (99999) -> defaults to Global Scope
+    view_unbound = TaskMenuView(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=team_srv,
+        projects=all_projects,
+        current_channel_id=99999,
+    )
+    assert view_unbound.selected_project_id is None
+    global_option = next((opt for opt in view_unbound.project_select.options if opt.value == "all"), None)
+    assert global_option is not None
+    assert global_option.default is True
+
+    # 4. Test TaskProjectSearchModal submission and scope switching
+    search_cb_mock = AsyncMock()
+    modal = TaskProjectSearchModal(on_search_callback=search_cb_mock, current_query="")
+    modal.query_input._value = "Backend"
+    modal_interaction = MagicMock(spec=discord.Interaction)
+    await modal.on_submit(modal_interaction)
+    search_cb_mock.assert_awaited_once_with(modal_interaction, "Backend")
+
+    # Apply search in view_unbound to switch scope to proj_b
+    search_interaction = MagicMock(spec=discord.Interaction)
+    search_interaction.guild = MagicMock()
+    search_interaction.guild.id = guild_id
+    search_interaction.response = MagicMock()
+    search_interaction.response.edit_message = AsyncMock()
+
+    await view_unbound._apply_scope_search(search_interaction, query="Backend")
+    search_interaction.response.edit_message.assert_awaited_once()
+    assert view_unbound.selected_project_id == proj_b.id
+    assert view_unbound.new_task_btn.label == "New Task [BACK]"
+
+    # 5. Test clicking New Project Task when scoped to a project opens TaskCreateModal directly
+    new_task_interaction = MagicMock(spec=discord.Interaction)
+    new_task_interaction.guild = MagicMock()
+    new_task_interaction.guild.id = guild_id
+    new_task_interaction.response = MagicMock()
+    new_task_interaction.response.send_modal = AsyncMock()
+
+    await view_unbound._on_new_task_clicked(new_task_interaction)
+    new_task_interaction.response.send_modal.assert_awaited_once()
+    created_modal = new_task_interaction.response.send_modal.call_args.args[0]
+    assert isinstance(created_modal, TaskCreateModal)
+    assert created_modal.project.id == proj_b.id
+
+    # 6. Test TaskSelectProjectView search and pagination
+    select_view = TaskSelectProjectView(
+        projects=all_projects,
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=team_srv,
+        current_channel_id=12345,
+    )
+    # Channel project is sorted first
+    assert select_view.select.options[0].value == str(proj_a.id)
+    assert "📍" in select_view.select.options[0].label
+
+    # Search in TaskSelectProjectView
+    filter_interaction = MagicMock(spec=discord.Interaction)
+    filter_interaction.response = MagicMock()
+    filter_interaction.response.edit_message = AsyncMock()
+    await select_view._apply_search(filter_interaction, query="Backend")
+    filter_interaction.response.edit_message.assert_awaited_once()
+    assert len(select_view.select.options) == 1
+    assert select_view.select.options[0].value == str(proj_b.id)

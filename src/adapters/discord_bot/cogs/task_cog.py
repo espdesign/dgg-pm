@@ -126,7 +126,7 @@ class TaskCog(commands.Cog):
             await interaction.response.send_message("❌ Must be used inside a Discord server.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             project = await self.project_service.get_by_name(interaction.guild.id, project_name)
             if not project:
@@ -237,6 +237,9 @@ class TaskCog(commands.Cog):
                 )
             else:
                 await interaction.followup.send(f"✅ Created task **[{task.short_id}]** successfully!", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
 
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create task: {e}", ephemeral=True)
@@ -255,7 +258,7 @@ class TaskCog(commands.Cog):
     ) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
             if not task_entity:
@@ -278,6 +281,9 @@ class TaskCog(commands.Cog):
             if hasattr(self.bot, "sync_root_task_message"):
                 await self.bot.sync_root_task_message(updated_task)
             await interaction.followup.send(f"✅ {msg}", embed=embed)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update task assignee: {e}", ephemeral=True)
 
@@ -304,7 +310,7 @@ class TaskCog(commands.Cog):
     ) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
             if not task_entity:
@@ -333,6 +339,9 @@ class TaskCog(commands.Cog):
             if hasattr(self.bot, "sync_root_task_message"):
                 await self.bot.sync_root_task_message(updated_task)
             await interaction.followup.send(f"✅ Updated watchers for **[{updated_task.short_id}]**!", embed=embed)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update watchers: {e}", ephemeral=True)
 
@@ -351,7 +360,7 @@ class TaskCog(commands.Cog):
     ) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             task_entity = None
             if task:
@@ -392,6 +401,9 @@ class TaskCog(commands.Cog):
                 f"✅ Posted updated Task Action Card for **[{task_entity.short_id}]**!",
                 ephemeral=True,
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to refresh task card: {e}", ephemeral=True)
 
@@ -427,7 +439,7 @@ class TaskCog(commands.Cog):
         if not interaction.guild:
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             due_at = parse_datetime(due)
             watchers = extract_user_ids(cc)
@@ -447,6 +459,7 @@ class TaskCog(commands.Cog):
             embed = build_task_embed(task)
             thread = None
             msg = None
+
             if isinstance(interaction.channel, discord.ForumChannel):
                 post_name = f"[{task.short_id}] {task.title}"
                 if len(post_name) > 100:
@@ -519,6 +532,9 @@ class TaskCog(commands.Cog):
                 + (f" with thread <#{thread.id}>!" if (thread and thread.id != interaction.channel_id) else "!"),
                 ephemeral=True,
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create standalone task: {e}", ephemeral=True)
 
@@ -546,7 +562,7 @@ class TaskCog(commands.Cog):
         if not interaction.guild:
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
             if not task_entity:
@@ -571,6 +587,9 @@ class TaskCog(commands.Cog):
                 f"✅ Updated **[{updated_task.short_id}]** status to **{new_status.value}**!",
                 embed=embed,
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update status: {e}", ephemeral=True)
 
@@ -580,7 +599,7 @@ class TaskCog(commands.Cog):
     async def task_history(self, interaction: discord.Interaction, task: str) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
         if not task_entity:
             await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
@@ -589,6 +608,9 @@ class TaskCog(commands.Cog):
         history = await self.task_service.get_history(task_entity.id)
         embed = build_task_history_embed(task_entity, history)
         await interaction.followup.send(embed=embed)
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
 
     @app_commands.command(name="task-archive", description="Archive a task.")
     @app_commands.describe(task="Task identifier")
@@ -596,7 +618,7 @@ class TaskCog(commands.Cog):
     async def task_archive(self, interaction: discord.Interaction, task: str) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
         if not task_entity:
             await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
@@ -606,13 +628,16 @@ class TaskCog(commands.Cog):
         if archived_task and hasattr(self.bot, "sync_task_thread"):
             await self.bot.sync_task_thread(archived_task, action="archive")
         await interaction.followup.send(f"📁 Task **[{task_entity.short_id}] {task_entity.title}** has been archived.")
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
 
     @app_commands.command(name="task-unarchive", description="Restore an archived task.")
     @app_commands.describe(task="Task identifier")
     async def task_unarchive(self, interaction: discord.Interaction, task: str) -> None:
         if not interaction.guild:
             return
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
         if not task_entity:
             await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
@@ -622,6 +647,9 @@ class TaskCog(commands.Cog):
         if restored_task and hasattr(self.bot, "sync_task_thread"):
             await self.bot.sync_task_thread(restored_task, action="unarchive")
         await interaction.followup.send(f"📂 Task **[{task_entity.short_id}] {task_entity.title}** has been restored.")
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
 
     @app_commands.command(name="task-list", description="Display filtered active tasks with interactive pagination.")
     @app_commands.describe(
@@ -649,7 +677,7 @@ class TaskCog(commands.Cog):
         if not interaction.guild:
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             project_id = None
             title_parts = []
@@ -696,18 +724,54 @@ class TaskCog(commands.Cog):
             view = TaskListView(tasks, total_count, title_context)
 
             await interaction.followup.send(embed=embed, view=view)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            await menu_manager.register_menu(interaction)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to list tasks: {e}", ephemeral=True)
 
     @app_commands.command(name="task-menu", description="Open interactive Task Operations Control Center.")
     async def task_menu(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_menu_embed
+        if not interaction.guild:
+            return
 
-        embed = build_task_menu_embed()
-        projects = (
-            await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-            if interaction.guild
-            else []
+        from src.adapters.discord_bot.menu_manager import menu_manager
+        from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_board_embed
+
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        channel_id = interaction.channel.id if interaction.channel else None
+        parent_id = getattr(interaction.channel, "parent_id", None)
+
+        channel_ids = {cid for cid in (channel_id, parent_id) if cid}
+        channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
+
+        selected_project_id = channel_projects[0].id if channel_projects else None
+        tasks, total = await self.task_service.list_tasks(
+            guild_id=interaction.guild.id,
+            project_id=selected_project_id,
+            exclude_completed=True,
+            limit=15,
         )
-        view = TaskMenuView(self.task_service, self.project_service, self.team_service, projects=projects)
+
+        project_label = "All Projects (Global Scope)"
+        if selected_project_id:
+            match = channel_projects[0]
+            project_label = f"[{match.prefix}] {match.name} (This Channel)"
+
+        view = TaskMenuView(
+            self.task_service,
+            self.project_service,
+            self.team_service,
+            projects=projects,
+            current_channel_id=channel_id,
+            parent_channel_id=parent_id,
+        )
+        embed = build_task_board_embed(
+            tasks=tasks,
+            total_count=total,
+            project_label=project_label,
+            status_label="Active Tasks (In Progress & Not Started)",
+            assignee_label="All Members",
+        )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await menu_manager.register_menu(interaction)

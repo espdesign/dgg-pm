@@ -140,6 +140,10 @@ class IProjectRepo(ABC):
         """Soft-deletes or unarchives a project."""
 
     @abstractmethod
+    async def update_channel_id(self, project_id: UUID, discord_channel_id: int | None) -> Project | None:
+        """Updates the bound Discord channel ID for a project."""
+
+    @abstractmethod
     async def assign_team(self, project_team: ProjectTeam) -> None:
         """Maps a team to a project."""
 

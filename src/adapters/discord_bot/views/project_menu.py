@@ -1,4 +1,7 @@
 import logging
+import math
+from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 import discord
@@ -122,6 +125,9 @@ class ProjectCreateModal(discord.ui.Modal):
                 embed.add_field(name="Category", value=project.category, inline=True)
             embed.set_footer(text=f"Project ID: {project.id}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             logger.exception("Error creating project via modal: %s", e)
             await interaction.response.send_message(f"❌ Failed to create project: {e}", ephemeral=True)
@@ -201,37 +207,63 @@ class ProjectChannelSelectView(discord.ui.View):
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
-class ProjectActiveListView(discord.ui.View):
-    """View displaying active projects with a Back button."""
+class ProjectSearchModal(discord.ui.Modal):
+    """Modal to enter a search query for filtering projects."""
 
-    def __init__(
-        self,
-        project_service: ProjectService,
-        team_service: TeamService,
-        task_service: TaskService | None = None,
-    ):
-        super().__init__(timeout=120)
-        self.project_service = project_service
-        self.team_service = team_service
-        self.task_service = task_service
+    def __init__(self, on_search_callback: Callable[[discord.Interaction, str], Any], current_query: str = ""):
+        super().__init__(title="Search Projects")
+        self.on_search_callback = on_search_callback
 
-        self.back_btn = discord.ui.Button(
-            label="Back to Project Menu",
-            emoji="⬅️",
-            style=discord.ButtonStyle.secondary,
-            row=0,
+        self.query_input = discord.ui.TextInput(
+            label="Project Name, Prefix, or Category",
+            placeholder="e.g. INF, Security, Mobile, DevOps...",
+            default=current_query,
+            required=False,
+            max_length=100,
         )
-        self.back_btn.callback = self._on_back_clicked
-        self.add_item(self.back_btn)
+        self.add_item(self.query_input)
 
-    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        query = self.query_input.value.strip()
+        await self.on_search_callback(interaction, query)
 
 
-class ProjectArchiveSelectView(discord.ui.View):
-    """Interactive select menu to archive an active project."""
+def build_active_projects_embed(
+    projects: list[Project],
+    page: int,
+    total_count: int,
+    query: str = "",
+    page_size: int = 8,
+) -> discord.Embed:
+    total_pages = max(1, math.ceil(total_count / page_size))
+    start_idx = page * page_size
+    page_projects = projects[start_idx : start_idx + page_size]
+
+    filter_str = f" • Filter: `{query}`" if query else ""
+    embed = discord.Embed(
+        title=f"📁 Active Projects ({total_count}){filter_str}",
+        color=discord.Color.blurple(),
+    )
+    if not page_projects:
+        embed.description = "*No active projects match your search.*"
+        embed.set_footer(text=f"Page {page + 1} of {total_pages}")
+        return embed
+
+    for p in page_projects:
+        chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "No channel"
+        desc_str = p.description or "No description"
+        cat_str = f" • [{p.category}]" if p.category else ""
+        embed.add_field(
+            name=f"{p.name} (`{p.prefix}`){cat_str}",
+            value=f"• Channel: {chan_str}\n• Next Task: #{p.next_task_number}\n• {desc_str}",
+            inline=False,
+        )
+    embed.set_footer(text=f"Page {page + 1} of {total_pages} • Total: {total_count} projects")
+    return embed
+
+
+class ProjectActiveListView(discord.ui.View):
+    """Paginated and searchable view for active projects."""
 
     def __init__(
         self,
@@ -239,53 +271,184 @@ class ProjectArchiveSelectView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        current_page: int = 0,
+        query: str = "",
+        page_size: int = 8,
+    ):
+        super().__init__(timeout=180)
+        self.all_projects = projects
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+        self.current_page = current_page
+        self.query = query
+        self.page_size = page_size
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+
+    def _filter_projects(self) -> list[Project]:
+        if not self.query:
+            return self.all_projects
+        q = self.query.lower()
+        return [
+            p
+            for p in self.all_projects
+            if q in p.name.lower() or q in p.prefix.lower() or (p.category and q in p.category.lower())
+        ]
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+        total_count = len(self._filtered_projects)
+        total_pages = max(1, math.ceil(total_count / self.page_size))
+        if self.current_page >= total_pages:
+            self.current_page = max(0, total_pages - 1)
+
+        # Row 0: Search, Clear, Back
+        search_btn = discord.ui.Button(
+            label="Search",
+            emoji="🔍",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        search_btn.callback = self._on_search_clicked
+        self.add_item(search_btn)
+
+        if self.query:
+            clear_btn = discord.ui.Button(
+                label="Clear Filter",
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            clear_btn.callback = self._on_clear_filter_clicked
+            self.add_item(clear_btn)
+
+        back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
+        back_btn.callback = self._on_back_clicked
+        self.add_item(back_btn)
+
+        # Row 1: Pagination buttons
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page <= 0),
+                row=1,
+            )
+            prev_btn.callback = self._on_prev_clicked
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=1,
+            )
+            next_btn.callback = self._on_next_clicked
+            self.add_item(next_btn)
+
+    async def _on_search_clicked(self, interaction: discord.Interaction) -> None:
+        modal = ProjectSearchModal(self._apply_search, current_query=self.query)
+        await interaction.response.send_modal(modal)
+
+    async def _apply_search(self, interaction: discord.Interaction, query: str) -> None:
+        self.query = query
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        embed = build_active_projects_embed(
+            self._filtered_projects, self.current_page, len(self._filtered_projects), self.query, self.page_size
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_clear_filter_clicked(self, interaction: discord.Interaction) -> None:
+        self.query = ""
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        embed = build_active_projects_embed(
+            self._filtered_projects, self.current_page, len(self._filtered_projects), page_size=self.page_size
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_prev_clicked(self, interaction: discord.Interaction) -> None:
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._rebuild_items()
+            embed = build_active_projects_embed(
+                self._filtered_projects, self.current_page, len(self._filtered_projects), self.query, self.page_size
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_next_clicked(self, interaction: discord.Interaction) -> None:
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.page_size))
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self._rebuild_items()
+            embed = build_active_projects_embed(
+                self._filtered_projects, self.current_page, len(self._filtered_projects), self.query, self.page_size
+            )
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
+class ProjectArchiveConfirmView(discord.ui.View):
+    """Interactive confirmation view prior to archiving a project and active tasks."""
+
+    def __init__(
+        self,
+        project: Project,
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
     ):
         super().__init__(timeout=120)
+        self.project = project
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
 
-        options = [
-            discord.SelectOption(
-                label=f"{p.name} ({p.prefix})",
-                value=str(p.id),
-                description=(p.description[:90] if p.description else "Active Project"),
-                emoji="📁",
-            )
-            for p in projects[:25]
-        ]
-        self.select = discord.ui.Select(
-            placeholder="📦 Select project to archive...",
-            options=options,
-            min_values=1,
-            max_values=1,
+        self.confirm_btn = discord.ui.Button(
+            label="Confirm Archive",
+            emoji="📦",
+            style=discord.ButtonStyle.danger,
             row=0,
         )
-        self.select.callback = self._on_select
-        self.add_item(self.select)
+        self.confirm_btn.callback = self._on_confirm_clicked
+        self.add_item(self.confirm_btn)
 
-        self.back_btn = discord.ui.Button(
-            label="Back to Project Menu",
-            emoji="⬅️",
+        self.cancel_btn = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
             style=discord.ButtonStyle.secondary,
-            row=1,
+            row=0,
         )
-        self.back_btn.callback = self._on_back_clicked
-        self.add_item(self.back_btn)
+        self.cancel_btn.callback = self._on_cancel_clicked
+        self.add_item(self.cancel_btn)
 
-    async def _on_select(self, interaction: discord.Interaction) -> None:
-        project_id = UUID(self.select.values[0])
+    async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         try:
             tasks = []
             if self.task_service and interaction.guild:
                 tasks, _ = await self.task_service.list_tasks(
                     guild_id=interaction.guild.id,
-                    project_id=project_id,
+                    project_id=self.project.id,
                     include_archived=False,
                     limit=500,
                 )
 
-            archived = await self.project_service.archive_project(project_id)
+            archived = await self.project_service.archive_project(self.project.id)
+            if not archived:
+                archived = self.project
 
             if hasattr(interaction.client, "sync_task_thread"):
                 for t in tasks:
@@ -301,66 +464,59 @@ class ProjectArchiveSelectView(discord.ui.View):
             )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
+            logger.exception("Failed to archive project: %s", e)
             await interaction.response.send_message(f"❌ Failed to archive project: {e}", ephemeral=True)
 
-    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+    async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
         embed = build_project_menu_embed()
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
-class ProjectRestoreSelectView(discord.ui.View):
-    """Interactive select menu to restore an archived project."""
+class ProjectRestoreConfirmView(discord.ui.View):
+    """Interactive confirmation view prior to restoring an archived project."""
 
     def __init__(
         self,
-        projects: list[Project],
+        project: Project,
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
     ):
         super().__init__(timeout=120)
+        self.project = project
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
 
-        options = [
-            discord.SelectOption(
-                label=f"{p.name} ({p.prefix})",
-                value=str(p.id),
-                description="Archived Project",
-                emoji="♻️",
-            )
-            for p in projects[:25]
-        ]
-        self.select = discord.ui.Select(
-            placeholder="♻️ Select project to restore...",
-            options=options,
-            min_values=1,
-            max_values=1,
+        self.confirm_btn = discord.ui.Button(
+            label="Confirm Restore",
+            emoji="♻️",
+            style=discord.ButtonStyle.success,
             row=0,
         )
-        self.select.callback = self._on_select
-        self.add_item(self.select)
+        self.confirm_btn.callback = self._on_confirm_clicked
+        self.add_item(self.confirm_btn)
 
-        self.back_btn = discord.ui.Button(
-            label="Back to Project Menu",
-            emoji="⬅️",
+        self.cancel_btn = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
             style=discord.ButtonStyle.secondary,
-            row=1,
+            row=0,
         )
-        self.back_btn.callback = self._on_back_clicked
-        self.add_item(self.back_btn)
+        self.cancel_btn.callback = self._on_cancel_clicked
+        self.add_item(self.cancel_btn)
 
-    async def _on_select(self, interaction: discord.Interaction) -> None:
-        project_id = UUID(self.select.values[0])
+    async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         try:
-            restored = await self.project_service.unarchive_project(project_id)
+            restored = await self.project_service.unarchive_project(self.project.id)
+            if not restored:
+                restored = self.project
 
             if self.task_service and interaction.guild and hasattr(interaction.client, "sync_task_thread"):
                 restored_tasks, _ = await self.task_service.list_tasks(
                     guild_id=interaction.guild.id,
-                    project_id=project_id,
+                    project_id=self.project.id,
                     include_archived=False,
                     limit=500,
                 )
@@ -377,7 +533,442 @@ class ProjectRestoreSelectView(discord.ui.View):
             )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
+            logger.exception("Failed to restore project: %s", e)
             await interaction.response.send_message(f"❌ Failed to restore project: {e}", ephemeral=True)
+
+    async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
+def build_archive_select_embed(
+    total_count: int,
+    page: int,
+    total_pages: int,
+    query: str = "",
+) -> discord.Embed:
+    filter_note = f"\n🔎 **Search Filter Active:** `{query}`" if query else ""
+    embed = discord.Embed(
+        title="📦 Archive Project",
+        description=(
+            f"Select an active project below to archive:{filter_note}\n\n"
+            f"• **Available Projects:** `{total_count}`\n"
+            f"• **Page:** `{page + 1}` of `{total_pages}`\n\n"
+            "Selecting a project will open a confirmation screen."
+        ),
+        color=discord.Color.orange(),
+    )
+    embed.set_footer(text="Use Search or Page buttons to browse larger collections.")
+    return embed
+
+
+class ProjectArchiveSelectView(discord.ui.View):
+    """Interactive select menu to choose an active project to archive with search and pagination."""
+
+    PAGE_SIZE = 25
+
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+        current_page: int = 0,
+        query: str = "",
+    ):
+        super().__init__(timeout=120)
+        self.all_projects = projects
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+        self.current_page = current_page
+        self.query = query
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+
+    def _filter_projects(self) -> list[Project]:
+        if not self.query:
+            return self.all_projects
+        q = self.query.lower()
+        return [
+            p
+            for p in self.all_projects
+            if q in p.name.lower() or q in p.prefix.lower() or (p.category and q in p.category.lower())
+        ]
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+        total_count = len(self._filtered_projects)
+        total_pages = max(1, math.ceil(total_count / self.PAGE_SIZE))
+        if self.current_page >= total_pages:
+            self.current_page = max(0, total_pages - 1)
+
+        start_idx = self.current_page * self.PAGE_SIZE
+        page_projects = self._filtered_projects[start_idx : start_idx + self.PAGE_SIZE]
+
+        # Row 0: Select dropdown (up to 25 options)
+        if page_projects:
+            options = [
+                discord.SelectOption(
+                    label=f"{p.name} ({p.prefix})"[:100],
+                    value=str(p.id),
+                    description=(p.description[:90] if p.description else "Active Project"),
+                    emoji="📁",
+                )
+                for p in page_projects
+            ]
+            self.select = discord.ui.Select(
+                placeholder=f"📦 Select project to archive (Page {self.current_page + 1}/{total_pages})...",
+                options=options,
+                min_values=1,
+                max_values=1,
+                row=0,
+            )
+            self.select.callback = self._on_select
+            self.add_item(self.select)
+
+        # Row 1: Search, Clear, Back
+        search_btn = discord.ui.Button(
+            label="Search",
+            emoji="🔍",
+            style=discord.ButtonStyle.primary,
+            row=1,
+        )
+        search_btn.callback = self._on_search_clicked
+        self.add_item(search_btn)
+
+        if self.query:
+            clear_btn = discord.ui.Button(
+                label="Clear Filter",
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            clear_btn.callback = self._on_clear_filter_clicked
+            self.add_item(clear_btn)
+
+        back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        back_btn.callback = self._on_back_clicked
+        self.add_item(back_btn)
+
+        # Row 2: Pagination (if > 1 page)
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page <= 0),
+                row=2,
+            )
+            prev_btn.callback = self._on_prev_clicked
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=2,
+            )
+            next_btn.callback = self._on_next_clicked
+            self.add_item(next_btn)
+
+    async def _on_search_clicked(self, interaction: discord.Interaction) -> None:
+        modal = ProjectSearchModal(self._apply_search, current_query=self.query)
+        await interaction.response.send_modal(modal)
+
+    async def _apply_search(self, interaction: discord.Interaction, query: str) -> None:
+        self.query = query
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        embed = build_archive_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_clear_filter_clicked(self, interaction: discord.Interaction) -> None:
+        self.query = ""
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        embed = build_archive_select_embed(len(self._filtered_projects), self.current_page, total_pages)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_prev_clicked(self, interaction: discord.Interaction) -> None:
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._rebuild_items()
+            total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+            embed = build_archive_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_next_clicked(self, interaction: discord.Interaction) -> None:
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self._rebuild_items()
+            embed = build_archive_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        project_id = UUID(self.select.values[0])
+        project = next((p for p in self.all_projects if p.id == project_id), None)
+        if not project and interaction.guild:
+            project = await self.project_service.get_by_id(project_id)
+
+        if not project:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        task_count_note = ""
+        if self.task_service and interaction.guild:
+            _tasks, total_tasks = await self.task_service.list_tasks(
+                guild_id=interaction.guild.id,
+                project_id=project_id,
+                include_archived=False,
+                limit=500,
+            )
+            task_count_note = f"\n• **Active Tasks:** `{total_tasks}` task(s) will be archived."
+
+        chan_note = f"\n• **Channel:** <#{project.discord_channel_id}>" if project.discord_channel_id else ""
+
+        embed = discord.Embed(
+            title="⚠️ Confirm Project Archival",
+            description=(
+                f"Are you sure you want to archive project **{project.name} (`{project.prefix}`)**?\n"
+                f"{chan_note}"
+                f"{task_count_note}\n"
+                "• **Discord Threads:** Associated task discussion threads will be archived.\n\n"
+                "⚠️ This will hide the project from active selectors and board views."
+            ),
+            color=discord.Color.red(),
+        )
+        embed.set_footer(text="Click 'Confirm Archive' to execute or 'Cancel' to abort.")
+
+        view = ProjectArchiveConfirmView(
+            project=project,
+            project_service=self.project_service,
+            team_service=self.team_service,
+            task_service=self.task_service,
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
+def build_restore_select_embed(
+    total_count: int,
+    page: int,
+    total_pages: int,
+    query: str = "",
+) -> discord.Embed:
+    filter_note = f"\n🔎 **Search Filter Active:** `{query}`" if query else ""
+    embed = discord.Embed(
+        title="♻️ Restore Project",
+        description=(
+            f"Select an archived project below to restore:{filter_note}\n\n"
+            f"• **Archived Projects Available:** `{total_count}`\n"
+            f"• **Page:** `{page + 1}` of `{total_pages}`\n\n"
+            "Selecting a project will open a confirmation screen."
+        ),
+        color=discord.Color.green(),
+    )
+    embed.set_footer(text="Use Search or Page buttons to browse larger collections.")
+    return embed
+
+
+class ProjectRestoreSelectView(discord.ui.View):
+    """Interactive select menu to choose an archived project to restore with search and pagination."""
+
+    PAGE_SIZE = 25
+
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+        current_page: int = 0,
+        query: str = "",
+    ):
+        super().__init__(timeout=120)
+        self.all_projects = projects
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+        self.current_page = current_page
+        self.query = query
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+
+    def _filter_projects(self) -> list[Project]:
+        if not self.query:
+            return self.all_projects
+        q = self.query.lower()
+        return [
+            p
+            for p in self.all_projects
+            if q in p.name.lower() or q in p.prefix.lower() or (p.category and q in p.category.lower())
+        ]
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+        total_count = len(self._filtered_projects)
+        total_pages = max(1, math.ceil(total_count / self.PAGE_SIZE))
+        if self.current_page >= total_pages:
+            self.current_page = max(0, total_pages - 1)
+
+        start_idx = self.current_page * self.PAGE_SIZE
+        page_projects = self._filtered_projects[start_idx : start_idx + self.PAGE_SIZE]
+
+        # Row 0: Select dropdown (up to 25 options)
+        if page_projects:
+            options = [
+                discord.SelectOption(
+                    label=f"{p.name} ({p.prefix})"[:100],
+                    value=str(p.id),
+                    description=(p.description[:90] if p.description else "Archived Project"),
+                    emoji="♻️",
+                )
+                for p in page_projects
+            ]
+            self.select = discord.ui.Select(
+                placeholder=f"♻️ Select project to restore (Page {self.current_page + 1}/{total_pages})...",
+                options=options,
+                min_values=1,
+                max_values=1,
+                row=0,
+            )
+            self.select.callback = self._on_select
+            self.add_item(self.select)
+
+        # Row 1: Search, Clear, Back
+        search_btn = discord.ui.Button(
+            label="Search",
+            emoji="🔍",
+            style=discord.ButtonStyle.primary,
+            row=1,
+        )
+        search_btn.callback = self._on_search_clicked
+        self.add_item(search_btn)
+
+        if self.query:
+            clear_btn = discord.ui.Button(
+                label="Clear Filter",
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            clear_btn.callback = self._on_clear_filter_clicked
+            self.add_item(clear_btn)
+
+        back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        back_btn.callback = self._on_back_clicked
+        self.add_item(back_btn)
+
+        # Row 2: Pagination (if > 1 page)
+        if total_pages > 1:
+            prev_btn = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page <= 0),
+                row=2,
+            )
+            prev_btn.callback = self._on_prev_clicked
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.secondary,
+                disabled=(self.current_page >= total_pages - 1),
+                row=2,
+            )
+            next_btn.callback = self._on_next_clicked
+            self.add_item(next_btn)
+
+    async def _on_search_clicked(self, interaction: discord.Interaction) -> None:
+        modal = ProjectSearchModal(self._apply_search, current_query=self.query)
+        await interaction.response.send_modal(modal)
+
+    async def _apply_search(self, interaction: discord.Interaction, query: str) -> None:
+        self.query = query
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        embed = build_restore_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_clear_filter_clicked(self, interaction: discord.Interaction) -> None:
+        self.query = ""
+        self.current_page = 0
+        self._filtered_projects = self._filter_projects()
+        self._rebuild_items()
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        embed = build_restore_select_embed(len(self._filtered_projects), self.current_page, total_pages)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_prev_clicked(self, interaction: discord.Interaction) -> None:
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._rebuild_items()
+            total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+            embed = build_restore_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_next_clicked(self, interaction: discord.Interaction) -> None:
+        total_pages = max(1, math.ceil(len(self._filtered_projects) / self.PAGE_SIZE))
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self._rebuild_items()
+            embed = build_restore_select_embed(len(self._filtered_projects), self.current_page, total_pages, self.query)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        project_id = UUID(self.select.values[0])
+        project = next((p for p in self.all_projects if p.id == project_id), None)
+        if not project and interaction.guild:
+            project = await self.project_service.get_by_id(project_id)
+
+        if not project:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        chan_note = f"\n• **Bound Channel:** <#{project.discord_channel_id}>" if project.discord_channel_id else ""
+
+        embed = discord.Embed(
+            title="♻️ Confirm Project Restoration",
+            description=(
+                f"Are you sure you want to restore project **{project.name} (`{project.prefix}`)**?\n"
+                f"{chan_note}\n"
+                "• **Project Status:** Reactivated and visible across project selectors.\n"
+                "• **Active Tasks:** Incomplete tasks will be unarchived.\n"
+                "• **Discord Threads:** Associated task threads will be reopened."
+            ),
+            color=discord.Color.green(),
+        )
+        embed.set_footer(text="Click 'Confirm Restore' to execute or 'Cancel' to abort.")
+
+        view = ProjectRestoreConfirmView(
+            project=project,
+            project_service=self.project_service,
+            team_service=self.team_service,
+            task_service=self.task_service,
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
         view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
@@ -651,19 +1242,8 @@ class ProjectMenuView(discord.ui.View):
             await interaction.response.send_message("📁 No active projects found in this server.", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title=f"📁 Active Projects ({len(projects)})",
-            color=discord.Color.blurple(),
-        )
-        for p in projects:
-            chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "No channel"
-            desc_str = p.description or "No description"
-            embed.add_field(
-                name=f"{p.name} (`{p.prefix}`)",
-                value=f"• Channel: {chan_str}\n• Next Task: #{p.next_task_number}\n• {desc_str}",
-                inline=False,
-            )
-        view = ProjectActiveListView(self.project_service, self.team_service, self.task_service)
+        embed = build_active_projects_embed(projects, page=0, total_count=len(projects))
+        view = ProjectActiveListView(projects, self.project_service, self.team_service, self.task_service)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Assign Team", emoji="🤝", style=discord.ButtonStyle.secondary, row=0)
@@ -699,11 +1279,8 @@ class ProjectMenuView(discord.ui.View):
             await interaction.response.send_message("📁 No active projects available to archive.", ephemeral=True)
             return
         view = ProjectArchiveSelectView(projects, self.project_service, self.team_service, self.task_service)
-        embed = discord.Embed(
-            title="📦 Archive Project",
-            description="Select an active project below to archive:",
-            color=discord.Color.orange(),
-        )
+        total_pages = max(1, math.ceil(len(projects) / ProjectArchiveSelectView.PAGE_SIZE))
+        embed = build_archive_select_embed(len(projects), 0, total_pages)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Restore Project", emoji="♻️", style=discord.ButtonStyle.secondary, row=1)
@@ -716,11 +1293,8 @@ class ProjectMenuView(discord.ui.View):
             await interaction.response.send_message("📁 No archived projects to restore.", ephemeral=True)
             return
         view = ProjectRestoreSelectView(archived, self.project_service, self.team_service, self.task_service)
-        embed = discord.Embed(
-            title="♻️ Restore Project",
-            description="Select an archived project below to restore:",
-            color=discord.Color.green(),
-        )
+        total_pages = max(1, math.ceil(len(archived) / ProjectRestoreSelectView.PAGE_SIZE))
+        embed = build_restore_select_embed(len(archived), 0, total_pages)
         await interaction.response.edit_message(embed=embed, view=view)
 
 

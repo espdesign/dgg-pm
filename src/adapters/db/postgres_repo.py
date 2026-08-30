@@ -598,6 +598,21 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
             await session.commit()
             return _to_domain_project(row)
 
+    async def update_channel_id(self, project_id: UUID, discord_channel_id: int | None) -> Project | None:
+        async with self._get_session() as session:
+            stmt = (
+                update(ProjectTable)
+                .where(ProjectTable.id == project_id)
+                .values(discord_channel_id=discord_channel_id, updated_at=datetime.now(UTC))
+                .returning(ProjectTable)
+            )
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if not row:
+                return None
+            await session.commit()
+            return _to_domain_project(row)
+
     async def assign_team(self, project_team: ProjectTeam) -> None:
         async with self._get_session() as session:
             row = ProjectTeamTable(

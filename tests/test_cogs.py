@@ -59,7 +59,7 @@ async def test_project_create_execution(services):
         category="Engineering",
     )
 
-    interaction.response.defer.assert_awaited_once_with(ephemeral=False)
+    interaction.response.defer.assert_awaited_once_with(ephemeral=True)
     interaction.followup.send.assert_awaited_once()
 
     # Check project persisted in db with bound channel id

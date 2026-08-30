@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
-from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_menu_embed
+from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_board_embed
 from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -48,13 +48,43 @@ class PmHubView(discord.ui.View):
 
     @discord.ui.button(label="Tasks Hub", emoji="⚡", style=discord.ButtonStyle.primary, row=0)
     async def tasks_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        embed = build_task_menu_embed()
-        projects = (
-            await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-            if interaction.guild
-            else []
+        if not interaction.guild:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        channel_id = interaction.channel.id if interaction.channel else None
+        parent_id = getattr(interaction.channel, "parent_id", None)
+
+        channel_ids = {cid for cid in (channel_id, parent_id) if cid}
+        channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
+
+        selected_project_id = channel_projects[0].id if channel_projects else None
+        tasks, total = await self.task_service.list_tasks(
+            guild_id=interaction.guild.id,
+            project_id=selected_project_id,
+            exclude_completed=True,
+            limit=15,
         )
-        view = TaskMenuView(self.task_service, self.project_service, self.team_service, projects=projects)
+
+        project_label = "All Projects (Global Scope)"
+        if selected_project_id:
+            match = channel_projects[0]
+            project_label = f"[{match.prefix}] {match.name} (This Channel)"
+
+        view = TaskMenuView(
+            self.task_service,
+            self.project_service,
+            self.team_service,
+            projects=projects,
+            current_channel_id=channel_id,
+            parent_channel_id=parent_id,
+        )
+        embed = build_task_board_embed(
+            tasks=tasks,
+            total_count=total,
+            project_label=project_label,
+            status_label="Active Tasks (In Progress & Not Started)",
+            assignee_label="All Members",
+        )
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="My Settings", emoji="⚙️", style=discord.ButtonStyle.secondary, row=0)

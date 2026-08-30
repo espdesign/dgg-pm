@@ -24,11 +24,13 @@ class HelpCog(commands.Cog):
 
     @app_commands.command(name="pm-menu", description="Open the Master Project Management Control Hub.")
     async def pm_menu(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
 
         embed = build_hub_welcome_embed()
         view = PmHubView(self.project_service, self.team_service, self.task_service)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await menu_manager.register_menu(interaction)
 
     @app_commands.command(name="help-pm", description="Display command guides and operational documentation.")
     async def help_pm(self, interaction: discord.Interaction) -> None:

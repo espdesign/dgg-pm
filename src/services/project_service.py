@@ -78,6 +78,9 @@ class ProjectService:
     async def unarchive_project(self, project_id: UUID) -> Project | None:
         return await self.project_repo.set_archived(project_id, is_archived=False)
 
+    async def update_project_channel(self, project_id: UUID, discord_channel_id: int | None) -> Project | None:
+        return await self.project_repo.update_channel_id(project_id, discord_channel_id)
+
     async def assign_team_to_project(
         self,
         project_id: UUID,

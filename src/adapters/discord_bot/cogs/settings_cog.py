@@ -73,5 +73,8 @@ class SettingsCog(commands.Cog):
             team_service=self.team_service,
             task_service=self.task_service,
         )
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
         embed = build_settings_embed(interaction.user, current_pref)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await menu_manager.register_menu(interaction)

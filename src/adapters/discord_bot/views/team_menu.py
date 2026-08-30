@@ -47,6 +47,9 @@ class TeamCreateModalWithName(discord.ui.Modal):
             )
             embed.set_footer(text=f"Team ID: {team.id}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             logger.exception("Error creating team via modal: %s", e)
             await interaction.response.send_message(f"❌ Failed to create team: {e}", ephemeral=True)
