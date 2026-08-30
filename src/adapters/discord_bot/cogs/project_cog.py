@@ -204,3 +204,11 @@ class ProjectCog(commands.Cog):
 
         await self.project_service.unarchive_project(project.id)
         await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
+
+    @app_commands.command(name="project-menu", description="Open interactive Project Management Control Center.")
+    async def project_menu(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
+
+        embed = build_project_menu_embed()
+        view = ProjectMenuView(self.project_service, self.team_service)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

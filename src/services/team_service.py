@@ -47,3 +47,6 @@ class TeamService:
 
     async def list_teams(self, guild_id: int) -> list[Team]:
         return await self.team_repo.list_teams(guild_id)
+
+    async def list_members(self, team_id: UUID) -> list[TeamMember]:
+        return await self.team_repo.list_members(team_id)

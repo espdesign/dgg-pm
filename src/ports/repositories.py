@@ -156,6 +156,10 @@ class ITeamRepo(ABC):
     async def list_teams(self, guild_id: int) -> list[Team]:
         """Lists all teams for a guild."""
 
+    @abstractmethod
+    async def list_members(self, team_id: UUID) -> list[TeamMember]:
+        """Lists all members assigned to a team."""
+
 
 class IOutboxRepo(ABC):
     @abstractmethod

@@ -48,7 +48,7 @@ class DggPmBot(commands.Bot):
         await self.add_cog(ProjectCog(self, self.project_service, self.team_service))
         await self.add_cog(TeamCog(self, self.team_service))
         await self.add_cog(TaskCog(self, self.task_service, self.project_service))
-        await self.add_cog(HelpCog(self))
+        await self.add_cog(HelpCog(self, self.project_service, self.team_service, self.task_service))
         logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog")
 
         # Sync application slash commands

@@ -93,13 +93,17 @@ class TeamCog(commands.Cog):
                 await interaction.followup.send(f"❌ Team '{team_name}' not found.", ephemeral=True)
                 return
 
-            # Assign Discord role to member if not present
-            role = interaction.guild.get_role(team.discord_role_id)
-            if role and role not in user.roles:
-                try:
-                    await user.add_roles(role, reason=f"Assigned to team {team.name}")
-                except discord.Forbidden:
-                    pass
+            # Check if user has team's Discord role
+            if hasattr(user, "roles"):
+                has_role = any(r.id == team.discord_role_id for r in user.roles)
+                if not has_role:
+                    await interaction.followup.send(
+                        f"❌ <@{user.id}> is not part of team **{team.name}** "
+                        f"(missing role <@&{team.discord_role_id}>).\n"
+                        f"Please assign them the Discord role first.",
+                        ephemeral=True,
+                    )
+                    return
 
             await self.team_service.assign_member(
                 team_id=team.id,
@@ -130,3 +134,11 @@ class TeamCog(commands.Cog):
             embed.add_field(name=f"**{t.name}**", value=f"Role: <@&{t.discord_role_id}>", inline=False)
 
         await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="team-menu", description="Open interactive Team Management Control Center.")
+    async def team_menu(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
+
+        embed = build_team_menu_embed()
+        view = TeamMenuView(self.team_service)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

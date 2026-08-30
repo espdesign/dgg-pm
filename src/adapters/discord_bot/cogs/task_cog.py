@@ -412,3 +412,11 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(embed=embed, view=view)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to list tasks: {e}", ephemeral=True)
+
+    @app_commands.command(name="task-menu", description="Open interactive Task Operations Control Center.")
+    async def task_menu(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_menu_embed
+
+        embed = build_task_menu_embed()
+        view = TaskMenuView(self.task_service, self.project_service)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

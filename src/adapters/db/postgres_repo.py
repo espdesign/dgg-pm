@@ -24,6 +24,7 @@ from src.domain.enums import (
     PriorityLevel,
     TaskHistoryAction,
     TaskStatus,
+    TeamRoleType,
 )
 from src.domain.models import (
     OutboxEvent,
@@ -109,6 +110,15 @@ def _to_domain_team(row: TeamTable) -> Team:
         guild_id=row.guild_id,
         name=row.name,
         discord_role_id=row.discord_role_id,
+        created_at=row.created_at,
+    )
+
+
+def _to_domain_team_member(row: TeamMemberTable) -> TeamMember:
+    return TeamMember(
+        team_id=row.team_id,
+        user_discord_id=row.user_discord_id,
+        role_type=TeamRoleType(row.role_type),
         created_at=row.created_at,
     )
 
@@ -591,6 +601,13 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
             res = await session.execute(stmt)
             rows = res.scalars().all()
             return [_to_domain_team(r) for r in rows]
+
+    async def list_members(self, team_id: UUID) -> list[TeamMember]:
+        async with self._get_session() as session:
+            stmt = select(TeamMemberTable).where(TeamMemberTable.team_id == team_id)
+            res = await session.execute(stmt)
+            rows = res.scalars().all()
+            return [_to_domain_team_member(r) for r in rows]
 
 
 class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
