@@ -31,6 +31,8 @@ class ProjectTable(Base):
     next_task_number = Column(Integer, nullable=False, default=1)
     description = Column(Text, nullable=True)
     discord_channel_id = Column(BigInteger, nullable=True, index=True)
+    discord_role_id = Column(BigInteger, nullable=True, index=True)
+    lead_discord_id = Column(BigInteger, nullable=True, index=True)
     category = Column(String(100), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))

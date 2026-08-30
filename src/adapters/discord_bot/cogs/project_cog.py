@@ -36,6 +36,7 @@ class ProjectCog(commands.Cog):
         name="Name of the project (e.g. Infrastructure)",
         channel="Discord forum or text channel to bind as the project's task feed",
         role="Discord server role representing the squad working on this project",
+        lead="Designated Project Lead member with management permissions",
         prefix="Optional 3-4 letter prefix (e.g. INF)",
         description="Brief summary of the project goals",
         category="Category or domain (e.g. Engineering, Marketing)",
@@ -47,6 +48,7 @@ class ProjectCog(commands.Cog):
         name: str,
         channel: discord.ForumChannel | discord.TextChannel,
         role: discord.Role | None = None,
+        lead: discord.Member | None = None,
         prefix: str | None = None,
         description: str | None = None,
         category: str | None = None,
@@ -69,18 +71,10 @@ class ProjectCog(commands.Cog):
                 prefix=prefix,
                 description=description,
                 discord_channel_id=channel.id,
+                discord_role_id=role.id if role else None,
+                lead_discord_id=lead.id if lead else None,
                 category=category,
             )
-
-            role_field_val = None
-            if role:
-                team = await self.team_service.get_or_create_team_for_role(
-                    guild_id=interaction.guild.id,
-                    role_id=role.id,
-                    role_name=role.name,
-                )
-                await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
-                role_field_val = f"<@&{role.id}>"
 
             is_forum = isinstance(channel, discord.ForumChannel)
             chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
@@ -114,8 +108,10 @@ class ProjectCog(commands.Cog):
                 color=discord.Color.blue(),
             )
             embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
-            if role_field_val:
-                embed.add_field(name="Assigned Squad", value=role_field_val, inline=True)
+            if project.discord_role_id:
+                embed.add_field(name="Squad Role", value=f"<@&{project.discord_role_id}>", inline=True)
+            if project.lead_discord_id:
+                embed.add_field(name="👑 Project Lead", value=f"<@{project.lead_discord_id}>", inline=True)
             if project.discord_channel_id:
                 embed.add_field(
                     name="Bound Channel",
@@ -236,6 +232,92 @@ class ProjectCog(commands.Cog):
         except Exception as e:
             logger.exception("Error in archived_project_autocomplete: %s", e)
             return []
+
+    @app_commands.command(name="project-set-role", description="Map or clear the squad Discord role for a project.")
+    @app_commands.describe(
+        project_name="Name of the project",
+        role="Discord server role for the squad (leave empty to make Public / open)",
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_set_role(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        role: discord.Role | None = None,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            role_id = role.id if role else None
+            await self.project_service.set_project_role(project.id, role_id)
+
+            if role:
+                await interaction.followup.send(
+                    f"✅ Mapped Discord role <@&{role.id}> to project **{project.name}** (`{project.prefix}`)."
+                )
+            else:
+                await interaction.followup.send(
+                    f"🌐 Cleared squad role for project **{project.name}** (`{project.prefix}`). It is now **Public**."
+                )
+
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"updating squad role for project '{project_name}'", logger, ephemeral=True
+            )
+
+    @app_commands.command(name="project-set-lead", description="Designate or clear the Project Lead for a project.")
+    @app_commands.describe(
+        project_name="Name of the project",
+        lead="Discord member to designate as Project Lead (leave empty to clear)",
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_set_lead(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        lead: discord.Member | None = None,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            lead_id = lead.id if lead else None
+            await self.project_service.set_project_lead(project.id, lead_id)
+
+            if lead:
+                await interaction.followup.send(
+                    f"👑 Designated <@{lead.id}> as the **Project Lead** for **{project.name}** (`{project.prefix}`)."
+                )
+            else:
+                await interaction.followup.send(f"❌ Cleared Project Lead for **{project.name}** (`{project.prefix}`).")
+
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"updating lead for project '{project_name}'", logger, ephemeral=True
+            )
 
     @app_commands.command(name="project-assign", description="Map a functional team container to a project.")
     @app_commands.describe(

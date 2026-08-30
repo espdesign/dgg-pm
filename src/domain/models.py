@@ -70,6 +70,8 @@ class Project(DomainModel):
     next_task_number: int = 1
     description: str | None = None
     discord_channel_id: int | None = None
+    discord_role_id: int | None = None
+    lead_discord_id: int | None = None
     category: str | None = None
     archived_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

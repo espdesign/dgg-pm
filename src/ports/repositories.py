@@ -144,6 +144,14 @@ class IProjectRepo(ABC):
         """Updates the bound Discord channel ID for a project."""
 
     @abstractmethod
+    async def update_role_id(self, project_id: UUID, discord_role_id: int | None) -> Project | None:
+        """Updates the mapped contributor Discord role ID for a project."""
+
+    @abstractmethod
+    async def update_lead_id(self, project_id: UUID, lead_discord_id: int | None) -> Project | None:
+        """Updates the designated Project Lead Discord user ID for a project."""
+
+    @abstractmethod
     async def assign_team(self, project_team: ProjectTeam) -> None:
         """Maps a team to a project."""
 

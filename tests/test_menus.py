@@ -13,8 +13,6 @@ from src.adapters.discord_bot.views.project_menu import (
     ProjectActiveListView,
     ProjectArchiveConfirmView,
     ProjectArchiveSelectView,
-    ProjectAssignTeamView,
-    ProjectAssignTimelineModal,
     ProjectChannelSelectView,
     ProjectCreateModal,
     ProjectMenuView,
@@ -22,7 +20,6 @@ from src.adapters.discord_bot.views.project_menu import (
     ProjectRestoreSelectView,
     ProjectSearchModal,
     build_active_projects_embed,
-    build_project_menu_embed,
 )
 from src.adapters.discord_bot.views.settings_menu import (
     UserSettingsView,
@@ -52,9 +49,8 @@ async def test_project_menu_and_modal(services):
 
     # 1. Test ProjectMenuView and embed
     view = ProjectMenuView(proj_srv, team_srv, task_service=services["task"])
-    embed = build_project_menu_embed()
-    assert "Project Management Control Center" in embed.title
-    assert len(view.children) == 6  # New Project, Active Projects, Assign Team, Archive, Restore, PM Main Menu
+    # 7 buttons: New Project, Active Projects, Set Squad Role, Set Lead, Archive, Restore, Hub
+    assert len(view.children) == 7
 
     # Test clicking New Project opens ProjectChannelSelectView
     new_proj_interaction = MagicMock(spec=discord.Interaction)
@@ -154,36 +150,44 @@ async def test_project_menu_and_modal(services):
     bound_field = next(f for f in embed2.fields if f.name == "Bound Channel")
     assert "Pinned Control Hub" in bound_field.value
 
-    # 4. Test Assign Team Flow (ProjectAssignTeamView & ProjectAssignTimelineModal)
-    team = await team_srv.create_team(guild_id=guild_id, name="DevOps Squad", discord_role_id=987654)
-    projects = [created_proj]
-    teams = [team]
+    # 4. Test ProjectRoleSelectView and ProjectLeadSelectView
+    from src.adapters.discord_bot.views.project_menu import ProjectLeadSelectView, ProjectRoleSelectView
 
-    assign_view = ProjectAssignTeamView(projects, teams, proj_srv, team_srv, services["task"])
-    assert len(assign_view.proj_select.options) == 1
-    assert len(assign_view.team_select.options) == 1
+    role_view = ProjectRoleSelectView([created_proj], proj_srv, team_srv, services["task"])
+    assert len(role_view.proj_select.options) == 1
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 987654
+    role_view.role_select._values = [mock_role]
 
-    # Test quick assign
-    quick_interaction = MagicMock(spec=discord.Interaction)
-    quick_interaction.response = MagicMock()
-    quick_interaction.response.edit_message = AsyncMock()
-    await assign_view._on_assign_quick_clicked(quick_interaction)
-    quick_interaction.response.edit_message.assert_awaited_once()
+    role_interaction = MagicMock(spec=discord.Interaction)
+    role_interaction.response = MagicMock()
+    role_interaction.response.edit_message = AsyncMock()
+    role_interaction.response.defer = AsyncMock()
 
-    # Test timeline modal assign
-    timeline_modal = ProjectAssignTimelineModal(
-        project_service=proj_srv,
-        project=created_proj,
-        team=team,
-        team_service=team_srv,
-        task_service=services["task"],
-    )
-    timeline_modal.timeline_input._value = "Q3 2026 (4 sprints)"
-    modal_interaction = MagicMock(spec=discord.Interaction)
-    modal_interaction.response = MagicMock()
-    modal_interaction.response.edit_message = AsyncMock()
-    await timeline_modal.on_submit(modal_interaction)
-    modal_interaction.response.edit_message.assert_awaited_once()
+    await role_view._on_role_selected(role_interaction)
+    await role_view._on_assign_clicked(role_interaction)
+    role_interaction.response.edit_message.assert_awaited_once()
+
+    updated_proj = await proj_srv.get_by_id(created_proj.id)
+    assert updated_proj.discord_role_id == 987654
+
+    # Test ProjectLeadSelectView
+    lead_view = ProjectLeadSelectView([updated_proj], proj_srv, team_srv, services["task"])
+    mock_member = MagicMock(spec=discord.Member)
+    mock_member.id = 444555
+    lead_view.user_select._values = [mock_member]
+
+    lead_interaction = MagicMock(spec=discord.Interaction)
+    lead_interaction.response = MagicMock()
+    lead_interaction.response.edit_message = AsyncMock()
+    lead_interaction.response.defer = AsyncMock()
+
+    await lead_view._on_user_selected(lead_interaction)
+    await lead_view._on_assign_clicked(lead_interaction)
+    lead_interaction.response.edit_message.assert_awaited_once()
+
+    updated_lead_proj = await proj_srv.get_by_id(created_proj.id)
+    assert updated_lead_proj.lead_discord_id == 444555
 
 
 @pytest.mark.asyncio
@@ -441,7 +445,7 @@ async def test_pm_hub_navigation(services):
     hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
     welcome_embed = build_hub_welcome_embed()
     assert "Control Hub" in welcome_embed.title
-    assert len(hub_view.children) == 6  # New Task, Task Board, Projects, Teams, My Settings, Guides
+    assert len(hub_view.children) == 5  # New Task, Task Board, Projects, My Settings, Guides
 
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock()

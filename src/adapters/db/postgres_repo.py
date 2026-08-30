@@ -108,6 +108,8 @@ def _to_domain_project(row: ProjectTable) -> Project:
         next_task_number=row.next_task_number,
         description=row.description,
         discord_channel_id=row.discord_channel_id,
+        discord_role_id=row.discord_role_id,
+        lead_discord_id=row.lead_discord_id,
         category=row.category,
         archived_at=row.archived_at,
         created_at=row.created_at,
@@ -494,6 +496,8 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
                 next_task_number=project.next_task_number,
                 description=project.description,
                 discord_channel_id=project.discord_channel_id,
+                discord_role_id=project.discord_role_id,
+                lead_discord_id=project.lead_discord_id,
                 category=project.category,
                 archived_at=project.archived_at,
                 created_at=project.created_at,
@@ -604,6 +608,36 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
                 update(ProjectTable)
                 .where(ProjectTable.id == project_id)
                 .values(discord_channel_id=discord_channel_id, updated_at=datetime.now(UTC))
+                .returning(ProjectTable)
+            )
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if not row:
+                return None
+            await session.commit()
+            return _to_domain_project(row)
+
+    async def update_role_id(self, project_id: UUID, discord_role_id: int | None) -> Project | None:
+        async with self._get_session() as session:
+            stmt = (
+                update(ProjectTable)
+                .where(ProjectTable.id == project_id)
+                .values(discord_role_id=discord_role_id, updated_at=datetime.now(UTC))
+                .returning(ProjectTable)
+            )
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            if not row:
+                return None
+            await session.commit()
+            return _to_domain_project(row)
+
+    async def update_lead_id(self, project_id: UUID, lead_discord_id: int | None) -> Project | None:
+        async with self._get_session() as session:
+            stmt = (
+                update(ProjectTable)
+                .where(ProjectTable.id == project_id)
+                .values(lead_discord_id=lead_discord_id, updated_at=datetime.now(UTC))
                 .returning(ProjectTable)
             )
             res = await session.execute(stmt)

@@ -13,7 +13,6 @@ from src.adapters.discord_bot.views.task_menu import (
     TaskSelectProjectView,
     build_task_board_embed,
 )
-from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
 from src.domain.models import Project
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
@@ -486,26 +485,6 @@ class PmHubView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
-        label="Teams Hub",
-        emoji="👥",
-        style=discord.ButtonStyle.primary,
-        row=0,
-        custom_id="pm_hub:teams",
-    )
-    async def teams_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        from src.adapters.discord_bot.menu_manager import menu_manager
-
-        await menu_manager.register_menu(interaction)
-        embed = build_team_menu_embed()
-        view = TeamMenuView(
-            self.team_service,
-            self.project_service,
-            self.task_service,
-            initial_interaction=interaction,
-        )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-    @discord.ui.button(
         label="My Settings",
         emoji="⚙️",
         style=discord.ButtonStyle.secondary,
@@ -599,12 +578,7 @@ def build_hub_welcome_embed(
     )
     embed.add_field(
         name="📁 Projects Hub",
-        value="View project containers, bound channels, and mapped squads.",
-        inline=False,
-    )
-    embed.add_field(
-        name="👥 Teams Hub",
-        value="Inspect squad rosters, Discord roles, and team leads.",
+        value="View project containers, bound channels, squad roles, and project leads.",
         inline=False,
     )
     embed.add_field(

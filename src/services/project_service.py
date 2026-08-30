@@ -32,6 +32,8 @@ class ProjectService:
         prefix: str | None = None,
         description: str | None = None,
         discord_channel_id: int | None = None,
+        discord_role_id: int | None = None,
+        lead_discord_id: int | None = None,
         category: str | None = None,
     ) -> Project:
         # Check name uniqueness in guild
@@ -53,6 +55,8 @@ class ProjectService:
             next_task_number=1,
             description=description.strip() if description else None,
             discord_channel_id=discord_channel_id,
+            discord_role_id=discord_role_id,
+            lead_discord_id=lead_discord_id,
             category=category.strip() if category else None,
         )
         return await self.project_repo.create(project)
@@ -86,6 +90,14 @@ class ProjectService:
 
     async def update_project_channel(self, project_id: UUID, discord_channel_id: int | None) -> Project | None:
         return await self.project_repo.update_channel_id(project_id, discord_channel_id)
+
+    async def set_project_role(self, project_id: UUID, discord_role_id: int | None) -> Project | None:
+        """Updates or clears the mapped contributor Discord role for a project."""
+        return await self.project_repo.update_role_id(project_id, discord_role_id)
+
+    async def set_project_lead(self, project_id: UUID, lead_discord_id: int | None) -> Project | None:
+        """Updates or clears the designated Project Lead Discord user for a project."""
+        return await self.project_repo.update_lead_id(project_id, lead_discord_id)
 
     async def assign_team_to_project(
         self,

@@ -19,7 +19,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from sqlalchemy import text  # noqa: E402
 
-from src.adapters.db.session import async_session_factory, close_db, init_db  # noqa: E402
+from src.adapters.db.session import async_session_factory, close_db, engine, init_db  # noqa: E402
+from src.adapters.db.tables import Base  # noqa: E402
 from src.config import settings  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -53,21 +54,16 @@ async def clear_database(guild_id: int | None = None) -> None:
     """Purges all records from PostgreSQL database tables.
 
     If guild_id is provided, only records associated with that guild are deleted.
-    Otherwise, all tables are truncated cleanly.
+    Otherwise, all tables are dropped and re-created cleanly with the latest schema.
     """
     check_production_safety_guard(guild_id)
-    await init_db()
 
     logger.info("=" * 60)
     if guild_id:
         logger.info(f"🧹 Clearing database records for Discord Guild ID: {guild_id}...")
-    else:
-        logger.info("🧹 Clearing ALL database records across all tables...")
-    logger.info("=" * 60)
-
-    async with async_session_factory() as session:
-        async with session.begin():
-            if guild_id:
+        await init_db()
+        async with async_session_factory() as session:
+            async with session.begin():
                 await session.execute(
                     text("DELETE FROM task_watchers WHERE task_id IN (SELECT id FROM tasks WHERE guild_id = :gid)"),
                     {"gid": guild_id},
@@ -105,25 +101,13 @@ async def clear_database(guild_id: int | None = None) -> None:
                 await session.execute(
                     text("DELETE FROM outbox_events"),
                 )
-            else:
-                # Truncate all tables cleanly in cascade order
-                tables = [
-                    "task_watchers",
-                    "task_history",
-                    "tasks",
-                    "project_teams",
-                    "projects",
-                    "team_members",
-                    "teams",
-                    "user_preferences",
-                    "outbox_events",
-                ]
-                for table in tables:
-                    try:
-                        await session.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
-                    except Exception:
-                        await session.execute(text(f"DELETE FROM {table}"))
+    else:
+        logger.info("🧹 Dropping and re-creating ALL database tables fresh...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
 
+    logger.info("=" * 60)
     await close_db()
     logger.info("✔ PostgreSQL database successfully cleared and reset!")
 

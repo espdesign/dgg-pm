@@ -310,11 +310,18 @@ def build_active_projects_embed(
 
     for p in page_projects:
         chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "No channel"
+        role_str = f"<@&{p.discord_role_id}>" if p.discord_role_id else "*Public / All Members*"
+        lead_str = f"<@{p.lead_discord_id}>" if p.lead_discord_id else "*Unassigned*"
         desc_str = p.description or "No description"
         cat_str = f" • [{p.category}]" if p.category else ""
         embed.add_field(
             name=f"{p.name} (`{p.prefix}`){cat_str}",
-            value=f"• Channel: {chan_str}\n• Next Task: #{p.next_task_number}\n• {desc_str}",
+            value=(
+                f"• Channel: {chan_str}\n"
+                f"• Squad: {role_str} | Lead: {lead_str}\n"
+                f"• Next Task: #{p.next_task_number}\n"
+                f"• {desc_str}"
+            ),
             inline=False,
         )
     embed.set_footer(text=f"Page {page + 1} of {total_pages} • Total: {total_count} projects")
@@ -1329,13 +1336,357 @@ class ProjectAssignTeamView(discord.ui.View):
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
+class ProjectRoleSelectView(discord.ui.View):
+    """Interactive view to map or clear a contributor Discord role for a project."""
+
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService | None = None,
+        task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
+    ):
+        super().__init__(timeout=180)
+        self.projects = projects
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+        self._initial_interaction = initial_interaction
+
+        self.selected_project_id: UUID = projects[0].id
+        self.selected_role: discord.Role | None = None
+
+        # Row 0: Select Project
+        proj_options = [
+            discord.SelectOption(
+                label=f"{p.name} ({p.prefix})"[:100],
+                value=str(p.id),
+                description=(f"Role: @{p.discord_role_id}" if p.discord_role_id else "Public (No role restriction)")[
+                    :50
+                ],
+                emoji="📁",
+                default=(i == 0),
+            )
+            for i, p in enumerate(projects[:25])
+        ]
+        self.proj_select = discord.ui.Select(
+            placeholder="📁 Select Project...",
+            options=proj_options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+        self.proj_select.callback = self._on_project_changed
+        self.add_item(self.proj_select)
+
+        # Row 1: Select Role
+        self.role_select = discord.ui.RoleSelect(
+            placeholder="🎭 Select Squad Discord Role...",
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+        self.role_select.callback = self._on_role_selected
+        self.add_item(self.role_select)
+
+        # Row 2: Action Buttons
+        self.assign_btn = discord.ui.Button(
+            label="Map Role",
+            emoji="🎭",
+            style=discord.ButtonStyle.primary,
+            row=2,
+        )
+        self.assign_btn.callback = self._on_assign_clicked
+        self.add_item(self.assign_btn)
+
+        self.clear_btn = discord.ui.Button(
+            label="Make Public (Clear Role)",
+            emoji="🌐",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.clear_btn.callback = self._on_clear_clicked
+        self.add_item(self.clear_btn)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
+
+    def _get_selected_project(self) -> Project | None:
+        return next((p for p in self.projects if p.id == self.selected_project_id), None)
+
+    async def _on_project_changed(self, interaction: discord.Interaction) -> None:
+        self.selected_project_id = UUID(self.proj_select.values[0])
+        for opt in self.proj_select.options:
+            opt.default = opt.value == str(self.selected_project_id)
+        await interaction.response.defer()
+
+    async def _on_role_selected(self, interaction: discord.Interaction) -> None:
+        self.selected_role = self.role_select.values[0]
+        await interaction.response.defer()
+
+    async def _on_assign_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        if not proj:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        if not self.selected_role:
+            if self.role_select.values:
+                self.selected_role = self.role_select.values[0]
+            else:
+                await interaction.response.send_message("❌ Please select a Discord role to map.", ephemeral=True)
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+                return
+
+        try:
+            await self.project_service.set_project_role(proj.id, self.selected_role.id)
+            embed = discord.Embed(
+                title="✅ Squad Role Mapped to Project",
+                description=(
+                    f"Mapped Discord role <@&{self.selected_role.id}> as the contributor squad for "
+                    f"project **{proj.name}** (`{proj.prefix}`)."
+                ),
+                color=discord.Color.green(),
+            )
+            view = ProjectMenuView(
+                self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"mapping role for project '{proj.name}'", logger, ephemeral=True
+            )
+
+    async def _on_clear_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        if not proj:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        try:
+            await self.project_service.set_project_role(proj.id, None)
+            embed = discord.Embed(
+                title="🌐 Project Role Cleared",
+                description=(
+                    f"Project **{proj.name}** (`{proj.prefix}`) is now **Public** (open to all server members)."
+                ),
+                color=discord.Color.blue(),
+            )
+            view = ProjectMenuView(
+                self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"clearing role for project '{proj.name}'", logger, ephemeral=True
+            )
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(
+            self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+        )
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
+class ProjectLeadSelectView(discord.ui.View):
+    """Interactive view to designate or clear a Project Lead for a project."""
+
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService | None = None,
+        task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
+    ):
+        super().__init__(timeout=180)
+        self.projects = projects
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+        self._initial_interaction = initial_interaction
+
+        self.selected_project_id: UUID = projects[0].id
+        self.selected_user: discord.Member | discord.User | None = None
+
+        # Row 0: Select Project
+        proj_options = [
+            discord.SelectOption(
+                label=f"{p.name} ({p.prefix})"[:100],
+                value=str(p.id),
+                description=(f"Lead: @{p.lead_discord_id}" if p.lead_discord_id else "Unassigned")[:50],
+                emoji="📁",
+                default=(i == 0),
+            )
+            for i, p in enumerate(projects[:25])
+        ]
+        self.proj_select = discord.ui.Select(
+            placeholder="📁 Select Project...",
+            options=proj_options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+        self.proj_select.callback = self._on_project_changed
+        self.add_item(self.proj_select)
+
+        # Row 1: Select Lead Member
+        self.user_select = discord.ui.UserSelect(
+            placeholder="👑 Select Project Lead...",
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+        self.user_select.callback = self._on_user_selected
+        self.add_item(self.user_select)
+
+        # Row 2: Action Buttons
+        self.assign_btn = discord.ui.Button(
+            label="Designate Lead",
+            emoji="👑",
+            style=discord.ButtonStyle.primary,
+            row=2,
+        )
+        self.assign_btn.callback = self._on_assign_clicked
+        self.add_item(self.assign_btn)
+
+        self.clear_btn = discord.ui.Button(
+            label="Clear Lead",
+            emoji="❌",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.clear_btn.callback = self._on_clear_clicked
+        self.add_item(self.clear_btn)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
+
+    def _get_selected_project(self) -> Project | None:
+        return next((p for p in self.projects if p.id == self.selected_project_id), None)
+
+    async def _on_project_changed(self, interaction: discord.Interaction) -> None:
+        self.selected_project_id = UUID(self.proj_select.values[0])
+        for opt in self.proj_select.options:
+            opt.default = opt.value == str(self.selected_project_id)
+        await interaction.response.defer()
+
+    async def _on_user_selected(self, interaction: discord.Interaction) -> None:
+        self.selected_user = self.user_select.values[0]
+        await interaction.response.defer()
+
+    async def _on_assign_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        if not proj:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        if not self.selected_user:
+            if self.user_select.values:
+                self.selected_user = self.user_select.values[0]
+            else:
+                await interaction.response.send_message(
+                    "❌ Please select a Discord member to designate as Lead.", ephemeral=True
+                )
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+                return
+
+        try:
+            await self.project_service.set_project_lead(proj.id, self.selected_user.id)
+            embed = discord.Embed(
+                title="👑 Project Lead Designated",
+                description=(
+                    f"Designated <@{self.selected_user.id}> as the **Project Lead** for "
+                    f"project **{proj.name}** (`{proj.prefix}`)."
+                ),
+                color=discord.Color.green(),
+            )
+            view = ProjectMenuView(
+                self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"designating lead for project '{proj.name}'", logger, ephemeral=True
+            )
+
+    async def _on_clear_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        if not proj:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        try:
+            await self.project_service.set_project_lead(proj.id, None)
+            embed = discord.Embed(
+                title="❌ Project Lead Cleared",
+                description=f"Project **{proj.name}** (`{proj.prefix}`) has no designated Project Lead.",
+                color=discord.Color.dark_grey(),
+            )
+            view = ProjectMenuView(
+                self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"clearing lead for project '{proj.name}'", logger, ephemeral=True
+            )
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(
+            self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+        )
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
 class ProjectMenuView(discord.ui.View):
     """Control Center View for Project Operations."""
 
     def __init__(
         self,
         project_service: ProjectService,
-        team_service: TeamService,
+        team_service: TeamService | None = None,
         task_service: TaskService | None = None,
         initial_interaction: discord.Interaction | None = None,
     ):
@@ -1424,8 +1775,8 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Assign Team", emoji="🤝", style=discord.ButtonStyle.secondary, row=0)
-    async def assign_team_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @discord.ui.button(label="Set Squad Role", emoji="🎭", style=discord.ButtonStyle.secondary, row=0)
+    async def set_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
@@ -1437,27 +1788,44 @@ class ProjectMenuView(discord.ui.View):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
-        teams = await self.team_service.list_teams(interaction.guild.id)
-        if not teams:
-            await interaction.response.send_message(
-                "👥 No teams found. Create a team in `/team-menu` first!", ephemeral=True
-            )
-            from src.adapters.discord_bot.menu_manager import menu_manager
-
-            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
-            return
-        view = ProjectAssignTeamView(
+        view = ProjectRoleSelectView(
             projects,
-            teams,
             self.project_service,
             self.team_service,
             self.task_service,
             initial_interaction=interaction,
         )
         embed = discord.Embed(
-            title="🤝 Map Team to Project",
-            description="Select a project and a functional team container to map together:",
+            title="🎭 Map Squad Discord Role to Project",
+            description="Select a project and choose a Discord role as its dedicated contributor squad:",
             color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Set Project Lead", emoji="👑", style=discord.ButtonStyle.secondary, row=1)
+    async def set_lead_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        if not projects:
+            await interaction.response.send_message(
+                "📁 No active projects found. Create a project first!", ephemeral=True
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
+        view = ProjectLeadSelectView(
+            projects,
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = discord.Embed(
+            title="👑 Designate Project Lead",
+            description="Select a project and designate a member as the Project Lead with management permissions:",
+            color=discord.Color.gold(),
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -1511,10 +1879,11 @@ def build_project_menu_embed() -> discord.Embed:
     embed = discord.Embed(
         title="📁 Project Management Control Center",
         description=(
-            "Manage project containers, channel bindings, and team assignments without typing commands.\n\n"
+            "Manage project containers, channel bindings, squad roles, and project leads without typing commands.\n\n"
             "• **`➕ New Project`**: Create a project container bound to any Forum or Text channel\n"
-            "• **`📋 Active Projects`**: View all running projects and key prefixes\n"
-            "• **`🤝 Assign Team`**: Map a functional team to a project container (with optional timeline)\n"
+            "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads\n"
+            "• **`🎭 Set Squad Role`**: Map a Discord role as the project's contributor squad\n"
+            "• **`👑 Set Project Lead`**: Designate the project owner / lead with elevated permissions\n"
             "• **`📦 Archive Project`**: Soft-delete a completed project\n"
             "• **`♻️ Restore Project`**: Bring back an archived project"
         ),

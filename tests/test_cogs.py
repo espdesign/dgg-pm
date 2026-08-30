@@ -49,12 +49,18 @@ async def test_project_create_execution(services):
 
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.id = 123456789
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 777111
+    mock_lead = MagicMock(spec=discord.Member)
+    mock_lead.id = 888222
 
     await cog.project_create.callback(
         cog,
         interaction=interaction,
         name="Platform Core",
         channel=mock_channel,
+        role=mock_role,
+        lead=mock_lead,
         prefix="PLC",
         description="Platform engineering",
         category="Engineering",
@@ -63,11 +69,60 @@ async def test_project_create_execution(services):
     interaction.response.defer.assert_awaited_once_with(ephemeral=True)
     interaction.followup.send.assert_awaited_once()
 
-    # Check project persisted in db with bound channel id
+    # Check project persisted in db with bound channel id, role, and lead
     project = await proj_srv.get_by_name(9999999999, "Platform Core")
     assert project is not None
     assert project.prefix == "PLC"
     assert project.discord_channel_id == 123456789
+    assert project.discord_role_id == 777111
+    assert project.lead_discord_id == 888222
+
+
+@pytest.mark.asyncio
+async def test_project_set_role_and_lead_commands(services):
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    guild_id = 9999999999
+    bot = MagicMock()
+
+    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Mobile App", prefix="MOB")
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    # 1. Set Role
+    new_role = MagicMock(spec=discord.Role)
+    new_role.id = 333444
+    await cog.project_set_role.callback(cog, interaction=interaction, project_name="Mobile App", role=new_role)
+    interaction.followup.send.assert_awaited_once()
+
+    updated = await proj_srv.get_by_id(project.id)
+    assert updated.discord_role_id == 333444
+
+    # 2. Set Lead
+    interaction.followup.send.reset_mock()
+    new_lead = MagicMock(spec=discord.Member)
+    new_lead.id = 555666
+    await cog.project_set_lead.callback(cog, interaction=interaction, project_name="Mobile App", lead=new_lead)
+    interaction.followup.send.assert_awaited_once()
+
+    updated_lead = await proj_srv.get_by_id(project.id)
+    assert updated_lead.lead_discord_id == 555666
+
+    # 3. Clear Lead
+    interaction.followup.send.reset_mock()
+    await cog.project_set_lead.callback(cog, interaction=interaction, project_name="Mobile App", lead=None)
+    interaction.followup.send.assert_awaited_once()
+
+    cleared = await proj_srv.get_by_id(project.id)
+    assert cleared.lead_discord_id is None
 
 
 @pytest.mark.asyncio
