@@ -4,11 +4,7 @@ from uuid import UUID
 import discord
 from discord.ext import commands
 
-from src.adapters.discord_bot.cogs.help_cog import HelpCog
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
-from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
@@ -53,24 +49,18 @@ class DggPmBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         """Invoked when bot is starting up before login."""
-        # Load cogs
-        await self.add_cog(ProjectCog(self, self.project_service, self.team_service, self.task_service))
-        await self.add_cog(TeamCog(self, self.team_service, self.project_service, self.task_service, self.auth_service))
-        await self.add_cog(TaskCog(self, self.task_service, self.project_service, self.team_service, self.auth_service))
-        await self.add_cog(HelpCog(self, self.project_service, self.team_service, self.task_service))
-        if self.user_service:
-            await self.add_cog(
-                SettingsCog(
-                    self,
-                    self.user_service,
-                    self.project_service,
-                    self.team_service,
-                    self.task_service,
-                )
+        # Load unified /pm command group cog (Strategy 1)
+        await self.add_cog(
+            PmCog(
+                self,
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                self.auth_service,
+                self.user_service,
             )
-            logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog, SettingsCog")
-        else:
-            logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog")
+        )
+        logger.info("Loaded Discord cog: PmCog (unified /pm namespace)")
 
         # Sync application slash commands
         if settings.DISCORD_GUILD_ID:
@@ -95,6 +85,50 @@ class DggPmBot(commands.Bot):
                 name="tasks with /help-pm",
             )
         )
+
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        """Auto-prune team lead records if the corresponding Discord role is removed from the member."""
+        if not self.team_service:
+            return
+
+        before_roles = {r.id for r in getattr(before, "roles", []) if hasattr(r, "id")}
+        after_roles = {r.id for r in getattr(after, "roles", []) if hasattr(r, "id")}
+        removed_roles = before_roles - after_roles
+
+        if not removed_roles:
+            return
+
+        for role_id in removed_roles:
+            try:
+                team = await self.team_service.get_by_role_id(after.guild.id, role_id)
+                if team:
+                    if await self.team_service.is_team_lead(team.id, after.id):
+                        await self.team_service.remove_team_lead(team.id, after.id)
+                        logger.info(
+                            "Auto-pruned team lead record for user %s from team '%s' due to Discord role removal",
+                            after.id,
+                            team.name,
+                        )
+            except Exception as e:
+                logger.warning("Error auto-pruning team lead on member update for user %s: %s", after.id, e)
+
+    async def on_member_remove(self, member: discord.Member) -> None:
+        """Auto-prune team lead records across all teams in the guild if a member leaves the server."""
+        if not self.team_service:
+            return
+
+        try:
+            teams = await self.team_service.list_teams(member.guild.id)
+            for team in teams:
+                if await self.team_service.is_team_lead(team.id, member.id):
+                    await self.team_service.remove_team_lead(team.id, member.id)
+                    logger.info(
+                        "Auto-pruned team lead record for user %s from team '%s' because member left the server",
+                        member.id,
+                        team.name,
+                    )
+        except Exception as e:
+            logger.warning("Error auto-pruning team leads on member remove for user %s: %s", member.id, e)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Global interaction dispatcher handling dynamic persistent task buttons across restarts."""

@@ -8,6 +8,7 @@ from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.domain.enums import TeamRoleType
+from src.domain.exceptions import PermissionDeniedError
 from src.services.auth_service import AuthService
 
 
@@ -163,9 +164,9 @@ async def test_team_lead_roster_management(services):
     await team_srv.assign_member(team_id=team.id, user_discord_id=lead_id, role_type=TeamRoleType.LEAD)
     await team_srv.assign_member(team_id=team.id, user_discord_id=regular_id, role_type=TeamRoleType.MEMBER)
 
-    lead_member = _make_mock_member(lead_id)
-    regular_member = _make_mock_member(regular_id)
-    outsider_member = _make_mock_member(outsider_id)
+    lead_member = _make_mock_member(lead_id, role_ids=[555111])
+    regular_member = _make_mock_member(regular_id, role_ids=[555111])
+    outsider_member = _make_mock_member(outsider_id, role_ids=[])
     admin_member = _make_mock_member(9999, manage_guild=True)
 
     # Team lead can manage roster
@@ -204,7 +205,7 @@ async def test_team_lead_cog_enforcement(services):
     interaction_lead = MagicMock(spec=discord.Interaction)
     interaction_lead.guild = MagicMock()
     interaction_lead.guild.id = guild_id
-    interaction_lead.user = _make_mock_member(lead_id)
+    interaction_lead.user = _make_mock_member(lead_id, role_ids=[777888])
     interaction_lead.response = MagicMock()
     interaction_lead.response.defer = AsyncMock()
     interaction_lead.followup = MagicMock()
@@ -249,7 +250,7 @@ async def test_team_lead_cog_enforcement(services):
     interaction_remove = MagicMock(spec=discord.Interaction)
     interaction_remove.guild = MagicMock()
     interaction_remove.guild.id = guild_id
-    interaction_remove.user = _make_mock_member(lead_id)
+    interaction_remove.user = _make_mock_member(lead_id, role_ids=[777888])
     interaction_remove.response = MagicMock()
     interaction_remove.response.defer = AsyncMock()
     interaction_remove.followup = MagicMock()
@@ -508,3 +509,89 @@ async def test_dynamic_button_authorization_rejection(services):
     unauth_interaction.response.send_message.assert_awaited_once()
     err_msg = unauth_interaction.response.send_message.await_args.args[0]
     assert "You do not have permission" in err_msg
+
+
+@pytest.mark.asyncio
+async def test_orphaned_team_lead_permission_denial(services):
+    """If a user is in DB as a lead but loses their Discord role, they lose team lead management powers."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    auth_srv = AuthService(proj_srv, team_srv)
+    guild_id = 9990011
+
+    team = await team_srv.create_team(guild_id=guild_id, name="Security Squad", discord_role_id=888999)
+    user_id = 9001
+    await team_srv.add_team_lead(team.id, user_id)
+
+    # 1. User with the role has team lead permissions
+    member_with_role = _make_mock_member(user_id, role_ids=[888999])
+    assert await auth_srv.can_manage_team_leads(member_with_role, team.id) is True
+
+    # 2. User whose role was removed loses team lead permissions
+    member_without_role = _make_mock_member(user_id, role_ids=[111222])  # missing 888999
+    assert await auth_srv.can_manage_team_leads(member_without_role, team.id) is False
+
+    with pytest.raises(PermissionDeniedError, match="You do not have permission"):
+        await auth_srv.require_team_lead_management(member_without_role, team.id)
+
+
+@pytest.mark.asyncio
+async def test_on_member_update_auto_prunes_team_lead(services):
+    """Removing a team's Discord role from a member automatically prunes their DB lead record."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 9990012
+
+    bot = DggPmBot(task_service=task_srv, project_service=proj_srv, team_service=team_srv)
+
+    team_role_id = 333444
+    team = await team_srv.create_team(guild_id=guild_id, name="Platform Squad", discord_role_id=team_role_id)
+    user_id = 9002
+    await team_srv.add_team_lead(team.id, user_id)
+    assert await team_srv.is_team_lead(team.id, user_id) is True
+
+    mock_guild = MagicMock()
+    mock_guild.id = guild_id
+
+    before_member = _make_mock_member(user_id, role_ids=[team_role_id])
+    before_member.guild = mock_guild
+    after_member = _make_mock_member(user_id, role_ids=[])
+    after_member.guild = mock_guild
+
+    await bot.on_member_update(before_member, after_member)
+
+    # Verify DB lead record was automatically removed
+    assert await team_srv.is_team_lead(team.id, user_id) is False
+
+
+@pytest.mark.asyncio
+async def test_on_member_remove_auto_prunes_team_lead(services):
+    """When a member leaves the server, all their DB team lead records in that guild are cleaned up."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 9990013
+
+    bot = DggPmBot(task_service=task_srv, project_service=proj_srv, team_service=team_srv)
+
+    team1 = await team_srv.create_team(guild_id=guild_id, name="Frontend Squad", discord_role_id=111)
+    team2 = await team_srv.create_team(guild_id=guild_id, name="Backend Squad", discord_role_id=222)
+    user_id = 9003
+
+    await team_srv.add_team_lead(team1.id, user_id)
+    await team_srv.add_team_lead(team2.id, user_id)
+
+    assert await team_srv.is_team_lead(team1.id, user_id) is True
+    assert await team_srv.is_team_lead(team2.id, user_id) is True
+
+    mock_guild = MagicMock()
+    mock_guild.id = guild_id
+    leaving_member = _make_mock_member(user_id)
+    leaving_member.guild = mock_guild
+
+    await bot.on_member_remove(leaving_member)
+
+    # Verify DB records across both teams were automatically cleaned up
+    assert await team_srv.is_team_lead(team1.id, user_id) is False
+    assert await team_srv.is_team_lead(team2.id, user_id) is False

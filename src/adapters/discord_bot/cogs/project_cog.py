@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -80,6 +80,18 @@ class ProjectCog(commands.Cog):
                     tag_note = f" • Setup {tags_added} PM tags"
                 elif tag_err:
                     tag_note = f" • ⚠️ {tag_err}"
+
+            # Auto-create and pin the PM Control Hub in the linked channel
+            hub_ok, _hub_status = await ensure_pinned_hub_post(
+                channel=channel,
+                project_service=self.project_service,
+                team_service=self.team_service,
+                task_service=self.task_service,
+                user_service=getattr(self.bot, "user_service", None),
+                project_name=project.name,
+            )
+            if hub_ok:
+                tag_note += " • 📌 Pinned Control Hub"
 
             embed = discord.Embed(
                 title=f"📁 Project Created: {project.name} (`{project.prefix}`)",

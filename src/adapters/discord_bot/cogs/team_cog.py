@@ -259,6 +259,17 @@ class TeamCog(commands.Cog):
                 leads = await self.team_service.list_team_leads(t.id)
                 role = interaction.guild.get_role(t.discord_role_id) if hasattr(interaction.guild, "get_role") else None
                 role_members = getattr(role, "members", []) if role else []
+                role_member_ids = {m.id for m in role_members}
+
+                # Auto-prune leads that no longer hold the Discord role
+                if role is not None:
+                    valid_leads = []
+                    for uid in leads:
+                        if uid not in role_member_ids:
+                            await self.team_service.remove_team_lead(t.id, uid)
+                        else:
+                            valid_leads.append(uid)
+                    leads = valid_leads
 
                 lead_strs = [f"<@{uid}>" for uid in leads]
                 if lead_strs:

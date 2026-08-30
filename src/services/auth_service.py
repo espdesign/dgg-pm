@@ -166,7 +166,7 @@ class AuthService:
 
         Authorized if:
         1. User has Server Manager permissions (manage_guild / administrator).
-        2. User is designated as a Team Lead (TeamRoleType.LEAD) in database.
+        2. User is designated as a Team Lead in database AND currently holds the team's Discord role.
         """
         if self.is_server_manager(user):
             return True
@@ -175,7 +175,19 @@ class AuthService:
         if user_id is None or not isinstance(user_id, int):
             return False
 
-        return await self.team_service.is_team_lead(team_id, user_id)
+        is_lead = await self.team_service.is_team_lead(team_id, user_id)
+        if not is_lead:
+            return False
+
+        # Verify that the user still currently holds the team's Discord role
+        if hasattr(user, "roles"):
+            team = await self.team_service.get_by_id(team_id)
+            if team:
+                user_role_ids = {r.id for r in getattr(user, "roles", []) if hasattr(r, "id")}
+                if team.discord_role_id not in user_role_ids:
+                    return False
+
+        return True
 
     async def require_team_lead_management(self, user: discord.Member | discord.User, team_id: UUID) -> None:
         """Raises PermissionDeniedError if the user cannot manage team leads."""

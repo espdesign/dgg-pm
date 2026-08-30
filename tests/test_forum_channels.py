@@ -5,10 +5,15 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.bot import DggPmBot
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
 from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.discord_notifier import DiscordNotifier
-from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags, setup_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import (
+    ensure_pinned_hub_post,
+    resolve_forum_tags,
+    setup_forum_tags,
+)
 from src.adapters.discord_bot.views.task_menu import TaskCreateModal
 from src.domain.enums import EventType, PriorityLevel, TaskStatus
 from src.domain.models import OutboxEvent, Task
@@ -406,3 +411,131 @@ async def test_project_setup_forum_command(services):
     embed = interaction.followup.send.call_args.kwargs.get("embed")
     assert embed is not None
     assert "Forum Tags Configured" in embed.title
+
+
+@pytest.mark.asyncio
+async def test_ensure_pinned_hub_post_in_forum(services):
+    """Verify ensure_pinned_hub_post creates tags, creates thread post, and pins it in forum."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.name = "product-dev"
+    mock_forum.id = 7770001
+    mock_forum.available_tags = []
+    mock_forum.threads = []
+    mock_forum.edit = AsyncMock()
+
+    mock_thread = MagicMock()
+    mock_thread.id = 9998881
+    mock_thread.edit = AsyncMock()
+    mock_forum.create_thread = AsyncMock(return_value=mock_thread)
+
+    ok, msg = await ensure_pinned_hub_post(
+        channel=mock_forum,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        project_name="Core Engine",
+    )
+
+    assert ok is True
+    assert "Created and pinned" in msg
+    mock_forum.create_thread.assert_awaited_once()
+    thread_call_kwargs = mock_forum.create_thread.call_args.kwargs
+    assert "Control Hub" in thread_call_kwargs["name"]
+    mock_thread.edit.assert_awaited_once_with(pinned=True)
+
+
+@pytest.mark.asyncio
+async def test_ensure_pinned_hub_post_in_text_channel(services):
+    """Verify ensure_pinned_hub_post posts embed and pins message in text channels."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.name = "general-pm"
+    mock_channel.id = 7770002
+
+    mock_msg = MagicMock()
+    mock_msg.pin = AsyncMock()
+    mock_channel.send = AsyncMock(return_value=mock_msg)
+
+    ok, msg = await ensure_pinned_hub_post(
+        channel=mock_channel,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        project_name="Mobile",
+    )
+
+    assert ok is True
+    assert "Posted and pinned" in msg
+    mock_channel.send.assert_awaited_once()
+    mock_msg.pin.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pm_cog_post_hub_and_subgroups(services):
+    """Verify unified /pm slash command group operations including /pm post-hub and /pm project create."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    guild_id = 999888999
+
+    bot = MagicMock()
+    pm_cog = PmCog(
+        bot=bot,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        user_service=user_srv,
+    )
+
+    # 1. /pm post-hub
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.name = "pm-board"
+    mock_forum.id = 8887771
+    mock_forum.available_tags = []
+    mock_forum.threads = []
+    mock_forum.edit = AsyncMock()
+
+    mock_thread = MagicMock()
+    mock_thread.id = 8887772
+    mock_thread.edit = AsyncMock()
+    mock_forum.create_thread = AsyncMock(return_value=mock_thread)
+
+    interaction_hub = MagicMock(spec=discord.Interaction)
+    interaction_hub.guild = MagicMock()
+    interaction_hub.guild.id = guild_id
+    interaction_hub.response = MagicMock()
+    interaction_hub.response.defer = AsyncMock()
+    interaction_hub.followup = MagicMock()
+    interaction_hub.followup.send = AsyncMock()
+
+    await pm_cog.post_hub.callback(pm_cog, interaction=interaction_hub, channel=mock_forum)
+
+    interaction_hub.followup.send.assert_awaited_once()
+    hub_res = interaction_hub.followup.send.await_args.args[0]
+    assert "Created and pinned" in hub_res
+
+    # 2. /pm menu
+    interaction_menu = MagicMock(spec=discord.Interaction)
+    interaction_menu.guild = MagicMock()
+    interaction_menu.guild.id = guild_id
+    interaction_menu.response = MagicMock()
+    interaction_menu.response.send_message = AsyncMock()
+
+    await pm_cog.menu.callback(pm_cog, interaction=interaction_menu)
+    interaction_menu.response.send_message.assert_awaited_once()
+
+    # 3. /pm help
+    interaction_help = MagicMock(spec=discord.Interaction)
+    interaction_help.response = MagicMock()
+    interaction_help.response.send_message = AsyncMock()
+
+    await pm_cog.help_command.callback(pm_cog, interaction=interaction_help)
+    interaction_help.response.send_message.assert_awaited_once()

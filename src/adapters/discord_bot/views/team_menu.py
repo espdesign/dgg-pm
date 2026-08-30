@@ -326,6 +326,16 @@ class TeamRosterDetailView(discord.ui.View):
         if interaction.guild and hasattr(interaction.guild, "get_role"):
             role = interaction.guild.get_role(team.discord_role_id)
         role_members = getattr(role, "members", []) if role else []
+        role_member_ids = {m.id for m in role_members}
+
+        if role is not None:
+            valid_leads = []
+            for uid in leads:
+                if uid not in role_member_ids:
+                    await self.team_service.remove_team_lead(team_id, uid)
+                else:
+                    valid_leads.append(uid)
+            leads = valid_leads
 
         lead_strs = [f"<@{uid}>" for uid in leads]
         other_members = [f"<@{m.id}>" for m in role_members if m.id not in leads]

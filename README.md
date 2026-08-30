@@ -8,15 +8,26 @@ A self-hosted, zero-signup Discord-native project management platform built to e
 
 ---
 
+## 📚 Documentation & Wiki
+
+Detailed guides, command references, and architecture documents are available in the **[DGG-PM Wiki](docs/wiki/Home.md)**:
+- 🚀 **[Workflow & Quickstart Guide](docs/wiki/Workflow-Guide.md)**: End-to-end setup and zero-command daily workflows.
+- ⌨️ **[Slash Commands Reference (`/pm`)](docs/wiki/Slash-Commands-Reference.md)**: Complete parameter and permission breakdown.
+- 👥 **[Teams & Authorization Matrix](docs/wiki/Teams-and-Authorization.md)**: Discord-native role rosters and self-healing leads.
+- 📌 **[Forum Channels & Interactive Hubs](docs/wiki/Forum-Channels-and-Hubs.md)**: Tag auto-provisioning and pinned control centers.
+
+---
+
 ## Key Features
 
-- **Discord-First Execution**: Full task lifecycle management via Discord slash commands (`/task-create`, `/task-status`, `/task-list`) and interactive message buttons (`[ 🟡 In Progress ]`, `[ 🟢 Complete ]`, `[ 📝 Add Note ]`).
-- **Dedicated Project Channels & Discussion Threads**: Tasks post to project channels and automatically spawn dedicated message-attached threads (`[INF-1] Deploy API Gateway`) to keep conversation focused.
+- **Unified `/pm` Slash Command Group**: Single isolated namespace eliminating server command clutter and bot collisions.
+- **Pinned Forum Control Hubs**: Permanent interactive dashboards (`📌 📊 Control Hub`) pinned in project forums for zero-command task creation and management.
+- **Discord-Native Squad Rosters**: Functional teams are mapped directly to live Discord server roles with automatic self-healing for orphaned leads.
+- **Dedicated Task Channels & Threads**: Tasks automatically spawn dedicated discussion threads with real-time interactive Action Cards (`[ ⏳ To Do ]`, `[ 🟡 In Progress ]`, `[ 🟢 Complete ]`, `[ ⚡ Priority ]`, `[ 👤 Reassign ]`).
 - **Human-Friendly Short IDs & Autocomplete**: Sequential project-prefixed IDs (e.g. `INF-1`, `PRJ-42`) with atomic SQL counter generation and channel-scoped autocomplete.
 - **Audit History & Optimistic Concurrency Control (CAS)**: Complete lifecycle history in `task_history` table and version-checked updates preventing lost update races.
 - **Postgres-Native Transactional Outbox**: At-least-once reminder and notification dispatch with `FOR UPDATE SKIP LOCKED`, unique `idempotency_key` deduplication, and dynamic Discord 429 `Retry-After` backoff.
 - **RFC 5545 & Microsoft Graph Schema Portability**: Native mapping to `VTODO` and `todoTask` data standards from Day 1 for future calendar integration.
-- **Discord Permission Model**: Server administration commands gated by `Manage Server` / `Administrator`, with team memberships synced to live Discord server roles.
 
 ---
 
