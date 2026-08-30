@@ -1,8 +1,18 @@
+import re
 from uuid import UUID
 
 import discord
 
+from src.domain.models import Task
 from src.services.task_service import TaskService
+from src.utils.date_parser import parse_natural_date
+
+
+def _extract_user_ids(text: str | None) -> list[int]:
+    if not text:
+        return []
+    ids = re.findall(r"\d{4,20}", text)
+    return [int(uid) for uid in set(ids)]
 
 
 class TaskNoteModal(discord.ui.Modal):
@@ -39,3 +49,101 @@ class TaskNoteModal(discord.ui.Modal):
             )
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to add note: {e}", ephemeral=True)
+
+
+class TaskEditModal(discord.ui.Modal):
+    """Modal for editing task title, description, due date, and watchers."""
+
+    def __init__(self, task: Task, task_service: TaskService):
+        super().__init__(title=f"Edit Task: {task.short_id}")
+        self.task_id = task.id
+        self.short_id = task.short_id
+        self.task_service = task_service
+
+        self.title_input = discord.ui.TextInput(
+            label="Task Title",
+            default=task.title,
+            required=True,
+            max_length=100,
+        )
+        self.add_item(self.title_input)
+
+        self.body_input = discord.ui.TextInput(
+            label="Description / Body",
+            style=discord.TextStyle.paragraph,
+            default=task.body or "",
+            placeholder="Detailed requirements or instructions...",
+            required=False,
+            max_length=1500,
+        )
+        self.add_item(self.body_input)
+
+        due_default = ""
+        if task.due_at:
+            due_default = task.due_at.strftime("%Y-%m-%d %H:%M")
+
+        self.due_input = discord.ui.TextInput(
+            label="Due Date (e.g. 'tomorrow', 'in 3 days', 'clear')",
+            default=due_default,
+            placeholder="e.g. tomorrow, in 3 days, friday 5pm, 2026-04-15",
+            required=False,
+            max_length=60,
+        )
+        self.add_item(self.due_input)
+
+        watchers_default = " ".join(f"<@{uid}>" for uid in task.watchers) if task.watchers else ""
+        self.cc_input = discord.ui.TextInput(
+            label="Watchers (CC) Mentions or IDs",
+            default=watchers_default,
+            placeholder="e.g. @alice @bob",
+            required=False,
+            max_length=500,
+        )
+        self.add_item(self.cc_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        title = self.title_input.value.strip()
+        if not title:
+            await interaction.response.send_message("❌ Task title cannot be empty.", ephemeral=True)
+            return
+
+        body = self.body_input.value.strip() or None
+        due_val = self.due_input.value.strip()
+        clear_due = due_val.lower() in ("clear", "none", "remove", "null", "unset")
+        due_at = None if clear_due else parse_natural_date(due_val)
+
+        watchers_val = self.cc_input.value.strip()
+        watchers = _extract_user_ids(watchers_val) if watchers_val else []
+
+        try:
+            updated_task = await self.task_service.update_details(
+                task_id=self.task_id,
+                actor_discord_id=interaction.user.id,
+                title=title,
+                body=body,
+                due_at=due_at,
+                clear_due_at=clear_due,
+                watchers=watchers,
+            )
+
+            # Lazy import to prevent circular dependency
+            from src.adapters.discord_bot.views.task_buttons import TaskActionView
+            from src.adapters.discord_bot.views.task_embed import build_task_embed
+
+            new_embed = build_task_embed(updated_task)
+            new_view = TaskActionView(
+                task_id=self.task_id,
+                current_status=updated_task.status,
+                current_priority=updated_task.priority,
+                task_service=self.task_service,
+            )
+
+            if interaction.message:
+                await interaction.response.edit_message(embed=new_embed, view=new_view)
+            else:
+                await interaction.response.send_message(
+                    f"✅ Updated **[{updated_task.short_id}] {updated_task.title}**.",
+                    ephemeral=True,
+                )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to update task details: {e}", ephemeral=True)

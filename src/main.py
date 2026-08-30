@@ -2,25 +2,31 @@ import asyncio
 import logging
 import signal
 import sys
+from pathlib import Path
 
-import uvicorn
+# Ensure project root is in sys.path when executed directly as a script
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.adapters.api.app import api_app
-from src.adapters.db.postgres_repo import (
+import uvicorn  # noqa: E402
+
+from src.adapters.api.app import api_app  # noqa: E402
+from src.adapters.db.postgres_repo import (  # noqa: E402
     PostgresOutboxRepo,
     PostgresProjectRepo,
     PostgresTaskRepo,
     PostgresTeamRepo,
 )
-from src.adapters.db.session import close_db, get_session, init_db
-from src.adapters.discord_bot.bot import DggPmBot
-from src.adapters.discord_bot.discord_notifier import DiscordNotifier
-from src.adapters.worker.outbox_worker import OutboxWorker
-from src.config import settings
-from src.services.outbox_service import OutboxService
-from src.services.project_service import ProjectService
-from src.services.task_service import TaskService
-from src.services.team_service import TeamService
+from src.adapters.db.session import async_session_factory, close_db, init_db  # noqa: E402
+from src.adapters.discord_bot.bot import DggPmBot  # noqa: E402
+from src.adapters.discord_bot.discord_notifier import DiscordNotifier  # noqa: E402
+from src.adapters.worker.outbox_worker import OutboxWorker  # noqa: E402
+from src.config import settings  # noqa: E402
+from src.services.outbox_service import OutboxService  # noqa: E402
+from src.services.project_service import ProjectService  # noqa: E402
+from src.services.task_service import TaskService  # noqa: E402
+from src.services.team_service import TeamService  # noqa: E402
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -37,91 +43,90 @@ async def run_app() -> None:
     await init_db()
     logger.info("Database schema initialized.")
 
-    # 2. Wire Hexagonal Repositories & Services
-    async with get_session() as session:
-        task_repo = PostgresTaskRepo(session)
-        project_repo = PostgresProjectRepo(session)
-        team_repo = PostgresTeamRepo(session)
-        outbox_repo = PostgresOutboxRepo(session)
+    # 2. Wire Hexagonal Repositories & Services with Session Pool Factory
+    task_repo = PostgresTaskRepo(async_session_factory)
+    project_repo = PostgresProjectRepo(async_session_factory)
+    team_repo = PostgresTeamRepo(async_session_factory)
+    outbox_repo = PostgresOutboxRepo(async_session_factory)
 
-        project_service = ProjectService(project_repo)
-        team_service = TeamService(team_repo)
-        outbox_service = OutboxService(outbox_repo)
-        task_service = TaskService(task_repo, project_service, outbox_service)
+    project_service = ProjectService(project_repo)
+    team_service = TeamService(team_repo)
+    outbox_service = OutboxService(outbox_repo)
+    task_service = TaskService(task_repo, project_service, outbox_service)
 
-        # 3. Wire Discord Bot & Notifier
-        bot = DggPmBot(
-            task_service=task_service,
-            project_service=project_service,
-            team_service=team_service,
-        )
-        notifier = DiscordNotifier(bot)
+    # 3. Wire Discord Bot & Notifier
+    bot = DggPmBot(
+        task_service=task_service,
+        project_service=project_service,
+        team_service=team_service,
+    )
+    notifier = DiscordNotifier(bot)
 
-        # 4. Wire Outbox Worker
-        worker = OutboxWorker(
-            outbox_repo=outbox_repo,
-            notifier=notifier,
-            poll_interval=settings.OUTBOX_POLL_INTERVAL_SECONDS,
-            batch_size=settings.OUTBOX_BATCH_SIZE,
-        )
+    # 4. Wire Outbox Worker
+    worker = OutboxWorker(
+        outbox_repo=outbox_repo,
+        notifier=notifier,
+        poll_interval=settings.OUTBOX_POLL_INTERVAL_SECONDS,
+        batch_size=settings.OUTBOX_BATCH_SIZE,
+    )
 
-        # 5. Configure FastAPI Server
-        uvicorn_config = uvicorn.Config(
-            app=api_app,
-            host=settings.API_HOST,
-            port=settings.API_PORT,
-            log_level="warning",
-        )
-        uvicorn_server = uvicorn.Server(uvicorn_config)
+    # 5. Configure FastAPI Server
+    uvicorn_config = uvicorn.Config(
+        app=api_app,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        log_level="warning",
+    )
+    uvicorn_server = uvicorn.Server(uvicorn_config)
 
-        # 6. Gather concurrent async tasks
-        tasks = [
-            asyncio.create_task(uvicorn_server.serve(), name="FastAPI-Health-Server"),
-            asyncio.create_task(worker.start(), name="Outbox-Worker"),
-        ]
+    # 6. Gather concurrent async tasks
+    tasks = [
+        asyncio.create_task(uvicorn_server.serve(), name="FastAPI-Health-Server"),
+        asyncio.create_task(worker.start(), name="Outbox-Worker"),
+    ]
 
-        if settings.DISCORD_BOT_TOKEN:
-            tasks.append(
-                asyncio.create_task(
-                    bot.start(settings.DISCORD_BOT_TOKEN),
-                    name="Discord-Bot-Gateway",
-                )
+    if settings.DISCORD_BOT_TOKEN:
+        tasks.append(
+            asyncio.create_task(
+                bot.start(settings.DISCORD_BOT_TOKEN),
+                name="Discord-Bot-Gateway",
             )
-        else:
-            logger.warning("DISCORD_BOT_TOKEN is not set. Bot Gateway will not start. (API & Worker running)")
+        )
+    else:
+        logger.warning("DISCORD_BOT_TOKEN is not set. Bot Gateway will not start. (API & Worker running)")
 
-        # Shutdown handler
-        loop = asyncio.get_running_loop()
-        stop_event = asyncio.Event()
+    # Shutdown handler
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
 
-        def handle_signal():
-            logger.info("Received termination signal. Initiating graceful shutdown...")
-            worker.stop()
-            uvicorn_server.should_exit = True
-            stop_event.set()
+    def handle_signal():
+        logger.info("Received termination signal. Initiating graceful shutdown...")
+        worker.stop()
+        uvicorn_server.should_exit = True
+        stop_event.set()
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, handle_signal)
-            except NotImplementedError:
-                # Windows support fallback
-                pass
-
+    for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            done, _pending = await asyncio.wait(
-                tasks,
-                return_when=asyncio.FIRST_EXCEPTION,
-            )
-            for t in done:
-                if t.exception():
-                    logger.error("Service task %s failed with exception: %s", t.get_name(), t.exception())
-        finally:
-            logger.info("Cleaning up platform resources...")
-            worker.stop()
-            if not bot.is_closed():
-                await bot.close()
-            await close_db()
-            logger.info("Graceful shutdown complete.")
+            loop.add_signal_handler(sig, handle_signal)
+        except NotImplementedError:
+            # Windows support fallback
+            pass
+
+    try:
+        done, _pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_EXCEPTION,
+        )
+        for t in done:
+            if t.exception():
+                logger.error("Service task %s failed with exception: %s", t.get_name(), t.exception())
+    finally:
+        logger.info("Cleaning up platform resources...")
+        worker.stop()
+        if not bot.is_closed():
+            await bot.close()
+        await close_db()
+        logger.info("Graceful shutdown complete.")
 
 
 def main():

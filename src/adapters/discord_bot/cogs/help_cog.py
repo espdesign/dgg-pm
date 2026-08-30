@@ -56,11 +56,14 @@ class HelpCog(commands.Cog):
         )
 
         embed.add_field(
-            name="🎛️ Interactive Embed Buttons",
+            name="🎛️ Interactive Embed Controls",
             value=(
-                "• **`🟡 In Progress`**: Transition task status to in-progress\n"
-                "• **`🟢 Complete`**: Mark task as completed (cancels pending reminders)\n"
-                "• **`📝 Add Note`**: Opens modal to log progress updates to the task thread"
+                "• **`🟡 In Progress`** / **`🟢 Complete`**: Instantly update execution state\n"
+                "• **`📝 Add Note`**: Log progress updates and blockers to the task thread\n"
+                "• **`✏️ Edit Details`**: Edit title, description, due date (natural language), and watchers\n"
+                "• **`⚡ Priority Menu`**: 1-click priority adjustments (`High`, `Normal`, `Low`)\n"
+                "• **`👤 Assignee Menu`**: Reassign team members directly from the card\n"
+                "• **`📅 Due Date Menu`**: 1-click presets (`Today`, `Tomorrow`, `3 Days`, `1 Week`, etc.)"
             ),
             inline=False,
         )

@@ -162,3 +162,59 @@ async def test_archival_and_restoration(services):
     # Task unarchive
     restored_task = await task_srv.unarchive_task(task.id, actor_discord_id=1001)
     assert not restored_task.is_archived
+
+
+@pytest.mark.asyncio
+async def test_task_update_assignee_priority_and_details(services):
+    from datetime import UTC, datetime, timedelta
+
+    from src.domain.enums import TaskHistoryAction
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 555555555555555555
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Ops Pipeline", prefix="OPS")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Deploy Cluster",
+        creator_discord_id=1001,
+        project_id=project.id,
+        priority=PriorityLevel.NORMAL,
+    )
+    assert task.assignee_discord_id is None
+    assert task.priority == PriorityLevel.NORMAL
+
+    # 1. Update priority
+    p_updated = await task_srv.update_priority(task.id, PriorityLevel.HIGH, actor_discord_id=1002)
+    assert p_updated.priority == PriorityLevel.HIGH
+    assert p_updated.version == 2
+
+    # 2. Update assignee
+    a_updated = await task_srv.update_assignee(task.id, new_assignee_id=2002, actor_discord_id=1001)
+    assert a_updated.assignee_discord_id == 2002
+    assert a_updated.version == 3
+
+    # 3. Update details (due date and watchers)
+    due_target = datetime.now(UTC) + timedelta(days=2)
+    d_updated = await task_srv.update_details(
+        task_id=task.id,
+        actor_discord_id=1001,
+        title="Deploy Production Cluster",
+        body="Upgraded specs and memory limits",
+        due_at=due_target,
+        watchers=[3001, 3002],
+    )
+    assert d_updated.title == "Deploy Production Cluster"
+    assert d_updated.body == "Upgraded specs and memory limits"
+    assert d_updated.due_at is not None
+    assert set(d_updated.watchers) == {3001, 3002}
+    assert d_updated.version == 4
+
+    # 4. Verify history trail
+    history = await task_srv.get_history(task.id)
+    actions = [h.action for h in history]
+    assert TaskHistoryAction.CREATED in actions
+    assert TaskHistoryAction.PRIORITY_CHANGED in actions
+    assert TaskHistoryAction.ASSIGNED in actions
+    assert TaskHistoryAction.UPDATED in actions

@@ -15,8 +15,6 @@ RUN pip install --no-cache-dir .
 
 # Copy application source
 COPY src/ ./src/
-COPY alembic.ini .
-COPY migrations/ ./migrations/
 
 ENV PYTHONPATH=/app
 

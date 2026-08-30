@@ -49,13 +49,13 @@
 
   # Background processes when running `devenv up`
   processes = {
-    app.exec = "python src/main.py";
+    app.exec = "python -m src.main";
   };
 
   # Handy helper scripts
   scripts = {
     run-app.exec = ''
-      python src/main.py
+      python -m src.main
     '';
 
     run-tests.exec = ''

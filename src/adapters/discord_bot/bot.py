@@ -10,12 +10,13 @@ from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed
-from src.adapters.discord_bot.views.task_modals import TaskNoteModal
+from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
-from src.domain.enums import TaskStatus
+from src.domain.enums import PriorityLevel, TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
 from src.services.team_service import TeamService
+from src.utils.date_parser import get_due_date_from_preset
 
 logger = logging.getLogger("dgg_pm.bot")
 
@@ -89,7 +90,6 @@ class DggPmBot(commands.Bot):
                         return
                     except ValueError:
                         pass
-        await super().on_interaction(interaction)
 
     async def _handle_dynamic_task_button(
         self,
@@ -107,6 +107,84 @@ class DggPmBot(commands.Bot):
             await interaction.response.send_modal(modal)
             return
 
+        if action == "edit":
+            modal = TaskEditModal(task=task, task_service=self.task_service)
+            await interaction.response.send_modal(modal)
+            return
+
+        if action == "priority":
+            values = interaction.data.get("values", [])
+            if values:
+                try:
+                    new_priority = PriorityLevel(values[0])
+                    updated_task = await self.task_service.update_priority(
+                        task_id=task_id,
+                        new_priority=new_priority,
+                        actor_discord_id=interaction.user.id,
+                    )
+                    new_embed = build_task_embed(updated_task)
+                    new_view = TaskActionView(
+                        task_id=task_id,
+                        current_status=updated_task.status,
+                        current_priority=updated_task.priority,
+                        task_service=self.task_service,
+                    )
+                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    return
+                except Exception as e:
+                    logger.exception("Error handling dynamic priority change: %s", e)
+                    await interaction.response.send_message(f"❌ Failed to update priority: {e}", ephemeral=True)
+                    return
+
+        if action == "assignee":
+            values = interaction.data.get("values", [])
+            if values:
+                try:
+                    new_assignee_id = int(values[0])
+                    updated_task = await self.task_service.update_assignee(
+                        task_id=task_id,
+                        new_assignee_id=new_assignee_id,
+                        actor_discord_id=interaction.user.id,
+                    )
+                    new_embed = build_task_embed(updated_task)
+                    new_view = TaskActionView(
+                        task_id=task_id,
+                        current_status=updated_task.status,
+                        current_priority=updated_task.priority,
+                        task_service=self.task_service,
+                    )
+                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    return
+                except Exception as e:
+                    logger.exception("Error handling dynamic assignee change: %s", e)
+                    await interaction.response.send_message(f"❌ Failed to update assignee: {e}", ephemeral=True)
+                    return
+
+        if action == "due":
+            values = interaction.data.get("values", [])
+            if values:
+                try:
+                    due_at, is_clear = get_due_date_from_preset(values[0])
+                    updated_task = await self.task_service.update_details(
+                        task_id=task_id,
+                        actor_discord_id=interaction.user.id,
+                        due_at=due_at,
+                        clear_due_at=is_clear,
+                    )
+                    new_embed = build_task_embed(updated_task)
+                    new_view = TaskActionView(
+                        task_id=task_id,
+                        current_status=updated_task.status,
+                        current_priority=updated_task.priority,
+                        task_service=self.task_service,
+                    )
+                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    return
+                except Exception as e:
+                    logger.exception("Error handling dynamic due date change: %s", e)
+                    await interaction.response.send_message(f"❌ Failed to update due date: {e}", ephemeral=True)
+                    return
+
         target_status = TaskStatus.IN_PROGRESS if action == "start" else TaskStatus.COMPLETED
         try:
             updated_task = await self.task_service.update_status(
@@ -120,6 +198,7 @@ class DggPmBot(commands.Bot):
             new_view = TaskActionView(
                 task_id=task_id,
                 current_status=updated_task.status,
+                current_priority=updated_task.priority,
                 task_service=self.task_service,
             )
             await interaction.response.edit_message(embed=new_embed, view=new_view)
@@ -131,6 +210,7 @@ class DggPmBot(commands.Bot):
                 new_view = TaskActionView(
                     task_id=task_id,
                     current_status=latest_task.status,
+                    current_priority=latest_task.priority,
                     task_service=self.task_service,
                 )
                 await interaction.response.edit_message(embed=new_embed, view=new_view)

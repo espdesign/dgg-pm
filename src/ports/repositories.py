@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
-from src.domain.enums import TaskStatus
+from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import (
     OutboxEvent,
     Project,
@@ -36,6 +36,21 @@ class ITaskRepo(ABC):
         completed_at: datetime | None,
     ) -> Task | None:
         """Optimistic concurrency update for task status. Returns updated Task or None on conflict."""
+
+    @abstractmethod
+    async def update_task(
+        self,
+        task_id: UUID,
+        title: str | None = None,
+        body: str | None = None,
+        priority: PriorityLevel | None = None,
+        assignee_discord_id: int | None = None,
+        clear_assignee: bool = False,
+        due_at: datetime | None = None,
+        clear_due_at: bool = False,
+        watchers: list[int] | None = None,
+    ) -> Task | None:
+        """Updates task metadata attributes and increments version. Returns updated Task or None."""
 
     @abstractmethod
     async def update_discord_message(

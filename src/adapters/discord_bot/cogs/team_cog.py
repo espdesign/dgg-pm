@@ -46,6 +46,22 @@ class TeamCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create team: {e}", ephemeral=True)
 
+    async def team_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete functional teams for current guild."""
+        if not interaction.guild:
+            return []
+        teams = await self.team_service.list_teams(interaction.guild.id)
+        choices = [
+            app_commands.Choice(name=t.name, value=t.name)
+            for t in teams
+            if not current or current.lower() in t.name.lower()
+        ]
+        return choices[:25]
+
     @app_commands.command(name="team-assign", description="Assign a Discord member to a team with domain role.")
     @app_commands.describe(
         user="Discord user to assign",
@@ -58,6 +74,7 @@ class TeamCog(commands.Cog):
             app_commands.Choice(name="Lead", value="lead"),
         ]
     )
+    @app_commands.autocomplete(team_name=team_autocomplete)
     @app_commands.checks.has_permissions(manage_guild=True)
     async def team_assign(
         self,

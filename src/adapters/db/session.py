@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -10,6 +12,8 @@ from sqlalchemy.ext.asyncio import (
 
 from src.adapters.db.tables import Base
 from src.config import settings
+
+logger = logging.getLogger("dgg_pm.db")
 
 # Global async engine
 engine: AsyncEngine = create_async_engine(
@@ -27,10 +31,24 @@ async_session_factory = async_sessionmaker(
 )
 
 
-async def init_db() -> None:
-    """Initializes the database schema (useful for development/testing)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def init_db(max_retries: int = 15, retry_interval: float = 1.0) -> None:
+    """Initializes the database schema with connection retries."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            logger.warning(
+                "Database not ready yet (attempt %d/%d): %s. Retrying in %.1fs...",
+                attempt,
+                max_retries,
+                e,
+                retry_interval,
+            )
+            await asyncio.sleep(retry_interval)
 
 
 async def close_db() -> None:

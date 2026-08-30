@@ -17,8 +17,8 @@ class ProjectCog(commands.Cog):
     @app_commands.command(name="project-create", description="Instantiate a top-level project container.")
     @app_commands.describe(
         name="Name of the project (e.g. Infrastructure)",
-        prefix="Optional 3-4 letter prefix (e.g. INF)",
         channel="Discord text channel to bind as the project's task feed",
+        prefix="Optional 3-4 letter prefix (e.g. INF)",
         description="Brief summary of the project goals",
         category="Category or domain (e.g. Engineering, Marketing)",
     )
@@ -27,8 +27,8 @@ class ProjectCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         name: str,
+        channel: discord.TextChannel,
         prefix: str | None = None,
-        channel: discord.TextChannel | None = None,
         description: str | None = None,
         category: str | None = None,
     ) -> None:
@@ -38,13 +38,12 @@ class ProjectCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=False)
         try:
-            channel_id = channel.id if channel else interaction.channel_id
             project = await self.project_service.create_project(
                 guild_id=interaction.guild.id,
                 name=name,
                 prefix=prefix,
                 description=description,
-                discord_channel_id=channel_id,
+                discord_channel_id=channel.id,
                 category=category,
             )
 
@@ -63,12 +62,62 @@ class ProjectCog(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create project: {e}", ephemeral=True)
 
+    async def project_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete active projects for current guild."""
+        if not interaction.guild:
+            return []
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        choices = [
+            app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
+            for p in projects
+            if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
+        ]
+        return choices[:25]
+
+    async def team_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete functional teams for current guild."""
+        if not interaction.guild:
+            return []
+        teams = await self.team_service.list_teams(interaction.guild.id)
+        choices = [
+            app_commands.Choice(name=t.name, value=t.name)
+            for t in teams
+            if not current or current.lower() in t.name.lower()
+        ]
+        return choices[:25]
+
+    async def archived_project_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete archived projects for current guild."""
+        if not interaction.guild:
+            return []
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=True)
+        archived = [p for p in projects if p.is_archived]
+        choices = [
+            app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
+            for p in archived
+            if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
+        ]
+        return choices[:25]
+
     @app_commands.command(name="project-assign", description="Map a functional team container to a project.")
     @app_commands.describe(
         project_name="Name of the project",
         team_name="Name of the team",
         timeline="Target timeline (e.g. Q2 2026, 6 weeks)",
     )
+    @app_commands.autocomplete(project_name=project_autocomplete, team_name=team_autocomplete)
     @app_commands.checks.has_permissions(manage_guild=True)
     async def project_assign(
         self,
@@ -126,6 +175,7 @@ class ProjectCog(commands.Cog):
 
     @app_commands.command(name="project-archive", description="Archive a project and its associated tasks.")
     @app_commands.describe(project_name="Name of the project to archive")
+    @app_commands.autocomplete(project_name=project_autocomplete)
     @app_commands.checks.has_permissions(manage_guild=True)
     async def project_archive(self, interaction: discord.Interaction, project_name: str) -> None:
         if not interaction.guild:
@@ -141,6 +191,7 @@ class ProjectCog(commands.Cog):
 
     @app_commands.command(name="project-unarchive", description="Restore an archived project and its tasks.")
     @app_commands.describe(project_name="Name of the project to restore")
+    @app_commands.autocomplete(project_name=archived_project_autocomplete)
     @app_commands.checks.has_permissions(manage_guild=True)
     async def project_unarchive(self, interaction: discord.Interaction, project_name: str) -> None:
         if not interaction.guild:

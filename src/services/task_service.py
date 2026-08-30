@@ -216,6 +216,145 @@ class TaskService:
 
         return saved_history
 
+    async def update_assignee(
+        self,
+        task_id: UUID,
+        new_assignee_id: int | None,
+        actor_discord_id: int,
+    ) -> Task:
+        current_task = await self.task_repo.get_by_id(task_id)
+        if not current_task:
+            raise ValueError(f"Task with ID {task_id} does not exist.")
+
+        old_assignee = current_task.assignee_discord_id
+        if old_assignee == new_assignee_id:
+            return current_task
+
+        clear = new_assignee_id is None
+        updated_task = await self.task_repo.update_task(
+            task_id=task_id,
+            assignee_discord_id=new_assignee_id,
+            clear_assignee=clear,
+        )
+        if not updated_task:
+            raise ValueError(f"Failed to update assignee for task {task_id}.")
+
+        note = f"Assigned to <@{new_assignee_id}>" if new_assignee_id else "Removed assignee (unassigned)"
+        history = TaskHistory(
+            task_id=task_id,
+            actor_discord_id=actor_discord_id,
+            action=TaskHistoryAction.ASSIGNED,
+            notes=note,
+        )
+        await self.task_repo.add_history(history)
+
+        # Enqueue event
+        await self.outbox_service.enqueue_event(
+            event_type=EventType.TASK_UPDATED,
+            idempotency_key=f"task_assignee:{task_id}:v{updated_task.version}",
+            payload={
+                "task_id": str(task_id),
+                "short_id": updated_task.short_id,
+                "title": updated_task.title,
+                "guild_id": updated_task.guild_id,
+                "actor_discord_id": actor_discord_id,
+                "old_assignee_id": old_assignee,
+                "new_assignee_id": new_assignee_id,
+                "discord_thread_id": updated_task.discord_thread_id,
+            },
+        )
+
+        return updated_task
+
+    async def update_priority(
+        self,
+        task_id: UUID,
+        new_priority: PriorityLevel,
+        actor_discord_id: int,
+    ) -> Task:
+        current_task = await self.task_repo.get_by_id(task_id)
+        if not current_task:
+            raise ValueError(f"Task with ID {task_id} does not exist.")
+
+        old_priority = current_task.priority
+        if old_priority == new_priority:
+            return current_task
+
+        updated_task = await self.task_repo.update_task(
+            task_id=task_id,
+            priority=new_priority,
+        )
+        if not updated_task:
+            raise ValueError(f"Failed to update priority for task {task_id}.")
+
+        history = TaskHistory(
+            task_id=task_id,
+            actor_discord_id=actor_discord_id,
+            action=TaskHistoryAction.PRIORITY_CHANGED,
+            notes=f"Priority changed from {old_priority.value} to {new_priority.value}",
+        )
+        await self.task_repo.add_history(history)
+
+        await self.outbox_service.enqueue_event(
+            event_type=EventType.TASK_UPDATED,
+            idempotency_key=f"task_priority:{task_id}:v{updated_task.version}",
+            payload={
+                "task_id": str(task_id),
+                "short_id": updated_task.short_id,
+                "title": updated_task.title,
+                "guild_id": updated_task.guild_id,
+                "actor_discord_id": actor_discord_id,
+                "old_priority": old_priority.value,
+                "new_priority": new_priority.value,
+                "discord_thread_id": updated_task.discord_thread_id,
+            },
+        )
+
+        return updated_task
+
+    async def update_details(
+        self,
+        task_id: UUID,
+        actor_discord_id: int,
+        title: str | None = None,
+        body: str | None = None,
+        due_at: datetime | None = None,
+        clear_due_at: bool = False,
+        watchers: list[int] | None = None,
+    ) -> Task:
+        current_task = await self.task_repo.get_by_id(task_id)
+        if not current_task:
+            raise ValueError(f"Task with ID {task_id} does not exist.")
+
+        updated_task = await self.task_repo.update_task(
+            task_id=task_id,
+            title=title,
+            body=body,
+            due_at=due_at,
+            clear_due_at=clear_due_at,
+            watchers=watchers,
+        )
+        if not updated_task:
+            raise ValueError(f"Failed to update task {task_id}.")
+
+        # If due_at changed, reschedule outbox reminders
+        if clear_due_at:
+            await self.outbox_service.cancel_task_reminders(task_id)
+        elif due_at is not None and due_at != current_task.due_at:
+            await self.outbox_service.cancel_task_reminders(task_id)
+            if not updated_task.is_completed and not updated_task.is_archived:
+                await self.outbox_service.schedule_task_reminders(updated_task)
+
+        history = TaskHistory(
+            task_id=task_id,
+            actor_discord_id=actor_discord_id,
+            action=TaskHistoryAction.UPDATED,
+            notes="Task details updated",
+        )
+        await self.task_repo.add_history(history)
+
+        return updated_task
+
     async def update_discord_message_ids(
         self,
         task_id: UUID,

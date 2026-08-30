@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 
 import discord
 from discord import app_commands
@@ -14,37 +14,19 @@ from src.adapters.discord_bot.views.task_list_view import TaskListView, build_pa
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
+from src.utils.date_parser import parse_natural_date
 
 
 def parse_datetime(dt_str: str | None) -> datetime | None:
-    """Parses various standard date formats into UTC datetime."""
-    if not dt_str:
-        return None
-    clean = dt_str.strip()
-    formats = [
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d",
-    ]
-    for fmt in formats:
-        try:
-            dt = datetime.strptime(clean, fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            return dt
-        except ValueError:
-            pass
-    return None
+    """Parses various standard and natural date formats into UTC datetime."""
+    return parse_natural_date(dt_str)
 
 
 def extract_user_ids(text: str | None) -> list[int]:
     """Extracts Discord user snowflake IDs from mentions (<@123456789>) or raw IDs."""
     if not text:
         return []
-    ids = re.findall(r"\d{17,20}", text)
+    ids = re.findall(r"\d{4,20}", text)
     return [int(uid) for uid in set(ids)]
 
 
@@ -89,6 +71,22 @@ class TaskCog(commands.Cog):
             choices.append(app_commands.Choice(name=label, value=t.short_id))
         return choices
 
+    async def project_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete active projects for current guild."""
+        if not interaction.guild:
+            return []
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        choices = [
+            app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
+            for p in projects
+            if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
+        ]
+        return choices[:25]
+
     @app_commands.command(
         name="task-create", description="Create a project-anchored task with accountability and thread."
     )
@@ -108,6 +106,7 @@ class TaskCog(commands.Cog):
             app_commands.Choice(name="Low", value="low"),
         ]
     )
+    @app_commands.autocomplete(project_name=project_autocomplete)
     async def task_create(
         self,
         interaction: discord.Interaction,
@@ -155,7 +154,12 @@ class TaskCog(commands.Cog):
                     target_channel = chan
 
             embed = build_task_embed(task, project_name=project.name)
-            view = TaskActionView(task_id=task.id, current_status=task.status, task_service=self.task_service)
+            view = TaskActionView(
+                task_id=task.id,
+                current_status=task.status,
+                current_priority=task.priority,
+                task_service=self.task_service,
+            )
 
             # Send root message embed
             msg = await target_channel.send(embed=embed, view=view)
@@ -244,7 +248,12 @@ class TaskCog(commands.Cog):
             )
 
             embed = build_task_embed(task)
-            view = TaskActionView(task_id=task.id, current_status=task.status, task_service=self.task_service)
+            view = TaskActionView(
+                task_id=task.id,
+                current_status=task.status,
+                current_priority=task.priority,
+                task_service=self.task_service,
+            )
             msg = await interaction.channel.send(embed=embed, view=view)
             await self.task_service.update_discord_message_ids(task.id, msg.id, None)
 
@@ -358,6 +367,7 @@ class TaskCog(commands.Cog):
             app_commands.Choice(name="Completed", value="completed"),
         ]
     )
+    @app_commands.autocomplete(project_name=project_autocomplete)
     async def task_list(
         self,
         interaction: discord.Interaction,
