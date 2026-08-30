@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from uuid import UUID
 
 from src.domain.enums import TeamRoleType
@@ -27,11 +29,26 @@ class TeamService:
         )
         return await self.team_repo.create(team)
 
+    async def get_by_id(self, team_id: UUID) -> Team | None:
+        return await self.team_repo.get_by_id(team_id)
+
     async def get_by_name(self, guild_id: int, name: str) -> Team | None:
         return await self.team_repo.get_by_name(guild_id, name)
 
     async def get_by_role_id(self, guild_id: int, role_id: int) -> Team | None:
         return await self.team_repo.get_by_role_id(guild_id, role_id)
+
+    async def add_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        await self.team_repo.add_team_lead(team_id, user_discord_id)
+
+    async def remove_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        await self.team_repo.remove_team_lead(team_id, user_discord_id)
+
+    async def list_team_leads(self, team_id: UUID) -> list[int]:
+        return await self.team_repo.list_team_leads(team_id)
+
+    async def is_team_lead(self, team_id: UUID, user_discord_id: int) -> bool:
+        return await self.team_repo.is_team_lead(team_id, user_discord_id)
 
     async def assign_member(
         self,

@@ -45,3 +45,7 @@ class TeamAlreadyExistsError(EntityAlreadyExistsError, ValueError):
 
 class StaleVersionError(DomainError):
     """Raised when an optimistic concurrency update fails due to a version mismatch."""
+
+
+class PermissionDeniedError(DomainError):
+    """Raised when an actor lacks authorization to perform a mutating action."""

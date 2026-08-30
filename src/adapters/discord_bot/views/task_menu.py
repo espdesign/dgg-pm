@@ -12,6 +12,7 @@ from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Project, Task
+from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -58,6 +59,7 @@ class TaskCreateModal(discord.ui.Modal):
         task_service: TaskService,
         project: Project | None = None,
         target_channel: discord.ForumChannel | discord.TextChannel | discord.Thread | None = None,
+        auth_service: AuthService | None = None,
     ):
         if project:
             title_str = f"New Task: [{project.prefix}] {project.name[:22]}"
@@ -70,6 +72,7 @@ class TaskCreateModal(discord.ui.Modal):
         self.task_service = task_service
         self.project = project
         self.target_channel = target_channel
+        self.auth_service = auth_service
 
         self.title_input = discord.ui.TextInput(
             label="Task Title",
@@ -133,6 +136,15 @@ class TaskCreateModal(discord.ui.Modal):
             priority = PriorityLevel.LOW
 
         try:
+            if self.auth_service:
+                await self.auth_service.require_task_creation(
+                    interaction.user, self.project.id if self.project else None
+                )
+                if assignee_id:
+                    await self.auth_service.require_task_assignee_eligibility(
+                        interaction.guild, assignee_id, self.project.id if self.project else None
+                    )
+
             task = await self.task_service.create_task(
                 guild_id=interaction.guild.id,
                 title=title,
@@ -231,10 +243,12 @@ class TaskSelectProjectView(discord.ui.View):
         team_service: TeamService | None = None,
         current_channel_id: int | None = None,
         parent_channel_id: int | None = None,
+        auth_service: AuthService | None = None,
         current_page: int = 0,
         query: str = "",
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
+        self.all_projects = projects
         self.task_service = task_service
         self.project_service = project_service
         self.team_service = team_service
@@ -418,7 +432,12 @@ class TaskSelectProjectView(discord.ui.View):
         if project.discord_channel_id and interaction.guild:
             target_channel = interaction.guild.get_channel(project.discord_channel_id)
 
-        modal = TaskCreateModal(self.task_service, project=project, target_channel=target_channel)
+        modal = TaskCreateModal(
+            self.task_service,
+            project=project,
+            target_channel=target_channel,
+            auth_service=self.auth_service,
+        )
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
@@ -498,6 +517,7 @@ class TaskMenuView(discord.ui.View):
         parent_channel_id: int | None = None,
         initial_project_id: UUID | None = None,
         search_query: str = "",
+        auth_service: AuthService | None = None,
     ):
         super().__init__(timeout=None)
         self.task_service = task_service
@@ -509,6 +529,7 @@ class TaskMenuView(discord.ui.View):
         self.search_query = search_query
         self.selected_assignee_id: int | None = None
         self.status_filter_value: str = "active"
+        self.auth_service = auth_service or (AuthService(project_service, team_service) if team_service else None)
 
         # Determine channel-bound projects
         channel_ids = {cid for cid in (self.current_channel_id, self.parent_channel_id) if cid}
@@ -722,7 +743,12 @@ class TaskMenuView(discord.ui.View):
                 elif interaction.channel:
                     target_channel = interaction.channel
 
-                modal = TaskCreateModal(self.task_service, project=project, target_channel=target_channel)
+                modal = TaskCreateModal(
+                    self.task_service,
+                    project=project,
+                    target_channel=target_channel,
+                    auth_service=self.auth_service,
+                )
                 await interaction.response.send_modal(modal)
                 return
 
@@ -744,6 +770,7 @@ class TaskMenuView(discord.ui.View):
             self.team_service,
             current_channel_id=self.current_channel_id,
             parent_channel_id=self.parent_channel_id,
+            auth_service=self.auth_service,
         )
         embed = discord.Embed(
             title="📁 Select Project Container",
@@ -757,7 +784,12 @@ class TaskMenuView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _on_standalone_clicked(self, interaction: discord.Interaction) -> None:
-        modal = TaskCreateModal(self.task_service, project=None, target_channel=interaction.channel)
+        modal = TaskCreateModal(
+            self.task_service,
+            project=None,
+            target_channel=interaction.channel,
+            auth_service=self.auth_service,
+        )
         await interaction.response.send_modal(modal)
 
     async def _on_search_scope_clicked(self, interaction: discord.Interaction) -> None:

@@ -147,11 +147,19 @@ class IProjectRepo(ABC):
     async def assign_team(self, project_team: ProjectTeam) -> None:
         """Maps a team to a project."""
 
+    @abstractmethod
+    async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
+        """Lists all teams mapped to a project."""
+
 
 class ITeamRepo(ABC):
     @abstractmethod
     async def create(self, team: Team) -> Team:
         """Persists a new team."""
+
+    @abstractmethod
+    async def get_by_id(self, team_id: UUID) -> Team | None:
+        """Fetches team by ID."""
 
     @abstractmethod
     async def get_by_name(self, guild_id: int, name: str) -> Team | None:
@@ -162,8 +170,24 @@ class ITeamRepo(ABC):
         """Fetches team by Discord role ID."""
 
     @abstractmethod
+    async def add_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        """Designates a user as a team lead in database."""
+
+    @abstractmethod
+    async def remove_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        """Removes team lead status for a user."""
+
+    @abstractmethod
+    async def list_team_leads(self, team_id: UUID) -> list[int]:
+        """Lists Discord user IDs of all leads for a team."""
+
+    @abstractmethod
     async def assign_member(self, member: TeamMember) -> None:
         """Records or updates team member domain role (LEAD/MEMBER)."""
+
+    @abstractmethod
+    async def is_team_lead(self, team_id: UUID, user_discord_id: int) -> bool:
+        """Checks whether user has TeamRoleType.LEAD for the given team."""
 
     @abstractmethod
     async def list_teams(self, guild_id: int) -> list[Team]:

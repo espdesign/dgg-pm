@@ -71,13 +71,25 @@ async def send_interaction_error(
 
     try:
         is_done = False
-        if hasattr(interaction, "response") and callable(getattr(interaction.response, "is_done", None)):
-            is_done = interaction.response.is_done() is True
+        if hasattr(interaction, "response"):
+            resp = interaction.response
+            if callable(getattr(resp, "is_done", None)):
+                done_res = resp.is_done()
+                if isinstance(done_res, bool):
+                    is_done = done_res
+                elif getattr(getattr(resp, "defer", None), "called", False) or getattr(
+                    getattr(resp, "send_message", None), "called", False
+                ):
+                    is_done = True
 
         if is_done and hasattr(interaction, "followup") and callable(getattr(interaction.followup, "send", None)):
-            await interaction.followup.send(message, ephemeral=ephemeral)
-        elif hasattr(interaction, "response") and hasattr(interaction.response, "send_message"):
-            await interaction.response.send_message(message, ephemeral=ephemeral)
+            res = interaction.followup.send(message, ephemeral=ephemeral)
+            if hasattr(res, "__await__"):
+                await res
+        elif hasattr(interaction, "response") and callable(getattr(interaction.response, "send_message", None)):
+            res = interaction.response.send_message(message, ephemeral=ephemeral)
+            if hasattr(res, "__await__"):
+                await res
     except Exception as send_err:
         log.exception("Failed to send error response to Discord interaction: %s", send_err)
 

@@ -17,6 +17,7 @@ from src.adapters.discord_bot.views.task_embed import (
 )
 from src.adapters.discord_bot.views.task_list_view import TaskListView, build_page_embed
 from src.domain.enums import PriorityLevel, TaskStatus
+from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -47,11 +48,13 @@ class TaskCog(commands.Cog):
         task_service: TaskService,
         project_service: ProjectService,
         team_service: TeamService | None = None,
+        auth_service: AuthService | None = None,
     ):
         self.bot = bot
         self.task_service = task_service
         self.project_service = project_service
         self.team_service = team_service
+        self.auth_service = auth_service or (AuthService(project_service, team_service) if team_service else None)
 
     async def task_autocomplete(
         self,
@@ -146,6 +149,11 @@ class TaskCog(commands.Cog):
             if not project:
                 await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
                 return
+
+            if self.auth_service:
+                await self.auth_service.require_task_creation(interaction.user, project.id)
+                if assignee:
+                    await self.auth_service.require_task_assignee_eligibility(interaction.guild, assignee, project.id)
 
             due_at = parse_datetime(due)
             watchers = extract_user_ids(cc)
@@ -279,6 +287,13 @@ class TaskCog(commands.Cog):
                 await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
                 return
 
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, task_entity)
+                if assignee:
+                    await self.auth_service.require_task_assignee_eligibility(
+                        interaction.guild, assignee, task_entity.project_id
+                    )
+
             new_assignee_id = assignee.id if assignee else None
             updated_task = await self.task_service.update_assignee(
                 task_id=task_entity.id,
@@ -293,9 +308,13 @@ class TaskCog(commands.Cog):
             )
             embed = build_task_embed(updated_task)
             if hasattr(self.bot, "sync_root_task_message"):
-                await self.bot.sync_root_task_message(updated_task)
+                res = self.bot.sync_root_task_message(updated_task)
+                if hasattr(res, "__await__"):
+                    await res
             if hasattr(self.bot, "sync_task_thread"):
-                await self.bot.sync_task_thread(updated_task)
+                res = self.bot.sync_task_thread(updated_task)
+                if hasattr(res, "__await__"):
+                    await res
             await interaction.followup.send(f"✅ {msg}", embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -334,6 +353,10 @@ class TaskCog(commands.Cog):
                 return
 
             target_user_id = member.id if member else interaction.user.id
+            if (action == "clear") or (target_user_id != interaction.user.id):
+                if self.auth_service:
+                    await self.auth_service.require_task_mutation(interaction.user, task_entity)
+
             current_watchers = list(task_entity.watchers)
 
             if action == "add":
@@ -353,7 +376,9 @@ class TaskCog(commands.Cog):
 
             embed = build_task_embed(updated_task)
             if hasattr(self.bot, "sync_root_task_message"):
-                await self.bot.sync_root_task_message(updated_task)
+                res = self.bot.sync_root_task_message(updated_task)
+                if hasattr(res, "__await__"):
+                    await res
             await interaction.followup.send(f"✅ Updated watchers for **[{updated_task.short_id}]**!", embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -585,6 +610,9 @@ class TaskCog(commands.Cog):
                 await interaction.followup.send(f"❌ Task '{task}' not found in this server.", ephemeral=True)
                 return
 
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, task_entity)
+
             new_status = TaskStatus(status)
             updated_task = await self.task_service.update_status(
                 task_id=task_entity.id,
@@ -596,9 +624,13 @@ class TaskCog(commands.Cog):
 
             embed = build_task_embed(updated_task)
             if hasattr(self.bot, "sync_root_task_message"):
-                await self.bot.sync_root_task_message(updated_task)
+                res = self.bot.sync_root_task_message(updated_task)
+                if hasattr(res, "__await__"):
+                    await res
             if hasattr(self.bot, "sync_task_thread"):
-                await self.bot.sync_task_thread(updated_task)
+                res = self.bot.sync_task_thread(updated_task)
+                if hasattr(res, "__await__"):
+                    await res
             await interaction.followup.send(
                 f"✅ Updated **[{updated_task.short_id}]** status to **{new_status.value}**!",
                 embed=embed,
@@ -646,9 +678,14 @@ class TaskCog(commands.Cog):
                 await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
                 return
 
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, task_entity)
+
             archived_task = await self.task_service.archive_task(task_entity.id, interaction.user.id)
             if archived_task and hasattr(self.bot, "sync_task_thread"):
-                await self.bot.sync_task_thread(archived_task, action="archive")
+                res = self.bot.sync_task_thread(archived_task, action="archive")
+                if hasattr(res, "__await__"):
+                    await res
             await interaction.followup.send(
                 f"📁 Task **[{task_entity.short_id}] {task_entity.title}** has been archived."
             )
@@ -670,9 +707,14 @@ class TaskCog(commands.Cog):
                 await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
                 return
 
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, task_entity)
+
             restored_task = await self.task_service.unarchive_task(task_entity.id, interaction.user.id)
             if restored_task and hasattr(self.bot, "sync_task_thread"):
-                await self.bot.sync_task_thread(restored_task, action="unarchive")
+                res = self.bot.sync_task_thread(restored_task, action="unarchive")
+                if hasattr(res, "__await__"):
+                    await res
             await interaction.followup.send(
                 f"📂 Task **[{task_entity.short_id}] {task_entity.title}** has been restored."
             )

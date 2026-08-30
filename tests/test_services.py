@@ -300,3 +300,34 @@ async def test_task_creation_atomic_rollback(services, repos):
         assert len(tasks) == 0
     finally:
         outbox_srv.enqueue_event = original_enqueue
+
+
+@pytest.mark.asyncio
+async def test_team_service_leads_lifecycle(services):
+    team_srv = services["team"]
+    guild_id = 999888111
+
+    team = await team_srv.create_team(guild_id=guild_id, name="Infra Squad", discord_role_id=123456)
+    assert team.id is not None
+
+    # Initial state: no leads
+    leads = await team_srv.list_team_leads(team.id)
+    assert len(leads) == 0
+    assert await team_srv.is_team_lead(team.id, 9001) is False
+
+    # Add lead
+    await team_srv.add_team_lead(team.id, 9001)
+    await team_srv.add_team_lead(team.id, 9002)
+
+    leads = await team_srv.list_team_leads(team.id)
+    assert set(leads) == {9001, 9002}
+    assert await team_srv.is_team_lead(team.id, 9001) is True
+    assert await team_srv.is_team_lead(team.id, 9002) is True
+    assert await team_srv.is_team_lead(team.id, 9003) is False
+
+    # Remove lead
+    await team_srv.remove_team_lead(team.id, 9001)
+    leads = await team_srv.list_team_leads(team.id)
+    assert leads == [9002]
+    assert await team_srv.is_team_lead(team.id, 9001) is False
+    assert await team_srv.is_team_lead(team.id, 9002) is True

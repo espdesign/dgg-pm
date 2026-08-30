@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import discord
@@ -10,6 +11,9 @@ from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.models import Task
 from src.services.task_service import TaskService
 from src.utils.date_parser import parse_natural_date
+
+if TYPE_CHECKING:
+    from src.services.auth_service import AuthService
 
 logger = logging.getLogger("dgg_pm.views.task_modals")
 
@@ -22,11 +26,18 @@ def _extract_user_ids(text: str | None) -> list[int]:
 
 
 class TaskNoteModal(discord.ui.Modal):
-    def __init__(self, task_id: UUID, short_id: str, task_service: TaskService):
+    def __init__(
+        self,
+        task_id: UUID,
+        short_id: str,
+        task_service: TaskService,
+        auth_service: AuthService | None = None,
+    ):
         super().__init__(title=f"Add Progress Note: {short_id}")
         self.task_id = task_id
         self.short_id = short_id
         self.task_service = task_service
+        self.auth_service = auth_service
 
         self.note_input = discord.ui.TextInput(
             label="Progress Update / Note",
@@ -44,6 +55,11 @@ class TaskNoteModal(discord.ui.Modal):
             return
 
         try:
+            if self.auth_service:
+                task = await self.task_service.get_by_id(self.task_id)
+                if task:
+                    await self.auth_service.require_task_mutation(interaction.user, task)
+
             await self.task_service.add_note(
                 task_id=self.task_id,
                 actor_discord_id=interaction.user.id,
@@ -62,11 +78,17 @@ class TaskNoteModal(discord.ui.Modal):
 class TaskEditModal(discord.ui.Modal):
     """Modal for editing task title, description, due date, and watchers."""
 
-    def __init__(self, task: Task, task_service: TaskService):
+    def __init__(
+        self,
+        task: Task,
+        task_service: TaskService,
+        auth_service: AuthService | None = None,
+    ):
         super().__init__(title=f"Edit Task: {task.short_id}")
         self.task_id = task.id
         self.short_id = task.short_id
         self.task_service = task_service
+        self.auth_service = auth_service
 
         self.title_input = discord.ui.TextInput(
             label="Task Title",
@@ -124,6 +146,11 @@ class TaskEditModal(discord.ui.Modal):
         watchers = _extract_user_ids(watchers_val) if watchers_val else []
 
         try:
+            if self.auth_service:
+                task = await self.task_service.get_by_id(self.task_id)
+                if task:
+                    await self.auth_service.require_task_mutation(interaction.user, task)
+
             updated_task = await self.task_service.update_details(
                 task_id=self.task_id,
                 actor_discord_id=interaction.user.id,

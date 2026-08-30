@@ -6,6 +6,7 @@ import discord
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.enums import TeamRoleType
 from src.domain.models import Team
+from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -145,13 +146,14 @@ class TeamAssignMemberSelectView(discord.ui.View):
         self.user_select.callback = self._on_user_selected
         self.add_item(self.user_select)
 
-        # Row 2: Role Type Select (Default: Team Member)
+        # Row 2: Role Type Select (Default: Team Lead)
         role_options = [
-            discord.SelectOption(label="Team Member", value="member", emoji="👤", default=True),
-            discord.SelectOption(label="Team Lead", value="lead", emoji="⭐"),
+            discord.SelectOption(label="Designate as Team Lead", value="lead", emoji="⭐", default=True),
+            discord.SelectOption(label="Remove Team Lead Status", value="remove_lead", emoji="❌"),
+            discord.SelectOption(label="Record / Verify Team Member", value="member", emoji="👤"),
         ]
         self.role_select = discord.ui.Select(
-            placeholder="Role Type: Team Member / Team Lead",
+            placeholder="Action: Designate Lead / Remove Lead / Verify Member",
             options=role_options,
             row=2,
         )
@@ -160,7 +162,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
 
         # Row 3: Confirm Button & Back Button
         self.confirm_btn = discord.ui.Button(
-            label="Confirm Team Assignment",
+            label="Confirm Team Update",
             emoji="✅",
             style=discord.ButtonStyle.primary,
             row=3,
@@ -186,7 +188,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
         await interaction.response.defer()
 
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
-        self.selected_role_type = TeamRoleType(self.role_select.values[0])
+        self.selected_role_type_str = self.role_select.values[0]
         await interaction.response.defer()
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
@@ -206,7 +208,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
                 await interaction.response.send_message("❌ Please select a Discord member to assign.", ephemeral=True)
                 return
 
-        self.selected_role_type = self.selected_role_type or TeamRoleType.MEMBER
+        action_type = getattr(self, "selected_role_type_str", "lead")
 
         team = self.teams.get(self.selected_team_id)
         if not team and interaction.guild:
@@ -217,10 +219,22 @@ class TeamAssignMemberSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Team not found.", ephemeral=True)
             return
 
-        # Validate that the user actually has the team's Discord role
+        # Check authorization: must be server manager or Team Lead
+        if not AuthService.is_server_manager(interaction.user):
+            is_lead = await self.team_service.is_team_lead(self.selected_team_id, interaction.user.id)
+            if not is_lead:
+                await interaction.response.send_message(
+                    "❌ You do not have permission to manage this team's roster. "
+                    "You must be a Team Lead or a server manager.",
+                    ephemeral=True,
+                )
+                return
+
+        # Validate that the user actually has the team's Discord role for add/verify
         user = self.selected_user
-        if interaction.guild:
-            member = interaction.guild.get_member(user.id) or user
+        if action_type != "remove_lead" and interaction.guild:
+            member = interaction.guild.get_member(user.id) if hasattr(interaction.guild, "get_member") else user
+            member = member or user
             if hasattr(member, "roles"):
                 has_role = any(r.id == team.discord_role_id for r in member.roles)
                 if not has_role:
@@ -233,24 +247,28 @@ class TeamAssignMemberSelectView(discord.ui.View):
                     return
 
         try:
-            await self.team_service.assign_member(
-                team_id=self.selected_team_id,
-                user_discord_id=user.id,
-                role_type=self.selected_role_type,
-            )
-            role_label = "Team Lead ⭐" if self.selected_role_type == TeamRoleType.LEAD else "Team Member 👤"
+            if action_type == "remove_lead":
+                await self.team_service.remove_team_lead(self.selected_team_id, user.id)
+                success_msg = f"✅ Removed Team Lead status from <@{user.id}> for **{team.name}**."
+            elif action_type == "lead":
+                await self.team_service.add_team_lead(self.selected_team_id, user.id)
+                success_msg = f"⭐ Designated <@{user.id}> as **Team Lead** for **{team.name}**."
+            else:
+                await self.team_service.assign_member(
+                    team_id=self.selected_team_id,
+                    user_discord_id=user.id,
+                    role_type=TeamRoleType.MEMBER,
+                )
+                success_msg = f"✅ Verified <@{user.id}> as **Team Member** for **{team.name}**."
 
             # Return to main team menu with success notification
             view = TeamMenuView(self.team_service, self.project_service, self.task_service)
             embed = build_team_menu_embed()
-            embed.description = (
-                f"✅ **Assignment Successful!**\n"
-                f"Assigned <@{user.id}> as **{role_label}** to **{team.name}**.\n\n" + (embed.description or "")
-            )
+            embed.description = f"{success_msg}\n\n" + (embed.description or "")
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
-                interaction, e, f"assigning user to team '{team.name}'", logger, ephemeral=True
+                interaction, e, f"updating team settings for '{team.name}'", logger, ephemeral=True
             )
 
 
@@ -303,9 +321,14 @@ class TeamRosterDetailView(discord.ui.View):
             await interaction.response.send_message("❌ Team not found.", ephemeral=True)
             return
 
-        members = await self.team_service.list_members(team_id)
-        leads = [f"<@{m.user_discord_id}>" for m in members if m.role_type == TeamRoleType.LEAD]
-        regular = [f"<@{m.user_discord_id}>" for m in members if m.role_type == TeamRoleType.MEMBER]
+        leads = await self.team_service.list_team_leads(team_id)
+        role = None
+        if interaction.guild and hasattr(interaction.guild, "get_role"):
+            role = interaction.guild.get_role(team.discord_role_id)
+        role_members = getattr(role, "members", []) if role else []
+
+        lead_strs = [f"<@{uid}>" for uid in leads]
+        other_members = [f"<@{m.id}>" for m in role_members if m.id not in leads]
 
         embed = discord.Embed(
             title=f"👥 Squad Roster: {team.name}",
@@ -313,16 +336,23 @@ class TeamRosterDetailView(discord.ui.View):
             color=discord.Color.teal(),
         )
         embed.add_field(
-            name=f"⭐ Team Leads ({len(leads)})",
-            value=", ".join(leads) if leads else "*None assigned*",
+            name=f"⭐ Team Leads ({len(lead_strs)})",
+            value=", ".join(lead_strs) if lead_strs else "*None designated*",
             inline=False,
         )
+        if other_members:
+            members_val = ", ".join(other_members[:20])
+        elif role_members:
+            members_val = "*(All leads)*"
+        else:
+            members_val = "*None with role*"
+
         embed.add_field(
-            name=f"👤 Team Members ({len(regular)})",
-            value=", ".join(regular) if regular else "*None assigned*",
+            name=f"👤 Discord Role Members ({len(role_members)})",
+            value=members_val,
             inline=False,
         )
-        embed.set_footer(text=f"Total: {len(members)} squad members • Team ID: {team.id}")
+        embed.set_footer(text=f"Total: {len(role_members)} Discord role members • Team ID: {team.id}")
         await interaction.response.edit_message(content=None, embed=embed, view=self)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:

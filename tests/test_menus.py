@@ -228,7 +228,7 @@ async def test_team_menu_and_modal(services):
     await assign_view.confirm_btn.callback(assign_interaction)
     assign_interaction.response.edit_message.assert_awaited_once()
     success_embed = assign_interaction.response.edit_message.call_args[1]["embed"]
-    assert "Assignment Successful!" in success_embed.description
+    assert "Designated" in success_embed.description and "Team Lead" in success_embed.description
 
     # 5. Test TeamRosterDetailView
     from src.adapters.discord_bot.views.team_menu import TeamRosterDetailView

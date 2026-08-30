@@ -17,6 +17,7 @@ from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteMo
 from src.config import settings
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Task
+from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
 from src.services.team_service import TeamService
@@ -48,13 +49,14 @@ class DggPmBot(commands.Bot):
         self.project_service = project_service
         self.team_service = team_service
         self.user_service = user_service
+        self.auth_service = AuthService(project_service, team_service)
 
     async def setup_hook(self) -> None:
         """Invoked when bot is starting up before login."""
         # Load cogs
         await self.add_cog(ProjectCog(self, self.project_service, self.team_service, self.task_service))
-        await self.add_cog(TeamCog(self, self.team_service, self.project_service, self.task_service))
-        await self.add_cog(TaskCog(self, self.task_service, self.project_service, self.team_service))
+        await self.add_cog(TeamCog(self, self.team_service, self.project_service, self.task_service, self.auth_service))
+        await self.add_cog(TaskCog(self, self.task_service, self.project_service, self.team_service, self.auth_service))
         await self.add_cog(HelpCog(self, self.project_service, self.team_service, self.task_service))
         if self.user_service:
             await self.add_cog(
@@ -237,13 +239,34 @@ class DggPmBot(commands.Bot):
                 await interaction.response.send_message("❌ This task does not belong to this server.", ephemeral=True)
             return
 
+        # Check authorization
+        if not await self.auth_service.can_mutate_task(interaction.user, task):
+            msg = (
+                "❌ You do not have permission to modify this task. "
+                "You must be the assignee, creator, a member of the project team, or a server manager."
+            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+            return
+
         if action == "note":
-            modal = TaskNoteModal(task_id=task_id, short_id=task.short_id, task_service=self.task_service)
+            modal = TaskNoteModal(
+                task_id=task_id,
+                short_id=task.short_id,
+                task_service=self.task_service,
+                auth_service=self.auth_service,
+            )
             await interaction.response.send_modal(modal)
             return
 
         if action == "edit":
-            modal = TaskEditModal(task=task, task_service=self.task_service)
+            modal = TaskEditModal(
+                task=task,
+                task_service=self.task_service,
+                auth_service=self.auth_service,
+            )
             await interaction.response.send_modal(modal)
             return
 
@@ -285,6 +308,9 @@ class DggPmBot(commands.Bot):
             if values:
                 try:
                     new_assignee_id = int(values[0])
+                    await self.auth_service.require_task_assignee_eligibility(
+                        interaction.guild, new_assignee_id, task.project_id
+                    )
                     updated_task = await self.task_service.update_assignee(
                         task_id=task_id,
                         new_assignee_id=new_assignee_id,

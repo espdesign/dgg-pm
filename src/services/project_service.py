@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import re
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from src.domain.exceptions import ProjectAlreadyExistsError, ProjectNotFoundError
-from src.domain.models import Project, ProjectTeam
+from src.domain.models import Project, ProjectTeam, Team
 from src.ports.repositories import IProjectRepo
 
 
@@ -99,3 +101,6 @@ class ProjectService:
             timeline=timeline,
         )
         await self.project_repo.assign_team(pt)
+
+    async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
+        return await self.project_repo.list_teams_for_project(project_id)

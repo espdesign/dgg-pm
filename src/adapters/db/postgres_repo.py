@@ -624,6 +624,17 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
             await session.merge(row)
             await session.commit()
 
+    async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
+        async with self._get_session() as session:
+            stmt = (
+                select(TeamTable)
+                .join(ProjectTeamTable, ProjectTeamTable.team_id == TeamTable.id)
+                .where(ProjectTeamTable.project_id == project_id)
+            )
+            res = await session.execute(stmt)
+            rows = res.scalars().all()
+            return [_to_domain_team(r) for r in rows]
+
 
 class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
     async def create(self, team: Team) -> Team:
@@ -638,6 +649,13 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
             session.add(row)
             await session.commit()
             return team
+
+    async def get_by_id(self, team_id: UUID) -> Team | None:
+        async with self._get_session() as session:
+            stmt = select(TeamTable).where(TeamTable.id == team_id)
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            return _to_domain_team(row) if row else None
 
     async def get_by_name(self, guild_id: int, name: str) -> Team | None:
         async with self._get_session() as session:
@@ -659,6 +677,34 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
             row = res.scalar_one_or_none()
             return _to_domain_team(row) if row else None
 
+    async def add_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        async with self._get_session() as session:
+            row = TeamMemberTable(
+                team_id=team_id,
+                user_discord_id=user_discord_id,
+                role_type=TeamRoleType.LEAD.value,
+            )
+            await session.merge(row)
+            await session.commit()
+
+    async def remove_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
+        async with self._get_session() as session:
+            stmt = delete(TeamMemberTable).where(
+                TeamMemberTable.team_id == team_id,
+                TeamMemberTable.user_discord_id == user_discord_id,
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def list_team_leads(self, team_id: UUID) -> list[int]:
+        async with self._get_session() as session:
+            stmt = select(TeamMemberTable.user_discord_id).where(
+                TeamMemberTable.team_id == team_id,
+                TeamMemberTable.role_type == TeamRoleType.LEAD.value,
+            )
+            res = await session.execute(stmt)
+            return [int(uid) for uid in res.scalars().all()]
+
     async def assign_member(self, member: TeamMember) -> None:
         async with self._get_session() as session:
             row = TeamMemberTable(
@@ -669,6 +715,16 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
             )
             await session.merge(row)
             await session.commit()
+
+    async def is_team_lead(self, team_id: UUID, user_discord_id: int) -> bool:
+        async with self._get_session() as session:
+            stmt = select(TeamMemberTable).where(
+                TeamMemberTable.team_id == team_id,
+                TeamMemberTable.user_discord_id == user_discord_id,
+                TeamMemberTable.role_type == "lead",
+            )
+            res = await session.execute(stmt)
+            return res.scalar_one_or_none() is not None
 
     async def list_teams(self, guild_id: int) -> list[Team]:
         async with self._get_session() as session:
