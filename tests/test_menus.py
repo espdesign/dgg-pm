@@ -1071,3 +1071,117 @@ async def test_task_menu_channel_scoping_and_global_search(services):
     filter_interaction.response.edit_message.assert_awaited_once()
     assert len(select_view.select.options) == 1
     assert select_view.select.options[0].value == str(proj_b.id)
+
+
+@pytest.mark.asyncio
+async def test_menu_timeouts_and_hub_registration(services):
+    """Verify on_timeout handlers cleanly delete the original response across all menu views,
+
+    and verify that PmHubView tabs register with menu_manager.
+    """
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    guild_id = 999111222
+
+    # 1. ProjectMenuView on_timeout
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild_id = guild_id
+    inter.user = MagicMock()
+    inter.user.id = 1234
+    inter.delete_original_response = AsyncMock()
+
+    proj_view = ProjectMenuView(proj_srv, team_srv, task_srv, initial_interaction=inter)
+    assert proj_view.timeout == 180
+    await proj_view.on_timeout()
+    inter.delete_original_response.assert_awaited_once()
+
+    # 2. TeamMenuView on_timeout
+    inter2 = MagicMock(spec=discord.Interaction)
+    inter2.guild_id = guild_id
+    inter2.user = MagicMock()
+    inter2.user.id = 1234
+    inter2.delete_original_response = AsyncMock()
+
+    team_view = TeamMenuView(team_srv, proj_srv, task_srv, initial_interaction=inter2)
+    assert team_view.timeout == 180
+    await team_view.on_timeout()
+    inter2.delete_original_response.assert_awaited_once()
+
+    # 3. TaskMenuView on_timeout
+    inter3 = MagicMock(spec=discord.Interaction)
+    inter3.guild_id = guild_id
+    inter3.user = MagicMock()
+    inter3.user.id = 1234
+    inter3.delete_original_response = AsyncMock()
+
+    task_view = TaskMenuView(task_srv, proj_srv, team_srv, initial_interaction=inter3)
+    assert task_view.timeout == 180
+    await task_view.on_timeout()
+    inter3.delete_original_response.assert_awaited_once()
+
+    # 4. UserSettingsView on_timeout
+    from src.adapters.discord_bot.views.settings_menu import UserSettingsView
+    from src.domain.enums import NotificationPreference
+
+    inter4 = MagicMock(spec=discord.Interaction)
+    inter4.guild_id = guild_id
+    inter4.user = MagicMock()
+    inter4.user.id = 1234
+    inter4.delete_original_response = AsyncMock()
+
+    settings_view = UserSettingsView(
+        user_service=user_srv,
+        current_pref=NotificationPreference.DM,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        initial_interaction=inter4,
+    )
+    assert settings_view.timeout == 180
+    await settings_view.on_timeout()
+    inter4.delete_original_response.assert_awaited_once()
+
+    # 5. HubBoardProjectSelectView on_timeout
+    from src.adapters.discord_bot.views.hub_menu import (
+        HubBoardProjectSelectView,
+        PmHubView,
+    )
+
+    inter5 = MagicMock(spec=discord.Interaction)
+    inter5.delete_original_response = AsyncMock()
+    board_picker = HubBoardProjectSelectView(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=team_srv,
+        projects=[],
+        channel_projects=[],
+    )
+    board_picker._initial_interaction = inter5
+    await board_picker.on_timeout()
+    inter5.delete_original_response.assert_awaited_once()
+
+    # 6. PmHubView tab interactions register menu sessions
+    hub_view = PmHubView(
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        user_service=user_srv,
+    )
+
+    hub_inter = MagicMock(spec=discord.Interaction)
+    hub_inter.guild = MagicMock()
+    hub_inter.guild.id = guild_id
+    hub_inter.guild_id = guild_id
+    hub_inter.user = MagicMock()
+    hub_inter.user.id = 7777
+    hub_inter.response = MagicMock()
+    hub_inter.response.send_message = AsyncMock()
+    hub_inter.delete_original_response = AsyncMock()
+
+    await hub_view.projects_tab.callback(hub_inter)
+    hub_inter.response.send_message.assert_awaited_once()
+    opened_view = hub_inter.response.send_message.call_args.kwargs["view"]
+    assert isinstance(opened_view, ProjectMenuView)
+    assert opened_view._initial_interaction == hub_inter

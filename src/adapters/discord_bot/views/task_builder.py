@@ -267,8 +267,20 @@ class TaskCreateDraftView(discord.ui.View):
         self.due_at = due_at
         self.watchers = watchers or []
         self.auth_service = auth_service
+        self._initial_interaction: discord.Interaction | None = None
 
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _rebuild_items(self) -> None:
         self.clear_items()

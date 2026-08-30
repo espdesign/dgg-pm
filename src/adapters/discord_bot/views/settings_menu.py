@@ -51,15 +51,31 @@ class UserSettingsView(discord.ui.View):
         project_service: ProjectService | None = None,
         team_service: TeamService | None = None,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.user_service = user_service
         self.current_pref = current_pref
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         self._refresh_buttons()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.unregister_menu(self._initial_interaction)
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _refresh_buttons(self) -> None:
         self.clear_items()
@@ -132,6 +148,9 @@ class UserSettingsView(discord.ui.View):
     async def _on_test_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         pref = self.current_pref
@@ -140,6 +159,9 @@ class UserSettingsView(discord.ui.View):
                 "🔕 **Your notification preference is set to Silent / None.**\nNo test notification was sent.",
                 ephemeral=True,
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         test_embed = discord.Embed(
@@ -179,10 +201,16 @@ class UserSettingsView(discord.ui.View):
 
         status_msg = "\n\n".join(results)
         await interaction.response.send_message(status_msg, ephemeral=True)
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        menu_manager.schedule_toast_dismissal(interaction, delay=15.0)
 
     async def _on_pref_clicked(self, interaction: discord.Interaction, new_pref: NotificationPreference) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         try:

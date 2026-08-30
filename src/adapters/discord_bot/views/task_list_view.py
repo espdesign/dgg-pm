@@ -69,6 +69,7 @@ class TaskListView(discord.ui.View):
         total_count: int,
         title_context: str = "Active Tasks",
         current_page: int = 0,
+        initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
         self.tasks = tasks
@@ -76,7 +77,19 @@ class TaskListView(discord.ui.View):
         self.title_context = title_context
         self.current_page = current_page
         self.total_pages = max(1, math.ceil(total_count / PAGE_SIZE))
+        self._initial_interaction = initial_interaction
         self._update_buttons()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _update_buttons(self) -> None:
         self.prev_btn.disabled = self.current_page <= 0

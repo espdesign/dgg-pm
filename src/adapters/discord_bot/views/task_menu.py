@@ -65,6 +65,7 @@ class TaskSelectProjectView(discord.ui.View):
         auth_service: AuthService | None = None,
         current_page: int = 0,
         query: str = "",
+        initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
         self.all_projects = projects
@@ -73,11 +74,23 @@ class TaskSelectProjectView(discord.ui.View):
         self.team_service = team_service
         self.current_channel_id = current_channel_id
         self.parent_channel_id = parent_channel_id
-        self.all_projects = projects
+        self.auth_service = auth_service
         self.current_page = current_page
         self.query = query
+        self._initial_interaction = initial_interaction
         self._filtered_projects = self._filter_and_sort_projects()
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _filter_and_sort_projects(self) -> list[Project]:
         channel_ids = {cid for cid in (self.current_channel_id, self.parent_channel_id) if cid}
@@ -245,6 +258,9 @@ class TaskSelectProjectView(discord.ui.View):
 
         if not project:
             await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         target_channel = None
@@ -276,6 +292,7 @@ class TaskSelectProjectView(discord.ui.View):
             projects=projects,
             current_channel_id=channel_id,
             parent_channel_id=parent_id,
+            initial_interaction=interaction,
         )
         await view._render_filtered_board(interaction)
 
@@ -339,8 +356,9 @@ class TaskMenuView(discord.ui.View):
         initial_assignee_id: int | None = None,
         search_query: str = "",
         auth_service: AuthService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=None)
+        super().__init__(timeout=180)
         self.task_service = task_service
         self.project_service = project_service
         self.team_service = team_service
@@ -351,6 +369,7 @@ class TaskMenuView(discord.ui.View):
         self.selected_assignee_id: int | None = initial_assignee_id
         self.status_filter_value: str = "active"
         self.auth_service = auth_service or (AuthService(project_service, team_service) if team_service else None)
+        self._initial_interaction = initial_interaction
 
         # Determine channel-bound projects
         channel_ids = {cid for cid in (self.current_channel_id, self.parent_channel_id) if cid}
@@ -366,6 +385,20 @@ class TaskMenuView(discord.ui.View):
             self.selected_project_id = None
 
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.unregister_menu(self._initial_interaction)
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _rebuild_items(self) -> None:
         self.clear_items()
@@ -582,6 +615,9 @@ class TaskMenuView(discord.ui.View):
                 "📁 No active projects found. Use **Standalone Task** or create a project first!",
                 ephemeral=True,
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         view = TaskSelectProjectView(
@@ -592,6 +628,7 @@ class TaskMenuView(discord.ui.View):
             current_channel_id=self.current_channel_id,
             parent_channel_id=self.parent_channel_id,
             auth_service=self.auth_service,
+            initial_interaction=interaction,
         )
         embed = discord.Embed(
             title="📁 Select Project Container",

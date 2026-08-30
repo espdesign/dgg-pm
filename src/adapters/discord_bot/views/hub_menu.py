@@ -192,6 +192,40 @@ class HubBoardProjectSelectView(discord.ui.View):
         self.select.callback = self._on_select
         self.add_item(self.select)
 
+        self.cancel_button = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.cancel_button.callback = self._on_cancel_clicked
+        self.add_item(self.cancel_button)
+
+    async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
+        try:
+            embed = discord.Embed(
+                title="🚫 Selection Cancelled",
+                description="The project scope selector was closed.",
+                color=discord.Color.dark_grey(),
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
+        except Exception as e:
+            logger.debug("Error in cancel button: %s", e)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
+
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
@@ -293,6 +327,9 @@ class PmHubView(discord.ui.View):
             )
             await interaction.response.send_modal(modal)
         elif len(channel_projects) > 1:
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            await menu_manager.register_menu(interaction)
             picker_view = HubTaskProjectSelectView(
                 task_service=self.task_service,
                 channel_projects=channel_projects,
@@ -330,6 +367,9 @@ class PmHubView(discord.ui.View):
                 )
                 await interaction.response.send_modal(modal)
             else:
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                await menu_manager.register_menu(interaction)
                 view = TaskSelectProjectView(
                     projects=projects,
                     task_service=self.task_service,
@@ -338,6 +378,7 @@ class PmHubView(discord.ui.View):
                     current_channel_id=channel_id,
                     parent_channel_id=parent_id,
                     auth_service=auth_srv,
+                    initial_interaction=interaction,
                 )
                 embed = discord.Embed(
                     title="📁 Select Project Container",
@@ -381,6 +422,7 @@ class PmHubView(discord.ui.View):
                 parent_channel_id=parent_id,
                 assignee_id=interaction.user.id,
             )
+            picker_view._initial_interaction = interaction
             embed = discord.Embed(
                 title="👤 My Tasks: Select Project Scope",
                 description="Choose which project scope to view your assigned tasks for:",
@@ -412,6 +454,7 @@ class PmHubView(discord.ui.View):
             parent_channel_id=parent_id,
             initial_project_id=selected_project_id,
             initial_assignee_id=interaction.user.id,
+            initial_interaction=interaction,
         )
         embed = build_task_board_embed(
             tasks=tasks,
@@ -430,8 +473,16 @@ class PmHubView(discord.ui.View):
         custom_id="pm_hub:projects",
     )
     async def projects_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        await menu_manager.register_menu(interaction)
         embed = build_project_menu_embed()
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
@@ -442,8 +493,16 @@ class PmHubView(discord.ui.View):
         custom_id="pm_hub:teams",
     )
     async def teams_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        await menu_manager.register_menu(interaction)
         embed = build_team_menu_embed()
-        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+        view = TeamMenuView(
+            self.team_service,
+            self.project_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
@@ -454,11 +513,14 @@ class PmHubView(discord.ui.View):
         custom_id="pm_hub:settings",
     )
     async def settings_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
         from src.adapters.discord_bot.views.settings_menu import UserSettingsView, build_settings_embed
 
         if not self.user_service or not interaction.guild:
             await interaction.response.send_message("❌ Settings service not available.", ephemeral=True)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
+        await menu_manager.register_menu(interaction)
         current_pref = await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
         view = UserSettingsView(
             user_service=self.user_service,
@@ -466,6 +528,7 @@ class PmHubView(discord.ui.View):
             project_service=self.project_service,
             team_service=self.team_service,
             task_service=self.task_service,
+            initial_interaction=interaction,
         )
         embed = build_settings_embed(interaction.user, current_pref)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -478,8 +541,12 @@ class PmHubView(discord.ui.View):
         custom_id="pm_hub:guides",
     )
     async def guide_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        await menu_manager.register_menu(interaction)
         embed = build_hub_welcome_embed()
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        menu_manager.schedule_toast_dismissal(interaction, delay=30.0)
 
 
 def build_hub_welcome_embed(

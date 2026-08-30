@@ -166,11 +166,13 @@ class ProjectChannelSelectView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         # Row 0: Channel Select dropdown
         self.channel_select = discord.ui.ChannelSelect(
@@ -203,6 +205,17 @@ class ProjectChannelSelectView(discord.ui.View):
         self.back_btn.callback = self._on_back_clicked
         self.add_item(self.back_btn)
 
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
+
     async def _on_channel_selected(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
@@ -210,6 +223,9 @@ class ProjectChannelSelectView(discord.ui.View):
         chan = interaction.guild.get_channel(selected.id) if hasattr(selected, "id") else selected
         if not chan or not isinstance(chan, (discord.ForumChannel, discord.TextChannel, discord.Thread)):
             await interaction.response.send_message("❌ Invalid channel selected.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         modal = ProjectCreateModal(
@@ -227,6 +243,9 @@ class ProjectChannelSelectView(discord.ui.View):
             await interaction.response.send_message(
                 "❌ Current channel must be a Forum or Text channel.", ephemeral=True
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
         modal = ProjectCreateModal(
             self.project_service,
@@ -237,7 +256,12 @@ class ProjectChannelSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         embed = build_project_menu_embed()
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
@@ -309,6 +333,7 @@ class ProjectActiveListView(discord.ui.View):
         current_page: int = 0,
         query: str = "",
         page_size: int = 8,
+        initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
         self.all_projects = projects
@@ -318,8 +343,20 @@ class ProjectActiveListView(discord.ui.View):
         self.current_page = current_page
         self.query = query
         self.page_size = page_size
+        self._initial_interaction = initial_interaction
         self._filtered_projects = self._filter_projects()
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _filter_projects(self) -> list[Project]:
         if not self.query:
@@ -445,12 +482,14 @@ class ProjectArchiveConfirmView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.project = project
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         self.confirm_btn = discord.ui.Button(
             label="Confirm Archive",
@@ -469,6 +508,17 @@ class ProjectArchiveConfirmView(discord.ui.View):
         )
         self.cancel_btn.callback = self._on_cancel_clicked
         self.add_item(self.cancel_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         try:
@@ -518,12 +568,14 @@ class ProjectRestoreConfirmView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.project = project
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         self.confirm_btn = discord.ui.Button(
             label="Confirm Restore",
@@ -542,6 +594,17 @@ class ProjectRestoreConfirmView(discord.ui.View):
         )
         self.cancel_btn.callback = self._on_cancel_clicked
         self.add_item(self.cancel_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         try:
@@ -613,16 +676,29 @@ class ProjectArchiveSelectView(discord.ui.View):
         task_service: TaskService | None = None,
         current_page: int = 0,
         query: str = "",
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.all_projects = projects
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
         self.current_page = current_page
         self.query = query
+        self._initial_interaction = initial_interaction
         self._filtered_projects = self._filter_projects()
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _filter_projects(self) -> list[Project]:
         if not self.query:
@@ -835,16 +911,29 @@ class ProjectRestoreSelectView(discord.ui.View):
         task_service: TaskService | None = None,
         current_page: int = 0,
         query: str = "",
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.all_projects = projects
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
         self.current_page = current_page
         self.query = query
+        self._initial_interaction = initial_interaction
         self._filtered_projects = self._filter_projects()
         self._rebuild_items()
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _filter_projects(self) -> list[Project]:
         if not self.query:
@@ -1078,13 +1167,15 @@ class ProjectAssignTeamView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.projects = projects
         self.teams = teams
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         self.selected_project_id: UUID = projects[0].id
         self.selected_team_id: UUID = teams[0].id
@@ -1158,6 +1249,17 @@ class ProjectAssignTeamView(discord.ui.View):
         )
         self.back_btn.callback = self._on_back_clicked
         self.add_item(self.back_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     def _get_selected_project(self) -> Project | None:
         return next((p for p in self.projects if p.id == self.selected_project_id), None)
@@ -1235,11 +1337,13 @@ class ProjectMenuView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
-        super().__init__(timeout=None)
+        super().__init__(timeout=180)
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self._initial_interaction = initial_interaction
 
         if self.task_service:
             hub_btn = discord.ui.Button(
@@ -1250,6 +1354,20 @@ class ProjectMenuView(discord.ui.View):
             )
             hub_btn.callback = self._on_hub_clicked
             self.add_item(hub_btn)
+
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.unregister_menu(self._initial_interaction)
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
@@ -1263,8 +1381,16 @@ class ProjectMenuView(discord.ui.View):
     async def new_project_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
-        view = ProjectChannelSelectView(self.project_service, self.team_service, self.task_service)
+        view = ProjectChannelSelectView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         embed = discord.Embed(
             title="📁 Create Project: Select Channel / Forum",
             description=(
@@ -1283,10 +1409,19 @@ class ProjectMenuView(discord.ui.View):
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
             await interaction.response.send_message("📁 No active projects found in this server.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         embed = build_active_projects_embed(projects, page=0, total_count=len(projects))
-        view = ProjectActiveListView(projects, self.project_service, self.team_service, self.task_service)
+        view = ProjectActiveListView(
+            projects,
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Assign Team", emoji="🤝", style=discord.ButtonStyle.secondary, row=0)
@@ -1298,14 +1433,27 @@ class ProjectMenuView(discord.ui.View):
             await interaction.response.send_message(
                 "📁 No active projects found. Create a project first!", ephemeral=True
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
         teams = await self.team_service.list_teams(interaction.guild.id)
         if not teams:
             await interaction.response.send_message(
                 "👥 No teams found. Create a team in `/team-menu` first!", ephemeral=True
             )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
-        view = ProjectAssignTeamView(projects, teams, self.project_service, self.team_service, self.task_service)
+        view = ProjectAssignTeamView(
+            projects,
+            teams,
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         embed = discord.Embed(
             title="🤝 Map Team to Project",
             description="Select a project and a functional team container to map together:",
@@ -1320,8 +1468,17 @@ class ProjectMenuView(discord.ui.View):
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
             await interaction.response.send_message("📁 No active projects available to archive.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
-        view = ProjectArchiveSelectView(projects, self.project_service, self.team_service, self.task_service)
+        view = ProjectArchiveSelectView(
+            projects,
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         total_pages = max(1, math.ceil(len(projects) / ProjectArchiveSelectView.PAGE_SIZE))
         embed = build_archive_select_embed(len(projects), 0, total_pages)
         await interaction.response.edit_message(embed=embed, view=view)
@@ -1334,8 +1491,17 @@ class ProjectMenuView(discord.ui.View):
         archived = [p for p in all_proj if p.is_archived]
         if not archived:
             await interaction.response.send_message("📁 No archived projects to restore.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
-        view = ProjectRestoreSelectView(archived, self.project_service, self.team_service, self.task_service)
+        view = ProjectRestoreSelectView(
+            archived,
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
         total_pages = max(1, math.ceil(len(archived) / ProjectRestoreSelectView.PAGE_SIZE))
         embed = build_restore_select_embed(len(archived), 0, total_pages)
         await interaction.response.edit_message(embed=embed, view=view)
