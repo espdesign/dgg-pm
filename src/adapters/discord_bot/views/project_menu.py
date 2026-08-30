@@ -3,6 +3,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.domain.models import Project
 from src.services.project_service import ProjectService
@@ -13,14 +14,40 @@ logger = logging.getLogger("dgg_pm.views.project_menu")
 
 
 class ProjectCreateModal(discord.ui.Modal):
-    def __init__(self, project_service: ProjectService, channel: discord.TextChannel | discord.Thread):
-        super().__init__(title="Create New Project")
+    def __init__(
+        self, project_service: ProjectService, channel: discord.ForumChannel | discord.TextChannel | discord.Thread
+    ):
+        raw_name = getattr(channel, "name", None)
+        if isinstance(raw_name, str) and raw_name.strip():
+            chan_name = raw_name.strip()
+        elif hasattr(channel, "id"):
+            chan_name = str(channel.id)
+        else:
+            chan_name = "channel"
+
+        is_forum = isinstance(channel, discord.ForumChannel)
+        type_prefix = "Forum" if is_forum else "Channel"
+
+        # Max title length in Discord modal is 45 characters
+        title_str = f"New Project in #{chan_name}"
+        if len(title_str) > 45:
+            title_str = title_str[:42] + "..."
+
+        super().__init__(title=title_str)
         self.project_service = project_service
         self.channel = channel
 
+        name_label = f"Project Name ({type_prefix} #{chan_name})"
+        if len(name_label) > 45:
+            name_label = name_label[:42] + "..."
+
+        name_placeholder = f"e.g. Mobile Redesign (bound to #{chan_name})"
+        if len(name_placeholder) > 100:
+            name_placeholder = name_placeholder[:97] + "..."
+
         self.name_input = discord.ui.TextInput(
-            label="Project Name",
-            placeholder="e.g. Mobile App Redesign, Infrastructure V2",
+            label=name_label,
+            placeholder=name_placeholder,
             required=True,
             max_length=100,
         )
@@ -70,12 +97,27 @@ class ProjectCreateModal(discord.ui.Modal):
                 discord_channel_id=self.channel.id,
                 category=cat,
             )
+            is_forum = isinstance(self.channel, discord.ForumChannel)
+            chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
+            tag_note = ""
+
+            if is_forum:
+                tags_added, _total_tags, tag_err = await setup_forum_tags(self.channel)
+                if tags_added > 0:
+                    tag_note = f" • Setup {tags_added} PM tags"
+                elif tag_err:
+                    tag_note = f" • ⚠️ {tag_err}"
+
             embed = discord.Embed(
                 title=f"✅ Project Created: {project.name} (`{project.prefix}`)",
                 description=project.description or "No description provided.",
                 color=discord.Color.green(),
             )
-            embed.add_field(name="Bound Channel", value=f"<#{project.discord_channel_id}>", inline=True)
+            embed.add_field(
+                name="Bound Channel",
+                value=f"<#{project.discord_channel_id}> ({chan_type_label}{tag_note})",
+                inline=True,
+            )
             if project.category:
                 embed.add_field(name="Category", value=project.category, inline=True)
             embed.set_footer(text=f"Project ID: {project.id}")
@@ -83,6 +125,80 @@ class ProjectCreateModal(discord.ui.Modal):
         except Exception as e:
             logger.exception("Error creating project via modal: %s", e)
             await interaction.response.send_message(f"❌ Failed to create project: {e}", ephemeral=True)
+
+
+class ProjectChannelSelectView(discord.ui.View):
+    """Interactive view allowing the user to select any Forum or Text channel for a new project."""
+
+    def __init__(
+        self,
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
+        super().__init__(timeout=120)
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+
+        # Row 0: Channel Select dropdown
+        self.channel_select = discord.ui.ChannelSelect(
+            channel_types=[discord.ChannelType.forum, discord.ChannelType.text],
+            placeholder="📢 Select target Forum or Text channel...",
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+        self.channel_select.callback = self._on_channel_selected
+        self.add_item(self.channel_select)
+
+        # Row 1: Quick button to use current channel
+        self.current_chan_btn = discord.ui.Button(
+            label="Use Current Channel",
+            emoji="📍",
+            style=discord.ButtonStyle.primary,
+            row=1,
+        )
+        self.current_chan_btn.callback = self._on_current_channel_clicked
+        self.add_item(self.current_chan_btn)
+
+        # Row 1: Back button
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
+    async def _on_channel_selected(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            return
+        selected = self.channel_select.values[0]
+        chan = interaction.guild.get_channel(selected.id) if hasattr(selected, "id") else selected
+        if not chan or not isinstance(chan, (discord.ForumChannel, discord.TextChannel, discord.Thread)):
+            await interaction.response.send_message("❌ Invalid channel selected.", ephemeral=True)
+            return
+
+        modal = ProjectCreateModal(self.project_service, channel=chan)
+        await interaction.response.send_modal(modal)
+
+    async def _on_current_channel_clicked(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not isinstance(
+            interaction.channel, (discord.ForumChannel, discord.TextChannel, discord.Thread)
+        ):
+            await interaction.response.send_message(
+                "❌ Current channel must be a Forum or Text channel.", ephemeral=True
+            )
+            return
+        modal = ProjectCreateModal(self.project_service, channel=interaction.channel)
+        await interaction.response.send_modal(modal)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class ProjectActiveListView(discord.ui.View):
@@ -303,11 +419,20 @@ class ProjectMenuView(discord.ui.View):
 
     @discord.ui.button(label="New Project", emoji="➕", style=discord.ButtonStyle.primary, row=0)
     async def new_project_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not interaction.guild or not isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
-            await interaction.response.send_message("❌ Must be run in a guild text channel.", ephemeral=True)
+        if not interaction.guild:
+            await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
             return
-        modal = ProjectCreateModal(self.project_service, channel=interaction.channel)
-        await interaction.response.send_modal(modal)
+        view = ProjectChannelSelectView(self.project_service, self.team_service, self.task_service)
+        embed = discord.Embed(
+            title="📁 Create Project: Select Channel / Forum",
+            description=(
+                "Choose a **Forum Channel** (recommended) or **Text Channel** to bind as the project's task board.\n\n"
+                "• **Forum Channel**: Tasks become organized forum post cards with native Discord tag filtering.\n"
+                "• **Text Channel**: Tasks are posted as embeds with discussion threads."
+            ),
+            color=discord.Color.blue(),
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="Active Projects", emoji="📋", style=discord.ButtonStyle.secondary, row=0)
     async def list_projects_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -372,7 +497,7 @@ def build_project_menu_embed() -> discord.Embed:
         title="📁 Project Management Control Center",
         description=(
             "Manage project containers, channel bindings, and project lifecycles without typing commands.\n\n"
-            "• **`➕ New Project`**: Create a project container bound to the current channel\n"
+            "• **`➕ New Project`**: Create a project container bound to any Forum or Text channel\n"
             "• **`📋 Active Projects`**: View all running projects and key prefixes\n"
             "• **`📦 Archive Project`**: Soft-delete a completed project\n"
             "• **`♻️ Restore Project`**: Bring back an archived project"

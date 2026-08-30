@@ -5,6 +5,7 @@ import pytest
 
 from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
 from src.adapters.discord_bot.views.project_menu import (
+    ProjectChannelSelectView,
     ProjectCreateModal,
     ProjectMenuView,
     build_project_menu_embed,
@@ -35,14 +36,35 @@ async def test_project_menu_and_modal(services):
     assert "Project Management Control Center" in embed.title
     assert len(view.children) == 5  # New Project, Active Projects, Archive, Restore, PM Main Menu
 
-    # Test clicking PM Main Menu
-    main_menu_interaction = MagicMock(spec=discord.Interaction)
-    main_menu_interaction.response = MagicMock()
-    main_menu_interaction.response.edit_message = AsyncMock()
-    await view._on_hub_clicked(main_menu_interaction)
-    main_menu_interaction.response.edit_message.assert_awaited_once()
+    # Test clicking New Project opens ProjectChannelSelectView
+    new_proj_interaction = MagicMock(spec=discord.Interaction)
+    new_proj_interaction.guild = MagicMock()
+    new_proj_interaction.response = MagicMock()
+    new_proj_interaction.response.edit_message = AsyncMock()
+    await view.new_project_btn.callback(new_proj_interaction)
+    new_proj_interaction.response.edit_message.assert_awaited_once()
+    called_view = new_proj_interaction.response.edit_message.call_args.kwargs.get("view")
+    assert isinstance(called_view, ProjectChannelSelectView)
 
-    # 2. Test ProjectCreateModal submission
+    # 2. Test ProjectChannelSelectView callbacks
+    chan_select_view = ProjectChannelSelectView(proj_srv, team_srv, services["task"])
+    mock_forum_channel = MagicMock(spec=discord.ForumChannel)
+    mock_forum_channel.id = 555666777
+
+    # Select channel from dropdown
+    chan_select_view.channel_select._values = [mock_forum_channel]
+    select_interaction = MagicMock(spec=discord.Interaction)
+    select_interaction.guild = MagicMock()
+    select_interaction.guild.get_channel = MagicMock(return_value=mock_forum_channel)
+    select_interaction.response = MagicMock()
+    select_interaction.response.send_modal = AsyncMock()
+    await chan_select_view._on_channel_selected(select_interaction)
+    select_interaction.response.send_modal.assert_awaited_once()
+    sent_modal = select_interaction.response.send_modal.call_args.args[0]
+    assert isinstance(sent_modal, ProjectCreateModal)
+    assert sent_modal.channel == mock_forum_channel
+
+    # 3. Test ProjectCreateModal submission
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.id = 123456789
 

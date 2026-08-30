@@ -8,6 +8,7 @@ from src.adapters.discord_bot.cogs.help_cog import HelpCog
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
 from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
@@ -96,13 +97,24 @@ class DggPmBot(commands.Bot):
                         pass
 
     async def sync_root_task_message(self, task: Task) -> None:
-        """Syncs the latest task embed to the original root starter message in the parent channel."""
+        """Syncs the latest task embed to the original root starter message in the parent channel or forum post."""
         if not task.discord_thread_id or not task.discord_message_id:
             return
         try:
             thread = self.get_channel(task.discord_thread_id) or await self.fetch_channel(task.discord_thread_id)
-            if isinstance(thread, discord.Thread) and thread.parent:
-                root_msg = await thread.parent.fetch_message(task.discord_message_id)
+            if isinstance(thread, discord.Thread):
+                root_msg = None
+                if isinstance(thread.parent, discord.ForumChannel):
+                    try:
+                        root_msg = thread.starter_message or await thread.fetch_message(task.discord_message_id)
+                    except Exception:
+                        pass
+                elif thread.parent:
+                    try:
+                        root_msg = await thread.parent.fetch_message(task.discord_message_id)
+                    except Exception:
+                        pass
+
                 if root_msg:
                     project_name = None
                     if task.project_id:
@@ -120,7 +132,7 @@ class DggPmBot(commands.Bot):
         action: str | None = None,
         sync_title: bool = False,
     ) -> None:
-        """Syncs the Discord thread state (archive/unarchive/rename) for a task."""
+        """Syncs the Discord thread state (applied tags, archive/unarchive, rename) for a task."""
         if not task.discord_thread_id:
             return
         try:
@@ -128,22 +140,36 @@ class DggPmBot(commands.Bot):
             if not isinstance(thread, discord.Thread):
                 return
 
+            edit_kwargs = {}
+
+            # Sync forum tags if thread is a post inside a ForumChannel
+            if isinstance(thread.parent, discord.ForumChannel):
+                tags_to_apply = resolve_forum_tags(
+                    thread.parent,
+                    task,
+                    existing_tags=getattr(thread, "applied_tags", None),
+                )
+                edit_kwargs["applied_tags"] = tags_to_apply
+
             # Sync title if requested and task title changed
             if sync_title:
                 expected_name = f"[{task.short_id}] {task.title}"
                 if len(expected_name) > 100:
                     expected_name = expected_name[:97] + "..."
                 if thread.name != expected_name:
-                    await thread.edit(name=expected_name)
+                    edit_kwargs["name"] = expected_name
 
             # Archive / unarchive management
             should_archive = action == "archive" or task.status == TaskStatus.COMPLETED or task.is_archived
             should_unarchive = action == "unarchive" or (task.status != TaskStatus.COMPLETED and not task.is_archived)
 
             if should_archive and not thread.archived:
-                await thread.edit(archived=True)
+                edit_kwargs["archived"] = True
             elif should_unarchive and thread.archived:
-                await thread.edit(archived=False)
+                edit_kwargs["archived"] = False
+
+            if edit_kwargs:
+                await thread.edit(**edit_kwargs)
         except Exception as e:
             logger.warning("Failed to sync thread state for task %s (%s): %s", task.short_id, task.discord_thread_id, e)
 
@@ -252,6 +278,7 @@ class DggPmBot(commands.Bot):
                     )
                     await self._update_interaction_view(interaction, updated_task)
                     await self.sync_root_task_message(updated_task)
+                    await self.sync_task_thread(updated_task)
                     return
                 except Exception as e:
                     logger.exception("Error handling dynamic priority change: %s", e)

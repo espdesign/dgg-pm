@@ -2,7 +2,8 @@ import logging
 
 import discord
 
-from src.domain.enums import EventType
+from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
+from src.domain.enums import EventType, PriorityLevel, TaskStatus
 from src.domain.models import OutboxEvent
 from src.ports.notifier import INotificationDispatcher
 
@@ -88,10 +89,15 @@ class DiscordNotifier(INotificationDispatcher):
                         msg += f"\n> {notes}"
                     await thread.send(msg)
 
-                    # Keep the root starter message in the parent channel up-to-date
-                    if message_id and thread.parent:
+                    # Keep the root starter message in the parent channel or forum post up-to-date
+                    if message_id:
                         try:
-                            root_msg = await thread.parent.fetch_message(message_id)
+                            root_msg = None
+                            if isinstance(thread.parent, discord.ForumChannel):
+                                root_msg = thread.starter_message or await thread.fetch_message(message_id)
+                            elif thread.parent:
+                                root_msg = await thread.parent.fetch_message(message_id)
+
                             if root_msg and root_msg.embeds:
                                 embed = root_msg.embeds[0]
                                 for i, field in enumerate(embed.fields):
@@ -114,18 +120,28 @@ class DiscordNotifier(INotificationDispatcher):
                         except Exception as edit_err:
                             logger.debug("Could not edit root starter message: %s", edit_err)
 
+                    # Update forum tags & thread lifecycle
+                    edit_kwargs = {}
+                    if isinstance(thread.parent, discord.ForumChannel):
+                        edit_kwargs["applied_tags"] = resolve_forum_tags(
+                            thread.parent,
+                            status=TaskStatus(new_status),
+                            priority=PriorityLevel(payload.get("priority", "normal")),
+                            existing_tags=getattr(thread, "applied_tags", None),
+                        )
+
                     # Discord unarchives threads whenever a message is sent. If new status is completed,
                     # re-archive the thread so it does not linger in the active sidebar.
                     if new_status == "completed":
-                        try:
-                            await thread.edit(archived=True)
-                        except Exception as archive_err:
-                            logger.debug("Could not re-archive thread after completion message: %s", archive_err)
+                        edit_kwargs["archived"] = True
                     elif thread.archived:
+                        edit_kwargs["archived"] = False
+
+                    if edit_kwargs:
                         try:
-                            await thread.edit(archived=False)
-                        except Exception as unarchive_err:
-                            logger.debug("Could not unarchive thread on status update: %s", unarchive_err)
+                            await thread.edit(**edit_kwargs)
+                        except Exception as archive_err:
+                            logger.debug("Could not edit thread state after status update: %s", archive_err)
             except Exception as e:
                 logger.warning("Failed to post status update into thread %s: %s", thread_id, e)
 

@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -26,7 +27,7 @@ class ProjectCog(commands.Cog):
     @app_commands.command(name="project-create", description="Instantiate a top-level project container.")
     @app_commands.describe(
         name="Name of the project (e.g. Infrastructure)",
-        channel="Discord text channel to bind as the project's task feed",
+        channel="Discord forum or text channel to bind as the project's task feed",
         prefix="Optional 3-4 letter prefix (e.g. INF)",
         description="Brief summary of the project goals",
         category="Category or domain (e.g. Engineering, Marketing)",
@@ -36,13 +37,19 @@ class ProjectCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         name: str,
-        channel: discord.TextChannel,
+        channel: discord.ForumChannel | discord.TextChannel,
         prefix: str | None = None,
         description: str | None = None,
         category: str | None = None,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        if not isinstance(channel, (discord.ForumChannel, discord.TextChannel)):
+            await interaction.response.send_message(
+                "❌ Channel must be a Forum Channel or a Text Channel.", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=False)
@@ -56,6 +63,17 @@ class ProjectCog(commands.Cog):
                 category=category,
             )
 
+            is_forum = isinstance(channel, discord.ForumChannel)
+            chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
+            tag_note = ""
+
+            if is_forum:
+                tags_added, _total_tags, tag_err = await setup_forum_tags(channel)
+                if tags_added > 0:
+                    tag_note = f" • Setup {tags_added} PM tags"
+                elif tag_err:
+                    tag_note = f" • ⚠️ {tag_err}"
+
             embed = discord.Embed(
                 title=f"📁 Project Created: {project.name} (`{project.prefix}`)",
                 description=project.description or "*No description provided.*",
@@ -63,13 +81,53 @@ class ProjectCog(commands.Cog):
             )
             embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
             if project.discord_channel_id:
-                embed.add_field(name="Bound Channel", value=f"<#{project.discord_channel_id}>", inline=True)
+                embed.add_field(
+                    name="Bound Channel",
+                    value=f"<#{project.discord_channel_id}> ({chan_type_label}{tag_note})",
+                    inline=True,
+                )
             if project.category:
                 embed.add_field(name="Category", value=project.category, inline=True)
 
             await interaction.followup.send(embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create project: {e}", ephemeral=True)
+
+    @app_commands.command(
+        name="project-setup-forum",
+        description="Automatically configure standard project management tags on a Forum Channel.",
+    )
+    @app_commands.describe(forum="The Discord Forum Channel to configure with PM tags")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_setup_forum(
+        self,
+        interaction: discord.Interaction,
+        forum: discord.ForumChannel,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        tags_added, total_tags, err = await setup_forum_tags(forum)
+        if err:
+            await interaction.followup.send(f"❌ Failed to configure tags in <#{forum.id}>: {err}", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"🏷️ Forum Tags Configured: #{forum.name}",
+            description=(
+                f"Successfully verified and updated tags in <#{forum.id}>!\n\n"
+                f"• **New Tags Added:** `{tags_added}`\n"
+                f"• **Total Available Tags:** `{total_tags}` / 20\n\n"
+                "**Standard Tags Managed:**\n"
+                "• **Status:** `⏳ Not Started`, `🟡 In Progress`, `✅ Completed`\n"
+                "• **Priority:** `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority`\n"
+                "• **Type:** `🐛 Bug`, `✨ Feature`, `🔧 Task`"
+            ),
+            color=discord.Color.green(),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def project_autocomplete(
         self,

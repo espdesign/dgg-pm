@@ -110,7 +110,7 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/dgg_pm
 
 ### 3. Required Discord Bot Permissions & Intents
 When inviting the bot to your Discord server, ensure the following permissions are granted:
-- **Bot Permissions:** `View Channels`, `Send Messages`, `Send Messages in Threads`, `Create Public Threads`, `Manage Messages`, `Embed Links`, `Read Message History`.
+- **Bot Permissions:** `Manage Channels` (for auto-tagging Forum channels), `Manage Threads`, `View Channels`, `Send Messages`, `Send Messages in Threads`, `Create Public Threads`, `Manage Messages`, `Embed Links`, `Read Message History`.
 - **Privileged Gateway Intents:** `Guilds`, `GuildMembers`. *(Note: `MessageContent` is explicitly **NOT** required).*
 
 ### 4. Running with Docker Compose

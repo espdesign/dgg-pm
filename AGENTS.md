@@ -26,3 +26,6 @@ This project uses [`devenv`](https://devenv.sh/) (Nix-based) for managing Python
 4. **Dependency Management**:
    - Specify new runtime and development dependencies in `pyproject.toml`.
    - Sync the virtual environment using `devenv shell -- sync`.
+
+5. **Deployment & App Container Rebuild**:
+   - When finished making code changes/updates, always rebuild and restart the application container by running `docker compose up -d --build app`.

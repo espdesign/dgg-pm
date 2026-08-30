@@ -3,6 +3,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed
 from src.domain.enums import PriorityLevel, TaskStatus
@@ -31,7 +32,7 @@ class TaskCreateModal(discord.ui.Modal):
         self,
         task_service: TaskService,
         project: Project | None = None,
-        target_channel: discord.TextChannel | discord.Thread | None = None,
+        target_channel: discord.ForumChannel | discord.TextChannel | discord.Thread | None = None,
     ):
         if project:
             title_str = f"New Task: [{project.prefix}] {project.name[:22]}"
@@ -122,7 +123,33 @@ class TaskCreateModal(discord.ui.Modal):
             embed = build_task_embed(task, project_name=self.project.name if self.project else None)
 
             msg = None
-            if isinstance(target_chan, discord.TextChannel):
+            if isinstance(target_chan, discord.ForumChannel):
+                post_name = f"[{task.short_id}] {task.title[:90]}"
+                thread_view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                applied_tags = resolve_forum_tags(target_chan, task)
+                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
+                if task.assignee_discord_id:
+                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+
+                res = await target_chan.create_thread(
+                    name=post_name,
+                    content=thread_intro,
+                    embed=embed,
+                    view=thread_view,
+                    applied_tags=applied_tags,
+                    auto_archive_duration=10080,
+                )
+                thread = getattr(res, "thread", res)
+                msg = getattr(res, "message", None)
+                thread_id = getattr(thread, "id", None)
+                msg_id = getattr(msg, "id", 0) if msg else 0
+                await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
+            elif isinstance(target_chan, discord.TextChannel):
                 # Send clean root message in parent channel without component rows
                 msg = await target_chan.send(embed=embed)
                 thread = await msg.create_thread(

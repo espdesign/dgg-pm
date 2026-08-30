@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import (
     build_task_embed,
@@ -153,14 +154,41 @@ class TaskCog(commands.Cog):
                 chan = self.bot.get_channel(project.discord_channel_id) or await self.bot.fetch_channel(
                     project.discord_channel_id
                 )
-                if isinstance(chan, (discord.TextChannel, discord.Thread)):
+                if isinstance(chan, (discord.TextChannel, discord.ForumChannel, discord.Thread)):
                     target_channel = chan
 
             embed = build_task_embed(task, project_name=project.name)
 
             thread = None
             msg = None
-            if isinstance(target_channel, discord.TextChannel):
+            if isinstance(target_channel, discord.ForumChannel):
+                post_name = f"[{task.short_id}] {task.title}"
+                if len(post_name) > 100:
+                    post_name = post_name[:97] + "..."
+                thread_view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                applied_tags = resolve_forum_tags(target_channel, task)
+                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
+                if task.assignee_discord_id:
+                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+                if watchers:
+                    thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
+
+                res = await target_channel.create_thread(
+                    name=post_name,
+                    content=thread_intro,
+                    embed=embed,
+                    view=thread_view,
+                    applied_tags=applied_tags,
+                    auto_archive_duration=10080,
+                )
+                thread = getattr(res, "thread", res)
+                msg = getattr(res, "message", None)
+            elif isinstance(target_channel, discord.TextChannel):
                 # Send clean root message embed without button rows (avoids grayed-out buttons in thread origin header)
                 msg = await target_channel.send(embed=embed)
                 try:
@@ -419,7 +447,34 @@ class TaskCog(commands.Cog):
             embed = build_task_embed(task)
             thread = None
             msg = None
-            if isinstance(interaction.channel, discord.TextChannel):
+            if isinstance(interaction.channel, discord.ForumChannel):
+                post_name = f"[{task.short_id}] {task.title}"
+                if len(post_name) > 100:
+                    post_name = post_name[:97] + "..."
+                thread_view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                applied_tags = resolve_forum_tags(interaction.channel, task)
+                thread_intro = f"📌 Standalone task workspace created by <@{interaction.user.id}>."
+                if task.assignee_discord_id:
+                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+                if watchers:
+                    thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
+
+                res = await interaction.channel.create_thread(
+                    name=post_name,
+                    content=thread_intro,
+                    embed=embed,
+                    view=thread_view,
+                    applied_tags=applied_tags,
+                    auto_archive_duration=10080,
+                )
+                thread = getattr(res, "thread", res)
+                msg = getattr(res, "message", None)
+            elif isinstance(interaction.channel, discord.TextChannel):
                 msg = await interaction.channel.send(embed=embed)
                 try:
                     thread_name = f"[{task.short_id}] {task.title}"

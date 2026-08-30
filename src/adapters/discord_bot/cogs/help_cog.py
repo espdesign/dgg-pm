@@ -55,7 +55,8 @@ class HelpCog(commands.Cog):
         embed.add_field(
             name="📁 Project Management *(Requires Manage Server)*",
             value=(
-                "`/project-create` - Instantiate a project container and bind channel\n"
+                "`/project-create` - Instantiate a project container bound to a Forum or Text channel\n"
+                "`/project-setup-forum` - Configure standard PM tags on a Discord Forum Channel\n"
                 "`/project-assign` - Map a functional team to a project\n"
                 "`/project-list` - View all active server projects\n"
                 "`/project-archive` - Archive a project and its active tasks\n"
@@ -77,7 +78,7 @@ class HelpCog(commands.Cog):
         embed.add_field(
             name="⚡ Task Operations *(All Team Members)*",
             value=(
-                "`/task-create` - Create project task (routed to project channel & thread)\n"
+                "`/task-create` - Create project task (routed to project Forum post or Text thread)\n"
                 "`/task-standalone` - Create ad-hoc, one-off task in current channel\n"
                 "`/task-refresh` - Post/refresh live interactive task card in thread/channel\n"
                 "`/task-status` - Update execution progress (with autocomplete)\n"
