@@ -47,10 +47,23 @@ STANDARD_PM_TAG_DEFINITIONS = [
         "emoji": "👤",
         "keywords": UNASSIGNED_KEYWORDS,
     },
-    {"name": "Bug", "emoji": "🐛", "keywords": ["bug", "defect", "fix", "issue"]},
-    {"name": "Feature", "emoji": "✨", "keywords": ["feature", "feat", "enhancement"]},
-    {"name": "Task", "emoji": "🔧", "keywords": ["task", "chore", "infra"]},
 ]
+
+PROJECT_TAG_EMOJI = "📁"
+
+
+def project_tag_name(project_name: str) -> str:
+    """Builds the per-project forum tag name, e.g. '📁 Mobile App'."""
+    return f"{PROJECT_TAG_EMOJI} {project_name}".strip()
+
+
+def _matches_project_tag(tag_name: str, project_name: str | None) -> bool:
+    """Checks if a tag name is the per-project tag for the given project."""
+    if not project_name:
+        return False
+    expected = project_tag_name(project_name).lower()
+    clean = tag_name.lower().replace("[", "").replace("]", "").strip()
+    return clean == expected or clean == project_name.lower()
 
 
 def _matches_keyword(tag_name: str, keywords: list[str]) -> bool:
@@ -70,11 +83,13 @@ def resolve_forum_tags(
     status: TaskStatus | None = None,
     priority: PriorityLevel | None = None,
     is_unassigned: bool | None = None,
+    project_name: str | None = None,
     existing_tags: list[discord.ForumTag] | None = None,
 ) -> list[discord.ForumTag]:
     """Finds matching ForumTag objects for a task's status, priority, and unassigned state.
 
-    Preserves any non-status/priority/unassigned custom tags already applied on the thread
+    Applies the per-project tag when a ``project_name`` is provided. Preserves any
+    non-status/priority/unassigned/project custom tags already applied on the thread
     (up to Discord's maximum limit of 5 applied tags per thread).
     """
     if not hasattr(forum_channel, "available_tags") or not forum_channel.available_tags:
@@ -116,7 +131,15 @@ def resolve_forum_tags(
                     applied.append(tag)
                 break
 
-    # 4. Preserve custom tags that don't represent status, priority, or unassigned state
+    # 3b. Match per-project tag
+    if project_name:
+        for tag in available:
+            if _matches_project_tag(tag.name, project_name):
+                if tag not in applied:
+                    applied.append(tag)
+                break
+
+    # 4. Preserve custom tags that don't represent status, priority, unassigned, or project state
     if existing_tags:
         all_managed_kws = [
             kw
@@ -124,8 +147,8 @@ def resolve_forum_tags(
             for kw in kws
         ]
         for tag in existing_tags:
-            # If tag is not a recognized status/priority/unassigned tag and not already added
-            if not _matches_keyword(tag.name, all_managed_kws):
+            # If tag is not a recognized status/priority/unassigned/project tag and not already added
+            if not _matches_keyword(tag.name, all_managed_kws) and not _matches_project_tag(tag.name, project_name):
                 if tag not in applied:
                     applied.append(tag)
 
@@ -174,6 +197,38 @@ async def setup_forum_tags(forum_channel: discord.ForumChannel) -> tuple[int, in
     except Exception as e:
         logger.exception("Failed to update tags in forum channel %s: %s", forum_channel.id, e)
         return 0, len(existing_tags), str(e)
+
+
+async def ensure_project_tag(forum_channel: discord.ForumChannel, project_name: str) -> str | None:
+    """Ensures a per-project tag (e.g. '📁 Mobile App') exists in the ForumChannel.
+
+    Returns an error message on failure, or None on success.
+    """
+    if not isinstance(forum_channel, discord.ForumChannel):
+        return "Channel is not a ForumChannel"
+
+    new_tag = discord.ForumTag(
+        name=project_tag_name(project_name),
+        emoji=PROJECT_TAG_EMOJI,
+        moderated=False,
+    )
+
+    existing_tags = list(getattr(forum_channel, "available_tags", []) or [])
+    if any(_matches_project_tag(t.name, project_name) for t in existing_tags):
+        return None
+
+    if len(existing_tags) >= 20:
+        return "Forum is at Discord's 20-tag limit; could not add project tag."
+
+    try:
+        await forum_channel.edit(available_tags=[*existing_tags, new_tag])
+        logger.info("Added per-project forum tag '📁 %s' to forum #%s", project_name, forum_channel.id)
+        return None
+    except discord.Forbidden:
+        return "Bot lacks 'Manage Channels' permission in this forum."
+    except Exception as e:
+        logger.exception("Failed to add project tag to forum channel %s: %s", forum_channel.id, e)
+        return str(e)
 
 
 async def ensure_pinned_hub_post(

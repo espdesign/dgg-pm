@@ -184,7 +184,9 @@ class TaskCreateModal(discord.ui.Modal):
                     current_priority=task.priority,
                     task_service=self.task_service,
                 )
-                applied_tags = resolve_forum_tags(target_chan, task)
+                applied_tags = resolve_forum_tags(
+                    target_chan, task, project_name=self.project.name if self.project else None
+                )
                 thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
                 if task.assignee_discord_id:
                     thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
