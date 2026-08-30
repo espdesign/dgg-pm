@@ -114,6 +114,39 @@ class DggPmBot(commands.Bot):
         except Exception as e:
             logger.debug("Failed to sync root starter message for task %s: %s", task.short_id, e)
 
+    async def sync_task_thread(
+        self,
+        task: Task,
+        action: str | None = None,
+        sync_title: bool = False,
+    ) -> None:
+        """Syncs the Discord thread state (archive/unarchive/rename) for a task."""
+        if not task.discord_thread_id:
+            return
+        try:
+            thread = self.get_channel(task.discord_thread_id) or await self.fetch_channel(task.discord_thread_id)
+            if not isinstance(thread, discord.Thread):
+                return
+
+            # Sync title if requested and task title changed
+            if sync_title:
+                expected_name = f"[{task.short_id}] {task.title}"
+                if len(expected_name) > 100:
+                    expected_name = expected_name[:97] + "..."
+                if thread.name != expected_name:
+                    await thread.edit(name=expected_name)
+
+            # Archive / unarchive management
+            should_archive = action == "archive" or task.status == TaskStatus.COMPLETED or task.is_archived
+            should_unarchive = action == "unarchive" or (task.status != TaskStatus.COMPLETED and not task.is_archived)
+
+            if should_archive and not thread.archived:
+                await thread.edit(archived=True)
+            elif should_unarchive and thread.archived:
+                await thread.edit(archived=False)
+        except Exception as e:
+            logger.warning("Failed to sync thread state for task %s (%s): %s", task.short_id, task.discord_thread_id, e)
+
     async def _handle_dynamic_task_button(
         self,
         interaction: discord.Interaction,
@@ -303,12 +336,14 @@ class DggPmBot(commands.Bot):
             )
             await self._update_interaction_view(interaction, updated_task)
             await self.sync_root_task_message(updated_task)
+            await self.sync_task_thread(updated_task)
 
         except StaleVersionError:
             latest_task = await self.task_service.get_by_id(task_id)
             if latest_task:
                 await self._update_interaction_view(interaction, latest_task)
                 await self.sync_root_task_message(latest_task)
+                await self.sync_task_thread(latest_task)
                 await interaction.followup.send(
                     "⚠️ This task was already updated by another team member. The card has been refreshed.",
                     ephemeral=True,

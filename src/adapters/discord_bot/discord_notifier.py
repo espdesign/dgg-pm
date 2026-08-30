@@ -113,6 +113,19 @@ class DiscordNotifier(INotificationDispatcher):
                                 await root_msg.edit(embed=embed)
                         except Exception as edit_err:
                             logger.debug("Could not edit root starter message: %s", edit_err)
+
+                    # Discord unarchives threads whenever a message is sent. If new status is completed,
+                    # re-archive the thread so it does not linger in the active sidebar.
+                    if new_status == "completed":
+                        try:
+                            await thread.edit(archived=True)
+                        except Exception as archive_err:
+                            logger.debug("Could not re-archive thread after completion message: %s", archive_err)
+                    elif thread.archived:
+                        try:
+                            await thread.edit(archived=False)
+                        except Exception as unarchive_err:
+                            logger.debug("Could not unarchive thread on status update: %s", unarchive_err)
             except Exception as e:
                 logger.warning("Failed to post status update into thread %s: %s", thread_id, e)
 
@@ -148,7 +161,13 @@ class DiscordNotifier(INotificationDispatcher):
             try:
                 thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                 if isinstance(thread, discord.Thread):
+                    was_archived = thread.archived
                     await thread.send(f"📝 **Note added by <@{actor_id}>:**\n> {note}")
+                    if was_archived:
+                        try:
+                            await thread.edit(archived=True)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.warning("Failed to post note to thread %s: %s", thread_id, e)
 

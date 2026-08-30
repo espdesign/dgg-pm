@@ -158,5 +158,7 @@ class TaskEditModal(discord.ui.Modal):
 
             if hasattr(interaction.client, "sync_root_task_message"):
                 await interaction.client.sync_root_task_message(updated_task)
+            if hasattr(interaction.client, "sync_task_thread"):
+                await interaction.client.sync_task_thread(updated_task, sync_title=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to update task details: {e}", ephemeral=True)

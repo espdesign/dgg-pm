@@ -167,7 +167,7 @@ class TaskCog(commands.Cog):
                     thread_name = f"[{task.short_id}] {task.title}"
                     if len(thread_name) > 100:
                         thread_name = thread_name[:97] + "..."
-                    thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
+                    thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
 
                     # Post active TaskActionView card inside the thread workspace
                     thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
@@ -417,16 +417,53 @@ class TaskCog(commands.Cog):
             )
 
             embed = build_task_embed(task)
-            view = TaskActionView(
-                task_id=task.id,
-                current_status=task.status,
-                current_priority=task.priority,
-                task_service=self.task_service,
-            )
-            msg = await interaction.channel.send(embed=embed, view=view)
-            await self.task_service.update_discord_message_ids(task.id, msg.id, None)
+            thread = None
+            msg = None
+            if isinstance(interaction.channel, discord.TextChannel):
+                msg = await interaction.channel.send(embed=embed)
+                try:
+                    thread_name = f"[{task.short_id}] {task.title}"
+                    if len(thread_name) > 100:
+                        thread_name = thread_name[:97] + "..."
+                    thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
 
-            await interaction.followup.send(f"✅ Created standalone task **[{task.short_id}]**!", ephemeral=True)
+                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
+                    if task.assignee_discord_id:
+                        thread_intro += f"Assignee: <@{task.assignee_discord_id}> "
+                    if watchers:
+                        thread_intro += "Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
+
+                    thread_view = TaskActionView(
+                        task_id=task.id,
+                        current_status=task.status,
+                        current_priority=task.priority,
+                        task_service=self.task_service,
+                    )
+                    await thread.send(content=thread_intro.strip(), view=thread_view)
+                except Exception:
+                    pass
+            elif isinstance(interaction.channel, discord.Thread):
+                thread = interaction.channel
+                view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                msg = await interaction.channel.send(embed=embed, view=view)
+            else:
+                msg = await interaction.channel.send(embed=embed)
+
+            # Update DB with Discord IDs
+            thread_id = thread.id if thread else None
+            msg_id = msg.id if msg else 0
+            await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
+
+            await interaction.followup.send(
+                f"✅ Created standalone task **[{task.short_id}]**"
+                + (f" with thread <#{thread.id}>!" if (thread and thread.id != interaction.channel_id) else "!"),
+                ephemeral=True,
+            )
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create standalone task: {e}", ephemeral=True)
 
@@ -473,6 +510,8 @@ class TaskCog(commands.Cog):
             embed = build_task_embed(updated_task)
             if hasattr(self.bot, "sync_root_task_message"):
                 await self.bot.sync_root_task_message(updated_task)
+            if hasattr(self.bot, "sync_task_thread"):
+                await self.bot.sync_task_thread(updated_task)
             await interaction.followup.send(
                 f"✅ Updated **[{updated_task.short_id}]** status to **{new_status.value}**!",
                 embed=embed,
@@ -508,7 +547,9 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
             return
 
-        await self.task_service.archive_task(task_entity.id, interaction.user.id)
+        archived_task = await self.task_service.archive_task(task_entity.id, interaction.user.id)
+        if archived_task and hasattr(self.bot, "sync_task_thread"):
+            await self.bot.sync_task_thread(archived_task, action="archive")
         await interaction.followup.send(f"📁 Task **[{task_entity.short_id}] {task_entity.title}** has been archived.")
 
     @app_commands.command(name="task-unarchive", description="Restore an archived task.")
@@ -522,7 +563,9 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
             return
 
-        await self.task_service.unarchive_task(task_entity.id, interaction.user.id)
+        restored_task = await self.task_service.unarchive_task(task_entity.id, interaction.user.id)
+        if restored_task and hasattr(self.bot, "sync_task_thread"):
+            await self.bot.sync_task_thread(restored_task, action="unarchive")
         await interaction.followup.send(f"📂 Task **[{task_entity.short_id}] {task_entity.title}** has been restored.")
 
     @app_commands.command(name="task-list", description="Display filtered active tasks with interactive pagination.")

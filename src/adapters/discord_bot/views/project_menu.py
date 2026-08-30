@@ -3,6 +3,7 @@ from uuid import UUID
 
 import discord
 
+from src.domain.enums import TaskStatus
 from src.domain.models import Project
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -159,7 +160,22 @@ class ProjectArchiveSelectView(discord.ui.View):
     async def _on_select(self, interaction: discord.Interaction) -> None:
         project_id = UUID(self.select.values[0])
         try:
+            tasks = []
+            if self.task_service and interaction.guild:
+                tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id,
+                    project_id=project_id,
+                    include_archived=False,
+                    limit=500,
+                )
+
             archived = await self.project_service.archive_project(project_id)
+
+            if hasattr(interaction.client, "sync_task_thread"):
+                for t in tasks:
+                    if t.discord_thread_id:
+                        await interaction.client.sync_task_thread(t, action="archive")
+
             view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
             embed = build_project_menu_embed()
             embed.description = (
@@ -224,6 +240,18 @@ class ProjectRestoreSelectView(discord.ui.View):
         project_id = UUID(self.select.values[0])
         try:
             restored = await self.project_service.unarchive_project(project_id)
+
+            if self.task_service and interaction.guild and hasattr(interaction.client, "sync_task_thread"):
+                restored_tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id,
+                    project_id=project_id,
+                    include_archived=False,
+                    limit=500,
+                )
+                for t in restored_tasks:
+                    if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
+                        await interaction.client.sync_task_thread(t, action="unarchive")
+
             view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
             embed = build_project_menu_embed()
             embed.description = (

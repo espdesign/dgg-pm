@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.domain.enums import TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -194,7 +195,22 @@ class ProjectCog(commands.Cog):
             await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
             return
 
+        tasks = []
+        if self.task_service:
+            tasks, _ = await self.task_service.list_tasks(
+                guild_id=interaction.guild.id,
+                project_id=project.id,
+                include_archived=False,
+                limit=500,
+            )
+
         await self.project_service.archive_project(project.id)
+
+        if hasattr(self.bot, "sync_task_thread"):
+            for t in tasks:
+                if t.discord_thread_id:
+                    await self.bot.sync_task_thread(t, action="archive")
+
         await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
 
     @app_commands.command(name="project-unarchive", description="Restore an archived project and its tasks.")
@@ -211,6 +227,18 @@ class ProjectCog(commands.Cog):
             return
 
         await self.project_service.unarchive_project(project.id)
+
+        if self.task_service and hasattr(self.bot, "sync_task_thread"):
+            restored_tasks, _ = await self.task_service.list_tasks(
+                guild_id=interaction.guild.id,
+                project_id=project.id,
+                include_archived=False,
+                limit=500,
+            )
+            for t in restored_tasks:
+                if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
+                    await self.bot.sync_task_thread(t, action="unarchive")
+
         await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
 
     @app_commands.command(name="project-menu", description="Open interactive Project Management Control Center.")

@@ -127,7 +127,7 @@ class TaskCreateModal(discord.ui.Modal):
                 msg = await target_chan.send(embed=embed)
                 thread = await msg.create_thread(
                     name=f"[{task.short_id}] {task.title[:90]}",
-                    auto_archive_duration=1440,
+                    auto_archive_duration=10080,
                 )
                 thread_view = TaskActionView(
                     task_id=task.id,
