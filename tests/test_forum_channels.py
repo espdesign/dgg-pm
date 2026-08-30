@@ -602,3 +602,61 @@ async def test_pm_hub_view_ephemeral_interactions(services):
     await hub_view.guide_tab.callback(interaction)
     assert interaction.response.send_message.await_count == 5
     assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_task_create_modal_inside_forum_thread_creates_new_forum_post(services):
+    """Verify creating a task while inside a pinned forum thread creates a new forum thread, not a reply in the hub."""
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 9988112233
+
+    # Mock Forum Channel & Pinned Hub Thread
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 11223344
+    mock_forum.name = "mobile-dev"
+    mock_forum.available_tags = []
+    mock_forum.create_thread = AsyncMock()
+
+    mock_hub_thread = MagicMock(spec=discord.Thread)
+    mock_hub_thread.id = 55667788
+    mock_hub_thread.name = "📌 📊 Mobile App • Control Hub"
+    mock_hub_thread.parent = mock_forum
+    mock_hub_thread.parent_id = 11223344
+    mock_hub_thread.send = AsyncMock()
+
+    project = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Mobile App",
+        prefix="MOB",
+        discord_channel_id=mock_forum.id,
+    )
+
+    modal = TaskCreateModal(
+        task_service=task_srv,
+        project=project,
+        target_channel=mock_hub_thread,  # Launched from within the pinned thread
+    )
+    modal.title_input._value = "Fix crash on splash screen"
+    modal.desc_input._value = "Stacktrace in sentry"
+    modal.due_input._value = "tomorrow"
+    modal.assignee_input._value = ""
+    modal.priority_input._value = "high"
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.guild.get_channel = MagicMock(return_value=mock_forum)
+    interaction.channel = mock_hub_thread
+    interaction.user = MagicMock()
+    interaction.user.id = 12345
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    await modal.on_submit(interaction)
+
+    # Must create thread in ForumChannel, NOT send message inside mock_hub_thread
+    mock_forum.create_thread.assert_awaited_once()
+    create_args = mock_forum.create_thread.call_args.kwargs
+    assert "[MOB-1] Fix crash on splash screen" in create_args["name"]
+    mock_hub_thread.send.assert_not_called()

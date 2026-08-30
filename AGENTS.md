@@ -16,6 +16,8 @@ This project uses [`devenv`](https://devenv.sh/) (Nix-based) for managing Python
    - **Linting**: `devenv shell -- lint` (or `devenv shell -- ruff check .`)
    - **Formatting**: `devenv shell -- format` (or `devenv shell -- ruff format .`)
    - **Database Initialization**: `devenv shell -- db-init`
+   - **Database Clear/Wipe**: `devenv shell -- db-clear`
+   - **Database Reset & Re-seed**: `devenv shell -- db-reset`
    - **Database Shell**: `devenv shell -- db-shell`
    - **Sync Dependencies**: `devenv shell -- sync` (or `devenv shell -- uv sync --all-extras`)
 

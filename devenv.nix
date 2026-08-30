@@ -74,6 +74,14 @@
       python -c 'import asyncio; from src.adapters.db.session import init_db; asyncio.run(init_db())'
     '';
 
+    db-clear.exec = ''
+      python scripts/clear_db.py
+    '';
+
+    db-reset.exec = ''
+      python scripts/clear_db.py --seed
+    '';
+
     db-shell.exec = ''
       psql -h 127.0.0.1 -U postgres -d dgg_pm
     '';
@@ -104,6 +112,8 @@
     echo "   - lint         : Run ruff lint checks"
     echo "   - format       : Auto-format code with ruff"
     echo "   - db-init      : Initialize PostgreSQL database schema"
+    echo "   - db-clear     : Wipe/truncate PostgreSQL database tables"
+    echo "   - db-reset     : Wipe database tables and re-seed test data"
     echo "   - db-shell     : Open interactive psql shell"
     echo "   - sync         : Sync dependencies with uv"
     echo "   - devenv up    : Start background services (PostgreSQL, App)"

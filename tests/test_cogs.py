@@ -449,6 +449,27 @@ def test_seed_script_production_safety_guards(monkeypatch):
         check_production_safety_guard(1543430283250901023)
 
 
+def test_clear_db_script_safety_guards(monkeypatch):
+    """Verify clear_db script safety guards block execution in unsafe environments."""
+    from scripts.clear_db import check_production_safety_guard as clear_safety_guard
+    from src.config import settings
+
+    # 1. Blocks if ENVIRONMENT is production
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    with pytest.raises(RuntimeError, match="cannot be run in 'production' environment"):
+        clear_safety_guard()
+
+    # 2. Blocks if DATABASE_URL points to a cloud database
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        "postgresql+asyncpg://postgres:pass@db.supabase.co:5432/postgres",
+    )
+    with pytest.raises(RuntimeError, match="appears to point to a production/cloud database"):
+        clear_safety_guard()
+
+
 @pytest.mark.asyncio
 async def test_pm_project_create_with_required_role(services):
     """Verify /pm project create requires role, creates team, and assigns squad to project."""

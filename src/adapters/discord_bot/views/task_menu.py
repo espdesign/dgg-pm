@@ -157,6 +157,22 @@ class TaskCreateModal(discord.ui.Modal):
             )
 
             target_chan = self.target_channel or interaction.channel
+
+            # If target_chan is a Thread (e.g. clicked inside Pinned Control Hub), route to parent ForumChannel
+            if isinstance(target_chan, discord.Thread):
+                parent = getattr(target_chan, "parent", None)
+                if not parent and getattr(target_chan, "parent_id", None) and hasattr(interaction.guild, "get_channel"):
+                    parent = interaction.guild.get_channel(target_chan.parent_id)
+                if isinstance(parent, discord.ForumChannel):
+                    target_chan = parent
+
+            # If not already a ForumChannel, check if project is bound to a Forum/Text channel
+            if not isinstance(target_chan, discord.ForumChannel) and self.project and self.project.discord_channel_id:
+                if hasattr(interaction.guild, "get_channel"):
+                    proj_chan = interaction.guild.get_channel(self.project.discord_channel_id)
+                    if isinstance(proj_chan, (discord.ForumChannel, discord.TextChannel)):
+                        target_chan = proj_chan
+
             embed = build_task_embed(task, project_name=self.project.name if self.project else None)
 
             msg = None

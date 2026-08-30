@@ -329,6 +329,13 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 if isinstance(chan, (discord.TextChannel, discord.ForumChannel, discord.Thread)):
                     target_channel = chan
 
+            if isinstance(target_channel, discord.Thread):
+                parent = getattr(target_channel, "parent", None)
+                if not parent and getattr(target_channel, "parent_id", None) and hasattr(self.bot, "get_channel"):
+                    parent = self.bot.get_channel(target_channel.parent_id)
+                if isinstance(parent, discord.ForumChannel):
+                    target_channel = parent
+
             embed = build_task_embed(task, project_name=project.name)
             thread = None
             msg = None

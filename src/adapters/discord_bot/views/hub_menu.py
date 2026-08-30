@@ -55,13 +55,25 @@ class PmHubView(discord.ui.View):
         channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
         matched_proj = channel_projects[0] if channel_projects else (projects[0] if len(projects) == 1 else None)
 
+        target_channel = interaction.channel
+        if isinstance(target_channel, discord.Thread):
+            parent = getattr(target_channel, "parent", None)
+            if not parent and getattr(target_channel, "parent_id", None):
+                parent = interaction.guild.get_channel(target_channel.parent_id)
+            if isinstance(parent, discord.ForumChannel):
+                target_channel = parent
+        elif matched_proj and matched_proj.discord_channel_id:
+            proj_chan = interaction.guild.get_channel(matched_proj.discord_channel_id)
+            if proj_chan:
+                target_channel = proj_chan
+
         from src.services.auth_service import AuthService
 
         auth_srv = AuthService(self.project_service, self.team_service)
         modal = TaskCreateModal(
             task_service=self.task_service,
             project=matched_proj,
-            target_channel=interaction.channel,
+            target_channel=target_channel,
             auth_service=auth_srv,
         )
         await interaction.response.send_modal(modal)

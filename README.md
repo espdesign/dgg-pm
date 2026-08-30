@@ -141,6 +141,9 @@ devenv up
 # Run helper scripts inside the devenv shell
 run-tests    # Execute pytest test suite
 run-app      # Launch platform
+db-init      # Initialize database schema
+db-clear     # Wipe/truncate PostgreSQL database tables
+db-reset     # Wipe database tables and re-seed test data
 db-shell     # Connect to local PostgreSQL
 format       # Autoformat with ruff
 lint         # Lint check with ruff
