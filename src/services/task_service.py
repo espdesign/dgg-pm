@@ -1,0 +1,295 @@
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+from src.domain.enums import (
+    EventType,
+    PriorityLevel,
+    TaskHistoryAction,
+    TaskStatus,
+)
+from src.domain.models import Task, TaskHistory
+from src.ports.repositories import ITaskRepo
+from src.services.outbox_service import OutboxService
+from src.services.project_service import ProjectService
+
+
+class StaleVersionError(Exception):
+    """Raised when an optimistic concurrency update fails due to a version mismatch."""
+
+
+class TaskService:
+    def __init__(
+        self,
+        task_repo: ITaskRepo,
+        project_service: ProjectService,
+        outbox_service: OutboxService,
+    ):
+        self.task_repo = task_repo
+        self.project_service = project_service
+        self.outbox_service = outbox_service
+
+    async def create_task(
+        self,
+        guild_id: int,
+        title: str,
+        creator_discord_id: int,
+        project_name: str | None = None,
+        project_id: UUID | None = None,
+        assignee_discord_id: int | None = None,
+        due_at: datetime | None = None,
+        priority: PriorityLevel = PriorityLevel.NORMAL,
+        body: str | None = None,
+        watchers: list[int] | None = None,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> Task:
+        # Resolve project if project_name given
+        resolved_project_id = project_id
+        if project_name and not resolved_project_id:
+            project = await self.project_service.get_by_name(guild_id, project_name)
+            if not project:
+                raise ValueError(f"Project '{project_name}' was not found in this server.")
+            resolved_project_id = project.id
+
+        # Allocate short ID
+        if resolved_project_id:
+            task_number, short_id = await self.project_service.allocate_next_short_id(resolved_project_id)
+        else:
+            # Standalone task ID
+            import random
+
+            task_number = random.randint(100, 99999)
+            short_id = f"TASK-{task_number}"
+
+        clean_watchers = list(set(watchers or []))
+        task = Task(
+            id=uuid4(),
+            guild_id=guild_id,
+            project_id=resolved_project_id,
+            task_number=task_number,
+            short_id=short_id,
+            version=1,
+            title=title.strip(),
+            body=body.strip() if body else None,
+            status=TaskStatus.NOT_STARTED,
+            priority=priority,
+            creator_discord_id=creator_discord_id,
+            assignee_discord_id=assignee_discord_id,
+            due_at=due_at,
+            metadata_json=metadata_json or {},
+            watchers=clean_watchers,
+        )
+
+        # Persist task
+        saved_task = await self.task_repo.create(task)
+
+        # Audit log creation
+        history = TaskHistory(
+            task_id=saved_task.id,
+            actor_discord_id=creator_discord_id,
+            action=TaskHistoryAction.CREATED,
+            new_status=TaskStatus.NOT_STARTED,
+            notes=f"Task '{title}' created with ID {short_id}",
+        )
+        await self.task_repo.add_history(history)
+
+        # Schedule tiered reminders if due_at set
+        if due_at:
+            await self.outbox_service.schedule_task_reminders(saved_task)
+
+        # Enqueue creation event
+        await self.outbox_service.enqueue_event(
+            event_type=EventType.TASK_CREATED,
+            idempotency_key=f"task_created:{saved_task.id}",
+            payload={
+                "task_id": str(saved_task.id),
+                "short_id": saved_task.short_id,
+                "title": saved_task.title,
+                "guild_id": saved_task.guild_id,
+                "project_id": str(saved_task.project_id) if saved_task.project_id else None,
+                "creator_discord_id": saved_task.creator_discord_id,
+                "assignee_discord_id": saved_task.assignee_discord_id,
+                "watchers": saved_task.watchers,
+                "due_at": saved_task.due_at.isoformat() if saved_task.due_at else None,
+            },
+        )
+
+        return saved_task
+
+    async def update_status(
+        self,
+        task_id: UUID,
+        new_status: TaskStatus,
+        expected_version: int,
+        actor_discord_id: int,
+        notes: str | None = None,
+    ) -> Task:
+        current_task = await self.task_repo.get_by_id(task_id)
+        if not current_task:
+            raise ValueError(f"Task with ID {task_id} does not exist.")
+
+        old_status = current_task.status
+        completed_at = datetime.now(UTC) if new_status == TaskStatus.COMPLETED else None
+
+        updated_task = await self.task_repo.update_status_cas(
+            task_id=task_id,
+            expected_version=expected_version,
+            new_status=new_status,
+            completed_at=completed_at,
+        )
+        if not updated_task:
+            raise StaleVersionError(
+                f"Task {current_task.short_id} was already modified by another user. Please refresh."
+            )
+
+        # Audit log status transition
+        history = TaskHistory(
+            task_id=task_id,
+            actor_discord_id=actor_discord_id,
+            action=TaskHistoryAction.STATUS_CHANGE,
+            old_status=old_status,
+            new_status=new_status,
+            notes=notes,
+        )
+        await self.task_repo.add_history(history)
+
+        # If completed, cancel pending reminder events
+        if new_status == TaskStatus.COMPLETED:
+            await self.outbox_service.cancel_task_reminders(task_id)
+
+        # Enqueue status changed event
+        await self.outbox_service.enqueue_event(
+            event_type=EventType.TASK_STATUS_CHANGED,
+            idempotency_key=f"task_status:{task_id}:v{updated_task.version}",
+            payload={
+                "task_id": str(task_id),
+                "short_id": updated_task.short_id,
+                "title": updated_task.title,
+                "guild_id": updated_task.guild_id,
+                "project_id": str(updated_task.project_id) if updated_task.project_id else None,
+                "old_status": old_status.value,
+                "new_status": new_status.value,
+                "actor_discord_id": actor_discord_id,
+                "assignee_discord_id": updated_task.assignee_discord_id,
+                "watchers": updated_task.watchers,
+                "notes": notes,
+                "discord_thread_id": updated_task.discord_thread_id,
+            },
+        )
+
+        return updated_task
+
+    async def add_note(
+        self,
+        task_id: UUID,
+        actor_discord_id: int,
+        note_text: str,
+    ) -> TaskHistory:
+        task = await self.task_repo.get_by_id(task_id)
+        if not task:
+            raise ValueError(f"Task with ID {task_id} does not exist.")
+
+        history = TaskHistory(
+            task_id=task_id,
+            actor_discord_id=actor_discord_id,
+            action=TaskHistoryAction.NOTE_ADDED,
+            notes=note_text.strip(),
+        )
+        saved_history = await self.task_repo.add_history(history)
+
+        # Enqueue note event for thread/DM notification
+        await self.outbox_service.enqueue_event(
+            event_type=EventType.TASK_NOTE_ADDED,
+            idempotency_key=f"task_note:{saved_history.id}",
+            payload={
+                "task_id": str(task_id),
+                "short_id": task.short_id,
+                "title": task.title,
+                "guild_id": task.guild_id,
+                "actor_discord_id": actor_discord_id,
+                "assignee_discord_id": task.assignee_discord_id,
+                "watchers": task.watchers,
+                "note": note_text.strip(),
+                "discord_thread_id": task.discord_thread_id,
+            },
+        )
+
+        return saved_history
+
+    async def update_discord_message_ids(
+        self,
+        task_id: UUID,
+        discord_message_id: int,
+        discord_thread_id: int | None = None,
+    ) -> None:
+        await self.task_repo.update_discord_message(task_id, discord_message_id, discord_thread_id)
+
+    async def get_by_id(self, task_id: UUID) -> Task | None:
+        return await self.task_repo.get_by_id(task_id)
+
+    async def get_by_short_id(self, guild_id: int, short_id: str) -> Task | None:
+        return await self.task_repo.get_by_short_id(guild_id, short_id)
+
+    async def list_tasks(
+        self,
+        guild_id: int,
+        project_id: UUID | None = None,
+        assignee_discord_id: int | None = None,
+        status: TaskStatus | None = None,
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Task], int]:
+        return await self.task_repo.list_tasks(
+            guild_id=guild_id,
+            project_id=project_id,
+            assignee_discord_id=assignee_discord_id,
+            status=status,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def search_for_autocomplete(
+        self,
+        guild_id: int,
+        query: str,
+        project_id: UUID | None = None,
+        limit: int = 25,
+    ) -> list[Task]:
+        return await self.task_repo.search_for_autocomplete(
+            guild_id=guild_id,
+            query=query,
+            project_id=project_id,
+            limit=limit,
+        )
+
+    async def archive_task(self, task_id: UUID, actor_discord_id: int) -> Task | None:
+        task = await self.task_repo.set_archived(task_id, is_archived=True)
+        if task:
+            await self.outbox_service.cancel_task_reminders(task_id)
+            history = TaskHistory(
+                task_id=task_id,
+                actor_discord_id=actor_discord_id,
+                action=TaskHistoryAction.ARCHIVED,
+                notes="Task archived",
+            )
+            await self.task_repo.add_history(history)
+        return task
+
+    async def unarchive_task(self, task_id: UUID, actor_discord_id: int) -> Task | None:
+        task = await self.task_repo.set_archived(task_id, is_archived=False)
+        if task:
+            if task.due_at and not task.is_completed:
+                await self.outbox_service.schedule_task_reminders(task)
+            history = TaskHistory(
+                task_id=task_id,
+                actor_discord_id=actor_discord_id,
+                action=TaskHistoryAction.UNARCHIVED,
+                notes="Task unarchived and restored",
+            )
+            await self.task_repo.add_history(history)
+        return task
+
+    async def get_history(self, task_id: UUID) -> list[TaskHistory]:
+        return await self.task_repo.get_history(task_id)

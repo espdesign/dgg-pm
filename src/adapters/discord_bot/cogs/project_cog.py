@@ -1,0 +1,155 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from src.services.project_service import ProjectService
+from src.services.team_service import TeamService
+
+
+class ProjectCog(commands.Cog):
+    """Slash commands for managing projects and containers."""
+
+    def __init__(self, bot: commands.Bot, project_service: ProjectService, team_service: TeamService):
+        self.bot = bot
+        self.project_service = project_service
+        self.team_service = team_service
+
+    @app_commands.command(name="project-create", description="Instantiate a top-level project container.")
+    @app_commands.describe(
+        name="Name of the project (e.g. Infrastructure)",
+        prefix="Optional 3-4 letter prefix (e.g. INF)",
+        channel="Discord text channel to bind as the project's task feed",
+        description="Brief summary of the project goals",
+        category="Category or domain (e.g. Engineering, Marketing)",
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_create(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        prefix: str | None = None,
+        channel: discord.TextChannel | None = None,
+        description: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            channel_id = channel.id if channel else interaction.channel_id
+            project = await self.project_service.create_project(
+                guild_id=interaction.guild.id,
+                name=name,
+                prefix=prefix,
+                description=description,
+                discord_channel_id=channel_id,
+                category=category,
+            )
+
+            embed = discord.Embed(
+                title=f"📁 Project Created: {project.name} (`{project.prefix}`)",
+                description=project.description or "*No description provided.*",
+                color=discord.Color.blue(),
+            )
+            embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
+            if project.discord_channel_id:
+                embed.add_field(name="Bound Channel", value=f"<#{project.discord_channel_id}>", inline=True)
+            if project.category:
+                embed.add_field(name="Category", value=project.category, inline=True)
+
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to create project: {e}", ephemeral=True)
+
+    @app_commands.command(name="project-assign", description="Map a functional team container to a project.")
+    @app_commands.describe(
+        project_name="Name of the project",
+        team_name="Name of the team",
+        timeline="Target timeline (e.g. Q2 2026, 6 weeks)",
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_assign(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        team_name: str,
+        timeline: str | None = None,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            team = await self.team_service.get_by_name(interaction.guild.id, team_name)
+            if not team:
+                await interaction.followup.send(f"❌ Team '{team_name}' not found.", ephemeral=True)
+                return
+
+            await self.project_service.assign_team_to_project(
+                project_id=project.id,
+                team_id=team.id,
+                timeline=timeline,
+            )
+
+            await interaction.followup.send(
+                f"✅ Assigned team **{team.name}** (<@&{team.discord_role_id}>) to project **{project.name}**."
+                + (f" Timeline: `{timeline}`" if timeline else "")
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to assign team to project: {e}", ephemeral=True)
+
+    @app_commands.command(name="project-list", description="List all projects in this server.")
+    async def project_list(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        projects = await self.project_service.list_projects(interaction.guild.id)
+        if not projects:
+            await interaction.followup.send("📁 No active projects found. Use `/project-create` to start one.")
+            return
+
+        embed = discord.Embed(title="📁 Server Projects", color=discord.Color.blurple())
+        for p in projects:
+            chan_str = f" • <#{p.discord_channel_id}>" if p.discord_channel_id else ""
+            desc = f"Prefix: `{p.prefix}`{chan_str}\n" + (f"> {p.description}" if p.description else "")
+            embed.add_field(name=f"**{p.name}**", value=desc, inline=False)
+
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="project-archive", description="Archive a project and its associated tasks.")
+    @app_commands.describe(project_name="Name of the project to archive")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_archive(self, interaction: discord.Interaction, project_name: str) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+        if not project:
+            await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+            return
+
+        await self.project_service.archive_project(project.id)
+        await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
+
+    @app_commands.command(name="project-unarchive", description="Restore an archived project and its tasks.")
+    @app_commands.describe(project_name="Name of the project to restore")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_unarchive(self, interaction: discord.Interaction, project_name: str) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+        if not project:
+            await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+            return
+
+        await self.project_service.unarchive_project(project.id)
+        await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")

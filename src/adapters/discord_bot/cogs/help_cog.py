@@ -1,0 +1,68 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+
+class HelpCog(commands.Cog):
+    """User and administrator guidance for dgg-pm."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @app_commands.command(name="help-pm", description="Display command guides and operational documentation.")
+    async def help_pm(self, interaction: discord.Interaction) -> None:
+        embed = discord.Embed(
+            title="📖 Discord-Native Task Management (`dgg-pm`)",
+            description=(
+                "A zero-signup, native project management engine inside Discord.\n"
+                "Data structures comply with **RFC 5545 (VTODO)** and **Microsoft Graph** schemas."
+            ),
+            color=discord.Color.blurple(),
+        )
+
+        embed.add_field(
+            name="📁 Project Management *(Requires Manage Server)*",
+            value=(
+                "`/project-create` - Instantiate a project container and bind channel\n"
+                "`/project-assign` - Map a functional team to a project\n"
+                "`/project-list` - View all active server projects\n"
+                "`/project-archive` - Archive a project and its active tasks\n"
+                "`/project-unarchive` - Restore an archived project"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="👥 Team Management *(Requires Manage Server)*",
+            value=(
+                "`/team-create` - Define a team mapped to a Discord role\n"
+                "`/team-assign` - Assign a user to a team (with lead/member role)\n"
+                "`/team-list` - List all configured server teams"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="⚡ Task Operations *(All Team Members)*",
+            value=(
+                "`/task-create` - Create project task with thread and action buttons\n"
+                "`/task-standalone` - Create ad-hoc unanchored task\n"
+                "`/task-status` - Update execution progress (with autocomplete)\n"
+                "`/task-history` - View complete audit trail of status changes\n"
+                "`/task-list` - Browse active tasks with interactive pagination\n"
+                "`/task-archive` / `/task-unarchive` - Soft-delete or restore tasks"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="🎛️ Interactive Embed Buttons",
+            value=(
+                "• **`🟡 In Progress`**: Transition task status to in-progress\n"
+                "• **`🟢 Complete`**: Mark task as completed (cancels pending reminders)\n"
+                "• **`📝 Add Note`**: Opens modal to log progress updates to the task thread"
+            ),
+            inline=False,
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
