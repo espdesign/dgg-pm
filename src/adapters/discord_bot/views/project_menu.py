@@ -7,7 +7,7 @@ from uuid import UUID
 import discord
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, ensure_project_tag, setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.domain.models import Project, Team
 from src.services.project_service import ProjectService
@@ -19,8 +19,19 @@ logger = logging.getLogger("dgg_pm.views.project_menu")
 
 class ProjectCreateModal(discord.ui.Modal):
     def __init__(
-        self, project_service: ProjectService, channel: discord.ForumChannel | discord.TextChannel | discord.Thread
+        self,
+        project_service: ProjectService,
+        channel: discord.ForumChannel | discord.TextChannel | discord.Thread,
+        team_service: TeamService | None = None,
+        task_service: TaskService | None = None,
+        user_service: Any = None,
     ):
+        self.project_service = project_service
+        self.channel = channel
+        self.team_service = team_service
+        self.task_service = task_service
+        self.user_service = user_service
+
         raw_name = getattr(channel, "name", None)
         if isinstance(raw_name, str) and raw_name.strip():
             chan_name = raw_name.strip()
@@ -111,6 +122,20 @@ class ProjectCreateModal(discord.ui.Modal):
                     tag_note = f" • Setup {tags_added} PM tags"
                 elif tag_err:
                     tag_note = f" • ⚠️ {tag_err}"
+                proj_tag_err = await ensure_project_tag(self.channel, project.name)
+                if proj_tag_err:
+                    tag_note += f" • ⚠️ {proj_tag_err}"
+
+            hub_ok, _hub_status = await ensure_pinned_hub_post(
+                channel=self.channel,
+                project_service=self.project_service,
+                team_service=self.team_service,
+                task_service=self.task_service,
+                user_service=self.user_service,
+                project_name=project.name,
+            )
+            if hub_ok:
+                tag_note += " • 📌 Pinned Control Hub created"
 
             embed = discord.Embed(
                 title=f"✅ Project Created: {project.name} (`{project.prefix}`)",
@@ -187,7 +212,12 @@ class ProjectChannelSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Invalid channel selected.", ephemeral=True)
             return
 
-        modal = ProjectCreateModal(self.project_service, channel=chan)
+        modal = ProjectCreateModal(
+            self.project_service,
+            channel=chan,
+            team_service=self.team_service,
+            task_service=self.task_service,
+        )
         await interaction.response.send_modal(modal)
 
     async def _on_current_channel_clicked(self, interaction: discord.Interaction) -> None:
@@ -198,7 +228,12 @@ class ProjectChannelSelectView(discord.ui.View):
                 "❌ Current channel must be a Forum or Text channel.", ephemeral=True
             )
             return
-        modal = ProjectCreateModal(self.project_service, channel=interaction.channel)
+        modal = ProjectCreateModal(
+            self.project_service,
+            channel=interaction.channel,
+            team_service=self.team_service,
+            task_service=self.task_service,
+        )
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:

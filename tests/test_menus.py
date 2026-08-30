@@ -103,6 +103,52 @@ async def test_project_menu_and_modal(services):
     assert created_proj.prefix == "CLD"
     assert created_proj.discord_channel_id == 123456789
 
+    # 3b. ProjectCreateModal creates the Control Hub + project tag on a ForumChannel
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 37373737
+    mock_forum.name = "mobile-dev"
+    mock_forum.available_tags = []
+    mock_forum.edit = AsyncMock()
+    mock_thread = MagicMock()
+    mock_thread.id = 42424242
+    mock_thread.edit = AsyncMock()
+    mock_forum.create_thread = AsyncMock(return_value=mock_thread)
+
+    modal2 = ProjectCreateModal(
+        project_service=proj_srv,
+        channel=mock_forum,
+        team_service=team_srv,
+        task_service=services["task"],
+    )
+    modal2.name_input._value = "Mobile Redesign"
+    modal2.prefix_input._value = "MOB"
+    modal2.desc_input._value = ""
+    modal2.cat_input._value = ""
+
+    interaction2 = MagicMock(spec=discord.Interaction)
+    interaction2.guild = MagicMock()
+    interaction2.guild.id = guild_id
+    interaction2.response = MagicMock()
+    interaction2.response.send_message = AsyncMock()
+
+    await modal2.on_submit(interaction2)
+
+    # Hub thread created in the forum
+    mock_forum.create_thread.assert_awaited_once()
+    assert "Control Hub" in mock_forum.create_thread.call_args.kwargs["name"]
+    mock_thread.edit.assert_awaited_once_with(pinned=True)
+
+    # Per-project tag added to the forum
+    saved = [
+        c.kwargs.get("available_tags", []) for c in mock_forum.edit.await_args_list if "available_tags" in c.kwargs
+    ]
+    assert any(t.name == "📁 Mobile Redesign" for tags in saved for t in tags)
+
+    # Confirm note surfaced in the embed
+    embed2 = interaction2.response.send_message.call_args.kwargs.get("embed")
+    bound_field = next(f for f in embed2.fields if f.name == "Bound Channel")
+    assert "Pinned Control Hub" in bound_field.value
+
     # 4. Test Assign Team Flow (ProjectAssignTeamView & ProjectAssignTimelineModal)
     team = await team_srv.create_team(guild_id=guild_id, name="DevOps Squad", discord_role_id=987654)
     projects = [created_proj]
