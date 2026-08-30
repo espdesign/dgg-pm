@@ -14,12 +14,14 @@ from src.adapters.discord_bot.views.project_menu import (
     ProjectArchiveConfirmView,
     ProjectArchiveSelectView,
     ProjectChannelSelectView,
+    ProjectCreateDraftView,
     ProjectCreateModal,
     ProjectMenuView,
     ProjectRestoreConfirmView,
     ProjectRestoreSelectView,
     ProjectSearchModal,
     build_active_projects_embed,
+    build_project_draft_embed,
 )
 from src.adapters.discord_bot.views.settings_menu import (
     UserSettingsView,
@@ -80,7 +82,7 @@ async def test_project_menu_and_modal(services):
     assert isinstance(sent_modal, ProjectCreateModal)
     assert sent_modal.channel == mock_forum_channel
 
-    # 3. Test ProjectCreateModal submission
+    # 3. Test ProjectCreateModal submission -> launches ProjectCreateDraftView
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.id = 123456789
 
@@ -98,13 +100,72 @@ async def test_project_menu_and_modal(services):
 
     await modal.on_submit(interaction)
     interaction.response.send_message.assert_awaited_once()
+    draft_view = interaction.response.send_message.call_args.kwargs.get("view")
+    assert isinstance(draft_view, ProjectCreateDraftView)
+    assert draft_view.name == "Cloud Infrastructure"
+    assert draft_view.prefix == "CLD"
+    assert draft_view.role is None
+    assert draft_view.lead is None
+
+    # 3a. Verify clicking Create Project without role is blocked
+    no_role_interaction = MagicMock(spec=discord.Interaction)
+    no_role_interaction.guild = MagicMock()
+    no_role_interaction.guild.id = guild_id
+    no_role_interaction.response = MagicMock()
+    no_role_interaction.response.send_message = AsyncMock()
+
+    await draft_view._on_confirm_clicked(no_role_interaction)
+    no_role_interaction.response.send_message.assert_awaited_once()
+    assert "Squad Role Required" in no_role_interaction.response.send_message.call_args.args[0]
+    assert await proj_srv.get_by_name(guild_id, "Cloud Infrastructure") is None
+
+    # 3b. Select Role (Required) and Lead (Optional)
+    mock_squad_role = MagicMock(spec=discord.Role)
+    mock_squad_role.id = 998877
+    draft_view.role_select._values = [mock_squad_role]
+
+    role_select_inter = MagicMock(spec=discord.Interaction)
+    role_select_inter.response = MagicMock()
+    role_select_inter.response.edit_message = AsyncMock()
+    await draft_view._on_role_selected(role_select_inter)
+    assert draft_view.role == mock_squad_role
+
+    mock_lead_member = MagicMock(spec=discord.Member)
+    mock_lead_member.id = 112233
+    draft_view.lead_select._values = [mock_lead_member]
+
+    lead_select_inter = MagicMock(spec=discord.Interaction)
+    lead_select_inter.response = MagicMock()
+    lead_select_inter.response.edit_message = AsyncMock()
+    await draft_view._on_lead_selected(lead_select_inter)
+    assert draft_view.lead == mock_lead_member
+
+    # Test Clear Lead button
+    clear_lead_inter = MagicMock(spec=discord.Interaction)
+    clear_lead_inter.response = MagicMock()
+    clear_lead_inter.response.edit_message = AsyncMock()
+    await draft_view._on_clear_lead_clicked(clear_lead_inter)
+    assert draft_view.lead is None
+
+    # Re-assign lead and confirm project creation
+    draft_view.lead = mock_lead_member
+    confirm_interaction = MagicMock(spec=discord.Interaction)
+    confirm_interaction.guild = MagicMock()
+    confirm_interaction.guild.id = guild_id
+    confirm_interaction.response = MagicMock()
+    confirm_interaction.response.edit_message = AsyncMock()
+
+    await draft_view._on_confirm_clicked(confirm_interaction)
+    confirm_interaction.response.edit_message.assert_awaited_once()
 
     created_proj = await proj_srv.get_by_name(guild_id, "Cloud Infrastructure")
     assert created_proj is not None
     assert created_proj.prefix == "CLD"
     assert created_proj.discord_channel_id == 123456789
+    assert created_proj.discord_role_id == 998877
+    assert created_proj.lead_discord_id == 112233
 
-    # 3b. ProjectCreateModal creates the Control Hub + project tag on a ForumChannel
+    # 3c. ProjectCreateDraftView creates the Control Hub + project tag on a ForumChannel
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 37373737
     mock_forum.name = "mobile-dev"
@@ -133,6 +194,20 @@ async def test_project_menu_and_modal(services):
     interaction2.response.send_message = AsyncMock()
 
     await modal2.on_submit(interaction2)
+    draft_view2 = interaction2.response.send_message.call_args.kwargs.get("view")
+    assert isinstance(draft_view2, ProjectCreateDraftView)
+
+    mock_forum_role = MagicMock(spec=discord.Role)
+    mock_forum_role.id = 887766
+    draft_view2.role = mock_forum_role
+
+    confirm_inter2 = MagicMock(spec=discord.Interaction)
+    confirm_inter2.guild = MagicMock()
+    confirm_inter2.guild.id = guild_id
+    confirm_inter2.response = MagicMock()
+    confirm_inter2.response.edit_message = AsyncMock()
+
+    await draft_view2._on_confirm_clicked(confirm_inter2)
 
     # Hub thread created in the forum
     mock_forum.create_thread.assert_awaited_once()
@@ -146,7 +221,7 @@ async def test_project_menu_and_modal(services):
     assert any(t.name == "Mobile Redesign" for tags in saved for t in tags)
 
     # Confirm note surfaced in the embed
-    embed2 = interaction2.response.send_message.call_args.kwargs.get("embed")
+    embed2 = confirm_inter2.response.edit_message.call_args.kwargs.get("embed")
     bound_field = next(f for f in embed2.fields if f.name == "Bound Channel")
     assert "Pinned Control Hub" in bound_field.value
 
@@ -1193,3 +1268,81 @@ async def test_menu_timeouts_and_hub_registration(services):
     opened_view = hub_inter.response.send_message.call_args.kwargs["view"]
     assert isinstance(opened_view, ProjectMenuView)
     assert opened_view._initial_interaction == hub_inter
+
+
+@pytest.mark.asyncio
+async def test_project_create_draft_view_details_edit_and_cancel(services):
+    guild_id = 123456789012345678
+    proj_srv = services["project"]
+    mock_chan = MagicMock(spec=discord.TextChannel)
+    mock_chan.id = 987123
+    mock_chan.name = "eng-general"
+
+    draft_view = ProjectCreateDraftView(
+        project_service=proj_srv,
+        channel=mock_chan,
+        name="Initial Name",
+        prefix="INIT",
+        description="Initial Desc",
+        category="Initial Cat",
+    )
+
+    # 0. Test build_project_draft_embed output
+    draft_embed = build_project_draft_embed(
+        name="Initial Name",
+        channel=mock_chan,
+        prefix="INIT",
+        description="Initial Desc",
+        category="Initial Cat",
+    )
+    assert "Initial Name" in draft_embed.title
+    assert "Required" in draft_embed.description
+
+    # 1. Test Edit Details button opens modal with initial values
+    edit_inter = MagicMock(spec=discord.Interaction)
+    edit_inter.response = MagicMock()
+    edit_inter.response.send_modal = AsyncMock()
+
+    await draft_view._on_edit_details_clicked(edit_inter)
+    edit_inter.response.send_modal.assert_awaited_once()
+    edit_modal = edit_inter.response.send_modal.call_args.args[0]
+    assert isinstance(edit_modal, ProjectCreateModal)
+    assert edit_modal.draft_view == draft_view
+    assert edit_modal.name_input.default == "Initial Name"
+    assert edit_modal.prefix_input.default == "INIT"
+
+    # 2. Test submitting the edit modal updates the draft view
+    edit_modal.name_input._value = "Updated Project Name"
+    edit_modal.prefix_input._value = "UPDT"
+    edit_modal.desc_input._value = "Updated Description"
+    edit_modal.cat_input._value = "Backend"
+
+    submit_inter = MagicMock(spec=discord.Interaction)
+    submit_inter.guild = MagicMock()
+    submit_inter.guild.id = guild_id
+    submit_inter.response = MagicMock()
+    submit_inter.response.edit_message = AsyncMock()
+
+    await edit_modal.on_submit(submit_inter)
+    assert draft_view.name == "Updated Project Name"
+    assert draft_view.prefix == "UPDT"
+    assert draft_view.description == "Updated Description"
+    assert draft_view.category == "Backend"
+    submit_inter.response.edit_message.assert_awaited_once()
+
+    # 3. Test Cancel button
+    cancel_inter = MagicMock(spec=discord.Interaction)
+    cancel_inter.response = MagicMock()
+    cancel_inter.response.edit_message = AsyncMock()
+
+    await draft_view._on_cancel_clicked(cancel_inter)
+    cancel_inter.response.edit_message.assert_awaited_once()
+    cancel_embed = cancel_inter.response.edit_message.call_args.kwargs["embed"]
+    assert "Project Creation Cancelled" in cancel_embed.title
+
+    # 4. Test on_timeout cleans up initial interaction
+    initial_inter = MagicMock(spec=discord.Interaction)
+    initial_inter.delete_original_response = AsyncMock()
+    draft_view._initial_interaction = initial_inter
+    await draft_view.on_timeout()
+    initial_inter.delete_original_response.assert_awaited_once()

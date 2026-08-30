@@ -70,6 +70,7 @@ class TechTreeViewer(discord.ui.View):
             guild_id=interaction.guild.id,
             project_id=self.project.id,
             orientation=self.current_orientation,
+            member_resolver=interaction.guild,
         )
         file = discord.File(fp=buf, filename="tech_tree.png")
         orient_label = "Horizontal (Left to Right)" if self.current_orientation == "lr" else "Vertical (Top to Bottom)"
@@ -146,6 +147,7 @@ class TechTreeProjectSelectView(discord.ui.View):
             guild_id=interaction.guild.id,
             project_id=project.id,
             orientation=self.orientation,
+            member_resolver=interaction.guild,
         )
         file = discord.File(fp=buf, filename="tech_tree.png")
         orient_label = "Horizontal (Left to Right)" if self.orientation == "lr" else "Vertical (Top to Bottom)"

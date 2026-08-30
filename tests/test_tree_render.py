@@ -1,5 +1,6 @@
 import io
 
+import discord
 import pytest
 from PIL import Image
 
@@ -145,3 +146,55 @@ async def test_service_render_project_tree_integration(services):
     assert isinstance(buf_tb, io.BytesIO)
     img_tb = Image.open(buf_tb)
     assert img_tb.format == "PNG"
+
+
+@pytest.mark.asyncio
+async def test_render_project_tree_assignee_name_resolution(services):
+    from unittest.mock import MagicMock
+
+    from src.services.task_service import resolve_member_name
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 998877668
+    user_id = 12472731781680
+
+    # 1. Test resolve_member_name helper
+    assert resolve_member_name(None, None) is None
+    assert resolve_member_name(user_id, {user_id: "alice_dev"}) == "alice_dev"
+    assert resolve_member_name(user_id, lambda uid: f"Dev-{uid}") == f"Dev-{user_id}"
+
+    mock_member = MagicMock(spec=discord.Member)
+    mock_member.display_name = "PJ_Lead"
+    mock_guild = MagicMock(spec=discord.Guild)
+    mock_guild.get_member.return_value = mock_member
+    assert resolve_member_name(user_id, mock_guild) == "PJ_Lead"
+
+    # 2. Test get_project_tree_data with member_resolver
+    project = await proj_srv.create_project(guild_id=guild_id, name="Assignee Test", prefix="ASG")
+    await task_srv.create_task(
+        guild_id=guild_id,
+        title="Assigned Task",
+        creator_discord_id=1001,
+        assignee_discord_id=user_id,
+        project_id=project.id,
+    )
+
+    # Without resolver: defaults to "User <id>"
+    nodes_raw, _ = await task_srv.get_project_tree_data(guild_id, project.id)
+    assert nodes_raw[0]["assignee"] == f"User {user_id}"
+
+    # With resolver: resolves to human-readable username
+    nodes_resolved, _ = await task_srv.get_project_tree_data(guild_id, project.id, member_resolver=mock_guild)
+    assert nodes_resolved[0]["assignee"] == "PJ_Lead"
+
+    # Render tree with member_resolver
+    buf = await task_srv.render_project_tree(
+        guild_id=guild_id,
+        project_id=project.id,
+        orientation="lr",
+        member_resolver=mock_guild,
+    )
+    assert isinstance(buf, io.BytesIO)
+    img = Image.open(buf)
+    assert img.format == "PNG"

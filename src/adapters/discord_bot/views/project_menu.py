@@ -17,101 +17,257 @@ from src.services.team_service import TeamService
 logger = logging.getLogger("dgg_pm.views.project_menu")
 
 
-class ProjectCreateModal(discord.ui.Modal):
+def build_project_draft_embed(
+    name: str,
+    channel: discord.ForumChannel | discord.TextChannel | discord.Thread,
+    prefix: str | None = None,
+    description: str | None = None,
+    category: str | None = None,
+    role: discord.Role | None = None,
+    lead: discord.Member | discord.User | None = None,
+) -> discord.Embed:
+    """Builds a live preview embed of the project currently being configured in the builder."""
+    is_forum = isinstance(channel, discord.ForumChannel)
+    chan_type = "Forum Post Board" if is_forum else "Text Channel"
+    chan_name = getattr(channel, "name", str(getattr(channel, "id", "channel")))
+
+    role_display = f"<@&{role.id}>" if role else "⚠️ **Required** — *Select a Squad Role below*"
+    lead_display = f"<@{lead.id}>" if lead else "*Unassigned (Optional)*"
+    prefix_display = f"`{prefix}`" if prefix else "*Auto-generated*"
+    cat_display = category if category else "*None*"
+
+    embed = discord.Embed(
+        title=f"📁 Project Setup: {name[:90]}",
+        description=(
+            "Configure the contributor squad role and optional project lead using the pickers below, "
+            "then click **`🚀 Create Project`** to initialize.\n\n"
+            f"• **Bound Channel**: <#{channel.id}> (`#{chan_name}` • {chan_type})\n"
+            f"• **Key Prefix**: {prefix_display}\n"
+            f"• **Squad Role (Required)**: {role_display}\n"
+            f"• **Project Lead (Optional)**: {lead_display}\n"
+            f"• **Category**: {cat_display}"
+        ),
+        color=discord.Color.blurple(),
+    )
+    if description:
+        embed.add_field(
+            name="Description / Mission",
+            value=description[:1000] + ("..." if len(description) > 1000 else ""),
+            inline=False,
+        )
+    embed.set_footer(text="dgg-pm • Interactive Project Creation Builder")
+    return embed
+
+
+class ProjectCreateDraftView(discord.ui.View):
+    """Interactive multi-step Project Creation Builder (Role & Lead picker).
+
+    Allows users to select a required Squad Discord Role and an optional Project Lead
+    prior to creating the project container and binding the channel/forum.
+    """
+
     def __init__(
         self,
         project_service: ProjectService,
         channel: discord.ForumChannel | discord.TextChannel | discord.Thread,
+        name: str,
+        prefix: str | None = None,
+        description: str | None = None,
+        category: str | None = None,
+        role: discord.Role | None = None,
+        lead: discord.Member | discord.User | None = None,
         team_service: TeamService | None = None,
         task_service: TaskService | None = None,
         user_service: Any = None,
+        initial_interaction: discord.Interaction | None = None,
     ):
+        super().__init__(timeout=300)
         self.project_service = project_service
         self.channel = channel
+        self.name = name
+        self.prefix = prefix
+        self.description = description
+        self.category = category
+        self.role = role
+        self.lead = lead
         self.team_service = team_service
         self.task_service = task_service
         self.user_service = user_service
+        self._initial_interaction = initial_interaction
 
-        raw_name = getattr(channel, "name", None)
-        if isinstance(raw_name, str) and raw_name.strip():
-            chan_name = raw_name.strip()
-        elif hasattr(channel, "id"):
-            chan_name = str(channel.id)
-        else:
-            chan_name = "channel"
+        self._rebuild_items()
 
-        is_forum = isinstance(channel, discord.ForumChannel)
-        type_prefix = "Forum" if is_forum else "Channel"
+    async def on_timeout(self) -> None:
+        try:
+            if (
+                hasattr(self, "_initial_interaction")
+                and self._initial_interaction
+                and hasattr(self._initial_interaction, "delete_original_response")
+            ):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
 
-        # Max title length in Discord modal is 45 characters
-        title_str = f"New Project in #{chan_name}"
-        if len(title_str) > 45:
-            title_str = title_str[:42] + "..."
+    def _rebuild_items(self) -> None:
+        self.clear_items()
 
-        super().__init__(title=title_str)
-        self.project_service = project_service
-        self.channel = channel
-
-        name_label = f"Project Name ({type_prefix} #{chan_name})"
-        if len(name_label) > 45:
-            name_label = name_label[:42] + "..."
-
-        name_placeholder = f"e.g. Mobile Redesign (bound to #{chan_name})"
-        if len(name_placeholder) > 100:
-            name_placeholder = name_placeholder[:97] + "..."
-
-        self.name_input = discord.ui.TextInput(
-            label=name_label,
-            placeholder=name_placeholder,
-            required=True,
-            max_length=100,
+        # Row 0: Select Discord Role (Required)
+        self.role_select = discord.ui.RoleSelect(
+            placeholder="🎭 Select Squad Role (Required)...",
+            min_values=1,
+            max_values=1,
+            row=0,
         )
-        self.add_item(self.name_input)
+        self.role_select.callback = self._on_role_selected
+        self.add_item(self.role_select)
 
-        self.prefix_input = discord.ui.TextInput(
-            label="Key Prefix (Optional, 2-5 uppercase chars)",
-            placeholder="e.g. MOB, INF (Leave empty for auto-generated)",
-            required=False,
-            max_length=10,
+        # Row 1: Select Project Lead User (Optional)
+        self.lead_select = discord.ui.UserSelect(
+            placeholder="👑 Select Project Lead (Optional)...",
+            min_values=1,
+            max_values=1,
+            row=1,
         )
-        self.add_item(self.prefix_input)
+        self.lead_select.callback = self._on_lead_selected
+        self.add_item(self.lead_select)
 
-        self.desc_input = discord.ui.TextInput(
-            label="Description (Optional)",
-            style=discord.TextStyle.paragraph,
-            placeholder="Mission statement, architecture goals, or deliverables...",
-            required=False,
-            max_length=1000,
+        # Row 2: Action Buttons
+        self.create_btn = discord.ui.Button(
+            label="Create Project",
+            emoji="🚀",
+            style=discord.ButtonStyle.success,
+            row=2,
         )
-        self.add_item(self.desc_input)
+        self.create_btn.callback = self._on_confirm_clicked
+        self.add_item(self.create_btn)
 
-        self.cat_input = discord.ui.TextInput(
-            label="Category (Optional)",
-            placeholder="e.g. Engineering, Marketing, Operations",
-            required=False,
-            max_length=50,
+        if self.lead:
+            self.clear_lead_btn = discord.ui.Button(
+                label="Clear Lead",
+                emoji="👑",
+                style=discord.ButtonStyle.secondary,
+                row=2,
+            )
+            self.clear_lead_btn.callback = self._on_clear_lead_clicked
+            self.add_item(self.clear_lead_btn)
+
+        self.edit_btn = discord.ui.Button(
+            label="Edit Details",
+            emoji="✏️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
         )
-        self.add_item(self.cat_input)
+        self.edit_btn.callback = self._on_edit_details_clicked
+        self.add_item(self.edit_btn)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+        self.cancel_btn = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
+            style=discord.ButtonStyle.danger,
+            row=2,
+        )
+        self.cancel_btn.callback = self._on_cancel_clicked
+        self.add_item(self.cancel_btn)
+
+    async def _on_role_selected(self, interaction: discord.Interaction) -> None:
+        self.role = self.role_select.values[0]
+        self._rebuild_items()
+        embed = build_project_draft_embed(
+            name=self.name,
+            channel=self.channel,
+            prefix=self.prefix,
+            description=self.description,
+            category=self.category,
+            role=self.role,
+            lead=self.lead,
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_lead_selected(self, interaction: discord.Interaction) -> None:
+        self.lead = self.lead_select.values[0]
+        self._rebuild_items()
+        embed = build_project_draft_embed(
+            name=self.name,
+            channel=self.channel,
+            prefix=self.prefix,
+            description=self.description,
+            category=self.category,
+            role=self.role,
+            lead=self.lead,
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_clear_lead_clicked(self, interaction: discord.Interaction) -> None:
+        self.lead = None
+        self._rebuild_items()
+        embed = build_project_draft_embed(
+            name=self.name,
+            channel=self.channel,
+            prefix=self.prefix,
+            description=self.description,
+            category=self.category,
+            role=self.role,
+            lead=self.lead,
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_edit_details_clicked(self, interaction: discord.Interaction) -> None:
+        modal = ProjectCreateModal(
+            project_service=self.project_service,
+            channel=self.channel,
+            team_service=self.team_service,
+            task_service=self.task_service,
+            user_service=self.user_service,
+            draft_view=self,
+            initial_name=self.name,
+            initial_prefix=self.prefix or "",
+            initial_desc=self.description or "",
+            initial_cat=self.category or "",
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
+        try:
+            embed = discord.Embed(
+                title="🚫 Project Creation Cancelled",
+                description="Project draft was discarded.",
+                color=discord.Color.dark_grey(),
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
+        except Exception as e:
+            logger.debug("Error cancelling project draft: %s", e)
+
+    async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ This action must be run in a Discord server.", ephemeral=True)
             return
 
-        name = self.name_input.value.strip()
-        prefix = self.prefix_input.value.strip() or None
-        desc = self.desc_input.value.strip() or None
-        cat = self.cat_input.value.strip() or None
+        if not self.role:
+            await interaction.response.send_message(
+                "❌ **Squad Role Required**: Please select a contributor Discord role "
+                "from the dropdown before creating the project.",
+                ephemeral=True,
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
 
         try:
             project = await self.project_service.create_project(
                 guild_id=interaction.guild.id,
-                name=name,
-                prefix=prefix,
-                description=desc,
+                name=self.name,
+                prefix=self.prefix,
+                description=self.description,
                 discord_channel_id=self.channel.id,
-                category=cat,
+                discord_role_id=self.role.id,
+                lead_discord_id=self.lead.id if self.lead else None,
+                category=self.category,
             )
+
             is_forum = isinstance(self.channel, discord.ForumChannel)
             chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
             tag_note = ""
@@ -137,6 +293,9 @@ class ProjectCreateModal(discord.ui.Modal):
             if hub_ok:
                 tag_note += " • 📌 Pinned Control Hub created"
 
+            lead_str = f"<@{project.lead_discord_id}>" if project.lead_discord_id else "*Unassigned*"
+            role_str = f"<@&{project.discord_role_id}>" if project.discord_role_id else "*None*"
+
             embed = discord.Embed(
                 title=f"✅ Project Created: {project.name} (`{project.prefix}`)",
                 description=project.description or "No description provided.",
@@ -145,17 +304,166 @@ class ProjectCreateModal(discord.ui.Modal):
             embed.add_field(
                 name="Bound Channel",
                 value=f"<#{project.discord_channel_id}> ({chan_type_label}{tag_note})",
-                inline=True,
+                inline=False,
             )
+            embed.add_field(name="Squad Role", value=role_str, inline=True)
+            embed.add_field(name="Project Lead", value=lead_str, inline=True)
             if project.category:
                 embed.add_field(name="Category", value=project.category, inline=True)
             embed.set_footer(text=f"Project ID: {project.id}")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+            await interaction.response.edit_message(embed=embed, view=None)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
-            await send_interaction_error(interaction, e, f"creating project '{name}'", logger, ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating project '{self.name}'", logger, ephemeral=True)
+
+
+class ProjectCreateModal(discord.ui.Modal):
+    def __init__(
+        self,
+        project_service: ProjectService,
+        channel: discord.ForumChannel | discord.TextChannel | discord.Thread,
+        team_service: TeamService | None = None,
+        task_service: TaskService | None = None,
+        user_service: Any = None,
+        draft_view: ProjectCreateDraftView | None = None,
+        initial_name: str = "",
+        initial_prefix: str = "",
+        initial_desc: str = "",
+        initial_cat: str = "",
+    ):
+        self.project_service = project_service
+        self.channel = channel
+        self.team_service = team_service
+        self.task_service = task_service
+        self.user_service = user_service
+        self.draft_view = draft_view
+
+        raw_name = getattr(channel, "name", None)
+        if isinstance(raw_name, str) and raw_name.strip():
+            chan_name = raw_name.strip()
+        elif hasattr(channel, "id"):
+            chan_name = str(channel.id)
+        else:
+            chan_name = "channel"
+
+        is_forum = isinstance(channel, discord.ForumChannel)
+        type_prefix = "Forum" if is_forum else "Channel"
+
+        if draft_view:
+            title_str = "Edit Project Details"
+        else:
+            title_str = f"New Project in #{chan_name}"
+
+        # Max title length in Discord modal is 45 characters
+        if len(title_str) > 45:
+            title_str = title_str[:42] + "..."
+
+        super().__init__(title=title_str)
+
+        name_label = f"Project Name ({type_prefix} #{chan_name})"
+        if len(name_label) > 45:
+            name_label = name_label[:42] + "..."
+
+        name_placeholder = f"e.g. Mobile Redesign (bound to #{chan_name})"
+        if len(name_placeholder) > 100:
+            name_placeholder = name_placeholder[:97] + "..."
+
+        self.name_input = discord.ui.TextInput(
+            label=name_label,
+            placeholder=name_placeholder,
+            default=initial_name,
+            required=True,
+            max_length=100,
+        )
+        self.add_item(self.name_input)
+
+        self.prefix_input = discord.ui.TextInput(
+            label="Key Prefix (Optional, 2-5 uppercase chars)",
+            placeholder="e.g. MOB, INF (Leave empty for auto-generated)",
+            default=initial_prefix,
+            required=False,
+            max_length=10,
+        )
+        self.add_item(self.prefix_input)
+
+        self.desc_input = discord.ui.TextInput(
+            label="Description (Optional)",
+            style=discord.TextStyle.paragraph,
+            placeholder="Mission statement, architecture goals, or deliverables...",
+            default=initial_desc,
+            required=False,
+            max_length=1000,
+        )
+        self.add_item(self.desc_input)
+
+        self.cat_input = discord.ui.TextInput(
+            label="Category (Optional)",
+            placeholder="e.g. Engineering, Marketing, Operations",
+            default=initial_cat,
+            required=False,
+            max_length=50,
+        )
+        self.add_item(self.cat_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This action must be run in a Discord server.", ephemeral=True)
+            return
+
+        name = self.name_input.value.strip()
+        if not name:
+            await interaction.response.send_message("❌ Project name cannot be empty.", ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
+
+        prefix = self.prefix_input.value.strip() or None
+        desc = self.desc_input.value.strip() or None
+        cat = self.cat_input.value.strip() or None
+
+        if self.draft_view:
+            self.draft_view.name = name
+            self.draft_view.prefix = prefix
+            self.draft_view.description = desc
+            self.draft_view.category = cat
+            self.draft_view._rebuild_items()
+            embed = build_project_draft_embed(
+                name=name,
+                channel=self.channel,
+                prefix=prefix,
+                description=desc,
+                category=cat,
+                role=self.draft_view.role,
+                lead=self.draft_view.lead,
+            )
+            await interaction.response.edit_message(embed=embed, view=self.draft_view)
+        else:
+            draft_view = ProjectCreateDraftView(
+                project_service=self.project_service,
+                channel=self.channel,
+                name=name,
+                prefix=prefix,
+                description=desc,
+                category=cat,
+                team_service=self.team_service,
+                task_service=self.task_service,
+                user_service=self.user_service,
+                initial_interaction=interaction,
+            )
+            embed = build_project_draft_embed(
+                name=name,
+                channel=self.channel,
+                prefix=prefix,
+                description=desc,
+                category=cat,
+                role=None,
+                lead=None,
+            )
+            await interaction.response.send_message(embed=embed, view=draft_view, ephemeral=True)
 
 
 class ProjectChannelSelectView(discord.ui.View):
@@ -1883,6 +2191,7 @@ class ProjectMenuView(discord.ui.View):
                 guild_id=interaction.guild.id,
                 project_id=projects[0].id,
                 orientation="lr",
+                member_resolver=interaction.guild,
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(

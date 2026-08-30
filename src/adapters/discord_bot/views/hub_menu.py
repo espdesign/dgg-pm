@@ -546,6 +546,7 @@ class PmHubView(discord.ui.View):
                 guild_id=interaction.guild.id,
                 project_id=target_project.id,
                 orientation="lr",
+                member_resolver=interaction.guild,
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(

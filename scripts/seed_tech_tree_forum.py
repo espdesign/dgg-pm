@@ -413,7 +413,7 @@ async def seed_discord_forum(
 
     # 4. Generate Tech-Tree PNG Buffer & Pinned Hub Post
     logger.info("Rendering Civilization-style Tech Tree PNG graphic...")
-    tree_buf = await task_service.render_project_tree(guild_id, project.id, orientation="lr")
+    tree_buf = await task_service.render_project_tree(guild_id, project.id, orientation="lr", member_resolver=guild)
 
     # Check if a pinned control center thread already exists
     active_threads = await forum_channel.active_threads()

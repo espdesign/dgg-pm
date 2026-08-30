@@ -978,6 +978,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 guild_id=interaction.guild.id,
                 project_id=project.id,
                 orientation=orient_val,
+                member_resolver=interaction.guild,
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             orient_label = "Horizontal (Left to Right)" if orient_val == "lr" else "Vertical (Top to Bottom)"
@@ -1450,6 +1451,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 guild_id=interaction.guild.id,
                 project_id=project.id,
                 orientation=orient_val,
+                member_resolver=interaction.guild,
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             orient_label = "Horizontal (Left to Right)" if orient_val == "lr" else "Vertical (Top to Bottom)"

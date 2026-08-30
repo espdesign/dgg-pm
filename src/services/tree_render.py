@@ -556,7 +556,10 @@ def render_tree(
         # Assignee label
         assignee = n.get("assignee")
         if assignee:
-            assignee_label = f"Assignee: {assignee[:14]}"
+            assignee_str = str(assignee)
+            if len(assignee_str) > 16:
+                assignee_str = assignee_str[:14] + "…"
+            assignee_label = f"Assignee: {assignee_str}"
             draw.text((x0 + 16, bottom_y), assignee_label, font=F_PILL, fill="#cbd5e1")
         else:
             draw.text((x0 + 16, bottom_y), "Unassigned", font=F_PILL, fill="#64748b")

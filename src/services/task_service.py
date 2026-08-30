@@ -65,7 +65,56 @@ def _detect_cycle(edges: list[tuple[UUID, UUID]], new_edge: tuple[UUID, UUID]) -
         if curr not in visited:
             visited.add(curr)
             queue.extend(adj.get(curr, []))
-    return False
+
+
+def resolve_member_name(user_id: int | None, resolver: Any = None) -> str | None:
+    """Resolves a Discord user ID to a human-readable display name or username."""
+    if not user_id or resolver is None:
+        return None
+
+    # 1. Dictionary mapping: {user_id: name}
+    if isinstance(resolver, dict):
+        val = resolver.get(user_id)
+        if val:
+            return str(val)
+
+    # 2. Discord Guild object (has get_member)
+    if hasattr(resolver, "get_member") and not isinstance(resolver, type):
+        try:
+            member = resolver.get_member(user_id)
+            if member:
+                name = getattr(member, "display_name", None) or getattr(member, "name", None)
+                if isinstance(name, str):
+                    return name
+                elif name and not isinstance(name, type) and hasattr(name, "__str__"):
+                    return str(name)
+        except Exception:
+            pass
+
+    # 3. Discord Bot / Client object (has get_user)
+    client = getattr(resolver, "client", None) if not hasattr(resolver, "get_user") else resolver
+    if client and hasattr(client, "get_user") and not isinstance(client, type):
+        try:
+            user = client.get_user(user_id)
+            if user:
+                name = getattr(user, "display_name", None) or getattr(user, "name", None)
+                if isinstance(name, str):
+                    return name
+                elif name and not isinstance(name, type) and hasattr(name, "__str__"):
+                    return str(name)
+        except Exception:
+            pass
+
+    # 4. Custom Callable: fn(user_id) -> str
+    if callable(resolver):
+        try:
+            val = resolver(user_id)
+            if val:
+                return str(val)
+        except Exception:
+            pass
+
+    return None
 
 
 class TaskService:
@@ -670,7 +719,10 @@ class TaskService:
         return prereqs, dependents
 
     async def get_project_tree_data(
-        self, guild_id: int, project_id: UUID
+        self,
+        guild_id: int,
+        project_id: UUID,
+        member_resolver: Any = None,
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         tasks, _ = await self.task_repo.list_tasks(
             guild_id=guild_id,
@@ -709,6 +761,12 @@ class TaskService:
             else:
                 state = "available"
 
+            assignee_name = None
+            if t.assignee_discord_id:
+                assignee_name = resolve_member_name(t.assignee_discord_id, member_resolver)
+                if not assignee_name:
+                    assignee_name = f"User {t.assignee_discord_id}"
+
             nodes.append(
                 {
                     "key": t.short_id,
@@ -716,15 +774,21 @@ class TaskService:
                     "name": t.title,
                     "description": t.body or "",
                     "state": state,
-                    "assignee": str(t.assignee_discord_id) if t.assignee_discord_id else None,
+                    "assignee": assignee_name,
                     "priority": t.priority.value,
                 }
             )
 
         return nodes, edges
 
-    async def render_project_tree(self, guild_id: int, project_id: UUID, orientation: str = "lr") -> io.BytesIO:
+    async def render_project_tree(
+        self,
+        guild_id: int,
+        project_id: UUID,
+        orientation: str = "lr",
+        member_resolver: Any = None,
+    ) -> io.BytesIO:
         project = await self.project_service.get_by_id(project_id)
         project_name = project.name if project else "Project Tech Tree"
-        nodes, edges = await self.get_project_tree_data(guild_id, project_id)
+        nodes, edges = await self.get_project_tree_data(guild_id, project_id, member_resolver=member_resolver)
         return render_tree(nodes, edges, title=f"Tech Tree: {project_name}", mode=orientation)
