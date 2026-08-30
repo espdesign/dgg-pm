@@ -851,6 +851,23 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                 await sess.flush()
             return res.rowcount or 0
 
+    async def reclaim_stale_processing(self) -> int:
+        """Resets PROCESSING events back to PENDING (crash/stall recovery).
+
+        Events are marked PROCESSING before dispatch and committed, so a hard crash
+        between fetch and mark_processed strands them forever. On worker startup (or
+        after a stall) we reclaim them so they get redelivered.
+        """
+        async with self._get_session() as session:
+            stmt = (
+                update(OutboxEventTable)
+                .where(OutboxEventTable.status == OutboxStatus.PROCESSING.value)
+                .values(status=OutboxStatus.PENDING.value)
+            )
+            res = await session.execute(stmt)
+            await session.commit()
+            return res.rowcount or 0
+
 
 class PostgresUserPreferenceRepo(BasePostgresRepo, IUserPreferenceRepo):
     async def get_preference(self, guild_id: int, user_discord_id: int) -> UserPreference | None:

@@ -28,6 +28,16 @@ class OutboxWorker:
         """Starts the worker loop."""
         self._running = True
         self._stop_event.clear()
+
+        # Crash recovery: events marked PROCESSING before a previous crash/restart
+        # are stranded forever otherwise. Reclaim them so they get redelivered.
+        try:
+            reclaimed = await self.outbox_repo.reclaim_stale_processing()
+            if reclaimed:
+                logger.warning("Reclaimed %d stale PROCESSING outbox event(s) from previous run.", reclaimed)
+        except Exception as e:
+            logger.warning("Could not reclaim stale PROCESSING outbox events on startup: %s", e)
+
         logger.info("Outbox worker started. Polling interval: %ss, batch size: %s", self.poll_interval, self.batch_size)
 
         while self._running:
@@ -80,19 +90,25 @@ class OutboxWorker:
             now = datetime.now(UTC)
             if is_429:
                 delay = float(retry_after) if retry_after else 5.0
+                new_retry = event.retry_count + 1
+                max_retries = 5
+                failed = new_retry >= max_retries
                 logger.warning(
-                    "Discord 429 rate limit hit for event %s. Backing off for %.2fs",
+                    "Discord 429 rate limit hit for event %s (attempt %d/%d). Backing off for %.2fs",
                     event.id,
+                    new_retry,
+                    max_retries,
                     delay,
                 )
                 next_time = now + timedelta(seconds=delay)
                 await self.outbox_repo.reschedule_or_fail(
                     event.id,
-                    retry_count=event.retry_count,
+                    retry_count=new_retry,
                     next_scheduled_for=next_time,
-                    failed=False,
+                    failed=failed,
                 )
-                await asyncio.sleep(delay)
+                if not failed:
+                    await asyncio.sleep(delay)
             else:
                 new_retry = event.retry_count + 1
                 max_retries = 5

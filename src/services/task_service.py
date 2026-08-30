@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -76,10 +77,11 @@ class TaskService:
                     resolved_project_id, session=session
                 )
             else:
-                import random
-
-                task_number = random.randint(100, 99999)
-                short_id = f"TASK-{task_number}"
+                # Standalone task: use a randomly generated collision-resistant ID.
+                # token_hex(5) gives ~1.1e12 combinations, making unique-constraint
+                # collisions (guild_id, short_id) practically impossible.
+                task_number = 1
+                short_id = f"TASK-{secrets.token_hex(5).upper()}"
 
             task = Task(
                 id=uuid4(),

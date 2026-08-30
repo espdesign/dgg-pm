@@ -29,5 +29,9 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     DEBUG: bool = False
 
+    # If set, /metrics requires `Authorization: Bearer <API_METRICS_TOKEN>`.
+    # When empty, /metrics is left open for local/dev use.
+    API_METRICS_TOKEN: str = ""
+
 
 settings = Settings()

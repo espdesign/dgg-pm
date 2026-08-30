@@ -79,6 +79,31 @@ async def test_task_creation_and_short_id(services):
 
 
 @pytest.mark.asyncio
+async def test_standalone_task_short_ids_are_collision_safe(services, repos):
+    task_srv = services["task"]
+    task_repo = repos["task"]
+    guild_id = 666666666666666666
+
+    # Create several standalone tasks; short IDs must be distinct (no random collision) and unique per guild
+    seen: set[str] = set()
+    for _ in range(10):
+        t = await task_srv.create_task(
+            guild_id=guild_id,
+            title=f"Standalone capture {_}",
+            creator_discord_id=1001,
+            project_id=None,
+        )
+        assert t.short_id.startswith("TASK-")
+        assert len(t.short_id) <= 20  # fits the DB column
+        assert t.short_id not in seen
+        seen.add(t.short_id)
+
+        # Fetching back by short_id finds the same task
+        fetched = await task_repo.get_by_short_id(guild_id, t.short_id)
+        assert fetched is not None and fetched.id == t.id
+
+
+@pytest.mark.asyncio
 async def test_task_status_lifecycle_and_cas_concurrency(services):
     proj_srv = services["project"]
     task_srv = services["task"]

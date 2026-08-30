@@ -176,6 +176,7 @@ async def test_task_action_view_and_modals(services):
     )
 
     unassign_interaction = MagicMock(spec=discord.Interaction)
+    unassign_interaction.guild_id = guild_id
     unassign_interaction.user = MagicMock()
     unassign_interaction.user.id = 1002
     unassign_interaction.response = MagicMock()
@@ -190,6 +191,7 @@ async def test_task_action_view_and_modals(services):
 
     # 3. Test priority select via dynamic dispatcher
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild_id = guild_id
     mock_interaction.user = MagicMock()
     mock_interaction.user.id = 1002
     mock_interaction.data = {"values": ["high"]}
@@ -205,6 +207,7 @@ async def test_task_action_view_and_modals(services):
 
     # 4. Test due date preset select via dynamic dispatcher
     due_interaction = MagicMock(spec=discord.Interaction)
+    due_interaction.guild_id = guild_id
     due_interaction.user = MagicMock()
     due_interaction.user.id = 1002
     due_interaction.data = {"values": ["3days"]}
@@ -220,6 +223,7 @@ async def test_task_action_view_and_modals(services):
 
     # 5. Test watchers multi-select via dynamic dispatcher
     watchers_interaction = MagicMock(spec=discord.Interaction)
+    watchers_interaction.guild_id = guild_id
     watchers_interaction.user = MagicMock()
     watchers_interaction.user.id = 1002
     watchers_interaction.data = {"values": ["2001", "2002"]}
@@ -256,6 +260,86 @@ async def test_task_action_view_and_modals(services):
     assert updated.body == "Comprehensive review of all WAF rules"
     assert updated.due_at is not None
     assert set(updated.watchers) == {1001, 1003}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_task_button_rejects_cross_guild(services):
+    """Buttons must not act on tasks that don't belong to the interaction's guild."""
+    from src.adapters.discord_bot.bot import DggPmBot
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 1000000001
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Trusted Server", prefix="TRU")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Secret Task",
+        creator_discord_id=1001,
+        project_id=project.id,
+    )
+
+    bot = DggPmBot(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=services["team"],
+    )
+
+    # Interaction from a DIFFERENT guild attempting to act on the task
+    foreign_interaction = MagicMock(spec=discord.Interaction)
+    foreign_interaction.guild_id = 8888888888
+    foreign_interaction.user = MagicMock()
+    foreign_interaction.user.id = 9999
+    foreign_interaction.response = MagicMock()
+    foreign_interaction.response.is_done.return_value = False
+    foreign_interaction.response.send_message = AsyncMock()
+
+    await bot._handle_dynamic_task_button(foreign_interaction, "note", task.id)
+
+    foreign_interaction.response.send_message.assert_awaited_once()
+    error_msg = foreign_interaction.response.send_message.await_args.args[0]
+    assert "does not belong to this server" in error_msg
+
+    # Task unchanged
+    refreshed = await task_srv.get_by_id(task.id)
+    assert refreshed.title == "Secret Task"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_task_button_same_guild_note_modal(services):
+    """A note button from the correct guild should open the note modal."""
+    from src.adapters.discord_bot.bot import DggPmBot
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 1000000002
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Local Server", prefix="LOC")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Local Task",
+        creator_discord_id=1001,
+        project_id=project.id,
+    )
+
+    bot = DggPmBot(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=services["team"],
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild_id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.id = 1002
+    interaction.response = MagicMock()
+    interaction.response.is_done.return_value = False
+    interaction.response.send_modal = AsyncMock()
+
+    await bot._handle_dynamic_task_button(interaction, "note", task.id)
+
+    interaction.response.send_modal.assert_awaited_once()
+    interaction.response.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -74,7 +74,6 @@ async def test_outbox_worker_batch_processing(services, repos, db_session):
     outbox_repo = repos["outbox"]
     mock_notifier = MockNotifier()
 
-    # Enqueue past-due pending event
     await outbox_srv.enqueue_event(
         event_type=EventType.TASK_CREATED,
         idempotency_key="test_key_1",
@@ -117,6 +116,106 @@ async def test_outbox_worker_429_rate_limit_backoff(services, repos):
     await worker.process_batch()
 
     assert evt is not None
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker_429_retries_are_capped(services, repos, db_session):
+    """A permanently rate-limited event must be marked FAILED after max 429 retries, not loop forever."""
+    outbox_srv = services["outbox"]
+    outbox_repo = repos["outbox"]
+
+    class RateLimitedNotifier(INotificationDispatcher):
+        async def dispatch_event(self, event):
+            exc = Exception("Discord rate limit")
+            exc.status = 429
+            exc.retry_after = 0.1
+            raise exc
+
+    await outbox_srv.enqueue_event(
+        event_type=EventType.TASK_CREATED,
+        idempotency_key="test_rate_limited_capped",
+        payload={"msg": "Burst"},
+        scheduled_for=datetime.now(UTC),
+    )
+
+    worker = OutboxWorker(outbox_repo=outbox_repo, notifier=RateLimitedNotifier(), poll_interval=1.0)
+
+    pending = await outbox_repo.fetch_pending_batch(limit=10)
+    domain_evt = next(e for e in pending if e.idempotency_key == "test_rate_limited_capped")
+    domain_evt.retry_count = 4  # Next 429 -> attempt 5/5 -> FAILED
+
+    await worker._process_single_event(domain_evt)
+
+    db_session.expire_all()
+    stmt = select(OutboxEventTable).where(OutboxEventTable.idempotency_key == "test_rate_limited_capped")
+    row = (await db_session.execute(stmt)).scalar_one()
+    assert row.status == OutboxStatus.FAILED.value
+    assert row.retry_count == 5
+
+
+@pytest.mark.asyncio
+async def test_reclaim_stale_processing_restores_pending(services, repos, db_session):
+    """Events stranded in PROCESSING (e.g. after a crash between fetch and mark_processed) must be reclaimed."""
+    outbox_srv = services["outbox"]
+    outbox_repo = repos["outbox"]
+
+    await outbox_srv.enqueue_event(
+        event_type=EventType.TASK_CREATED,
+        idempotency_key="stale_processing_key",
+        payload={"msg": "stale"},
+        scheduled_for=datetime.now(UTC),
+    )
+
+    # Fetching marks the event PROCESSING without dispatching it (simulates crash/stall)
+    pending = await outbox_repo.fetch_pending_batch(limit=10)
+    assert len(pending) == 1
+
+    db_session.expire_all()
+    stmt = select(OutboxEventTable).where(OutboxEventTable.idempotency_key == "stale_processing_key")
+    row = (await db_session.execute(stmt)).scalar_one()
+    assert row.status == OutboxStatus.PROCESSING.value
+
+    reclaimed = await outbox_repo.reclaim_stale_processing()
+    assert reclaimed == 1
+
+    db_session.expire_all()
+    row = (await db_session.execute(stmt)).scalar_one()
+    assert row.status == OutboxStatus.PENDING.value
+
+    # A second reclaim (nothing processing) is a no-op
+    assert await outbox_repo.reclaim_stale_processing() == 0
+
+    # The reclaimed event is now eligible for dispatch again
+    redispatched = await outbox_repo.fetch_pending_batch(limit=10)
+    assert any(e.idempotency_key == "stale_processing_key" for e in redispatched)
+
+
+@pytest.mark.asyncio
+async def test_outbox_worker_start_reclaims_and_dispatches_stranded_events(services, repos):
+    """Worker start() must reclaim PROCESSING events from a previous crashed run and deliver them."""
+    import asyncio
+
+    outbox_srv = services["outbox"]
+    outbox_repo = repos["outbox"]
+    mock_notifier = MockNotifier()
+
+    await outbox_srv.enqueue_event(
+        event_type=EventType.TASK_CREATED,
+        idempotency_key="start_delivery_key",
+        payload={"msg": "stranded from crash"},
+        scheduled_for=datetime.now(UTC),
+    )
+
+    # Simulate a process crash: fetch marks the event PROCESSING, then "crashes" before dispatch.
+    await outbox_repo.fetch_pending_batch(limit=10)
+
+    worker = OutboxWorker(outbox_repo=outbox_repo, notifier=mock_notifier, poll_interval=0.05)
+    task = asyncio.create_task(worker.start())
+    await asyncio.sleep(0.2)
+    worker.stop()
+    await task
+
+    assert any(e.idempotency_key == "start_delivery_key" for e in mock_notifier.dispatched)
 
 
 @pytest.mark.asyncio

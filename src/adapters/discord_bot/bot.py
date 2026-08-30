@@ -189,26 +189,6 @@ class DggPmBot(commands.Bot):
         except Exception as e:
             logger.warning("Failed to sync thread state for task %s (%s): %s", task.short_id, task.discord_thread_id, e)
 
-    async def _handle_dynamic_task_button(
-        self,
-        interaction: discord.Interaction,
-        action: str,
-        task_id: UUID,
-    ) -> None:
-        if interaction.response.is_done():
-            return
-
-        task = await self.task_service.get_by_id(task_id)
-        if not task:
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Task not found in database.", ephemeral=True)
-            return
-
-        if action == "note":
-            modal = TaskNoteModal(task_id=task_id, short_id=task.short_id, task_service=self.task_service)
-            await interaction.response.send_modal(modal)
-            return
-
     async def _update_interaction_view(
         self,
         interaction: discord.Interaction,
@@ -252,6 +232,13 @@ class DggPmBot(commands.Bot):
         if not task:
             if not interaction.response.is_done():
                 await interaction.response.send_message("❌ Task not found in database.", ephemeral=True)
+            return
+
+        # Prevent cross-guild access: only allow acting on tasks that belong to the
+        # guild the interaction occurred in (if it occurred in a guild at all).
+        if interaction.guild_id is not None and task.guild_id != interaction.guild_id:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ This task does not belong to this server.", ephemeral=True)
             return
 
         if action == "note":

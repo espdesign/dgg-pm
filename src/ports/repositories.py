@@ -194,8 +194,12 @@ class IOutboxRepo(ABC):
         """Updates an event with new scheduled time or FAILED status on rate limits/errors."""
 
     @abstractmethod
-    async def cancel_task_reminders(self, task_id: UUID, session: Any | None = None) -> int:
+    async def cancel_task_reminders(self, task_id: UUID) -> int:
         """Cancels all pending reminder events for a task."""
+
+    @abstractmethod
+    async def reclaim_stale_processing(self) -> int:
+        """Resets stuck PROCESSING events back to PENDING so they can be redelivered (crash recovery)."""
 
 
 class IUserPreferenceRepo(ABC):

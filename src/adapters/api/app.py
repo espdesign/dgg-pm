@@ -1,14 +1,28 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 
 from src.adapters.db.session import get_session
 from src.adapters.db.tables import OutboxEventTable, ProjectTable, TaskTable
+from src.config import settings
 
 api_app = FastAPI(
     title="dgg-pm Service API",
     description="Health and metrics service for Discord-Native Task Management Platform",
     version="0.1.0",
 )
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def require_metrics_permission(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> None:
+    """Optionally guards /metrics behind a bearer token when API_METRICS_TOKEN is set."""
+    if not settings.API_METRICS_TOKEN:
+        return
+    if credentials is None or credentials.credentials != settings.API_METRICS_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
 
 
 @api_app.get("/healthz")
@@ -23,7 +37,7 @@ async def health_check() -> dict:
         raise HTTPException(status_code=503, detail=f"Database connectivity check failed: {e}") from e
 
 
-@api_app.get("/metrics")
+@api_app.get("/metrics", dependencies=[Depends(require_metrics_permission)])
 async def metrics() -> dict:
     """Basic platform operational metrics."""
     try:
