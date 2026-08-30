@@ -357,6 +357,7 @@ class TaskMenuView(discord.ui.View):
         search_query: str = "",
         auth_service: AuthService | None = None,
         initial_interaction: discord.Interaction | None = None,
+        can_create_standalone: bool | None = None,
     ):
         super().__init__(timeout=180)
         self.task_service = task_service
@@ -370,6 +371,13 @@ class TaskMenuView(discord.ui.View):
         self.status_filter_value: str = "active"
         self.auth_service = auth_service or (AuthService(project_service, team_service) if team_service else None)
         self._initial_interaction = initial_interaction
+
+        if can_create_standalone is not None:
+            self.can_create_standalone = can_create_standalone
+        elif initial_interaction and initial_interaction.user:
+            self.can_create_standalone = AuthService.is_server_manager(initial_interaction.user)
+        else:
+            self.can_create_standalone = True
 
         # Determine channel-bound projects
         channel_ids = {cid for cid in (self.current_channel_id, self.parent_channel_id) if cid}
@@ -419,14 +427,15 @@ class TaskMenuView(discord.ui.View):
         self.new_task_btn.callback = self._on_new_task_clicked
         self.add_item(self.new_task_btn)
 
-        self.standalone_btn = discord.ui.Button(
-            label="Standalone Task",
-            emoji="📌",
-            style=discord.ButtonStyle.secondary,
-            row=0,
-        )
-        self.standalone_btn.callback = self._on_standalone_clicked
-        self.add_item(self.standalone_btn)
+        if self.can_create_standalone:
+            self.standalone_btn = discord.ui.Button(
+                label="Standalone Task",
+                emoji="📌",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            self.standalone_btn.callback = self._on_standalone_clicked
+            self.add_item(self.standalone_btn)
 
         self.search_scope_btn = discord.ui.Button(
             label="Search Scope",
@@ -591,6 +600,19 @@ class TaskMenuView(discord.ui.View):
                 project = await self.project_service.get_by_id(self.selected_project_id)
 
             if project:
+                # Check permission
+                if self.auth_service and not await self.auth_service.can_create_task_in_project(
+                    interaction.user, project.id
+                ):
+                    await interaction.response.send_message(
+                        f"❌ You do not have permission to create tasks in project **{project.name}**.",
+                        ephemeral=True,
+                    )
+                    from src.adapters.discord_bot.menu_manager import menu_manager
+
+                    menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+                    return
+
                 target_channel = None
                 if project.discord_channel_id and interaction.guild:
                     target_channel = interaction.guild.get_channel(project.discord_channel_id)
@@ -610,9 +632,25 @@ class TaskMenuView(discord.ui.View):
         if not self.projects:
             self.projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
 
-        if not self.projects:
+        allowed_projects = []
+        for p in self.projects:
+            if not self.auth_service or await self.auth_service.can_create_task_in_project(interaction.user, p.id):
+                allowed_projects.append(p)
+
+        if not allowed_projects:
+            if self.auth_service and await self.auth_service.can_create_task_in_project(interaction.user, None):
+                modal = TaskCreateModal(
+                    self.task_service,
+                    project=None,
+                    target_channel=interaction.channel,
+                    auth_service=self.auth_service,
+                )
+                await interaction.response.send_modal(modal)
+                return
+
             await interaction.response.send_message(
-                "📁 No active projects found. Use **Standalone Task** or create a project first!",
+                "❌ You do not have permission to create tasks in any active projects. "
+                "Contact a Project Lead or server manager to be added to a project squad.",
                 ephemeral=True,
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -621,7 +659,7 @@ class TaskMenuView(discord.ui.View):
             return
 
         view = TaskSelectProjectView(
-            self.projects,
+            allowed_projects,
             self.task_service,
             self.project_service,
             self.team_service,
@@ -642,6 +680,17 @@ class TaskMenuView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def _on_standalone_clicked(self, interaction: discord.Interaction) -> None:
+        if self.auth_service and not await self.auth_service.can_create_task_in_project(interaction.user, None):
+            await interaction.response.send_message(
+                "❌ Only Server Managers and Team Leads can create standalone tasks. "
+                "Please create a task inside an active project container.",
+                ephemeral=True,
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
+
         modal = TaskCreateModal(
             self.task_service,
             project=None,

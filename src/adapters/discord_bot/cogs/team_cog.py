@@ -304,9 +304,26 @@ class TeamCog(commands.Cog):
         try:
             from src.adapters.discord_bot.menu_manager import menu_manager
             from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
+            from src.services.auth_service import AuthService
 
-            embed = build_team_menu_embed()
-            view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+            is_manager = AuthService.is_server_manager(interaction.user)
+            can_assign = is_manager
+            if not is_manager and interaction.guild:
+                teams = await self.team_service.list_teams(interaction.guild.id)
+                for t in teams:
+                    if await self.team_service.is_team_lead(t.id, interaction.user.id):
+                        can_assign = True
+                        break
+
+            view = TeamMenuView(
+                self.team_service,
+                self.project_service,
+                self.task_service,
+                initial_interaction=interaction,
+                can_create_teams=is_manager,
+                can_assign_members=can_assign,
+            )
+            embed = build_team_menu_embed(can_create_teams=is_manager, can_assign_members=can_assign)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             await menu_manager.register_menu(interaction)
         except Exception as e:

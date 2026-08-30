@@ -17,10 +17,12 @@ def _make_mock_member(
     role_ids: list[int] | None = None,
     manage_guild: bool = False,
     administrator: bool = False,
+    is_admin: bool = False,
 ) -> MagicMock:
     """Helper to create a discord.Member mock with permissions and roles."""
     member = MagicMock(spec=discord.Member)
     member.id = user_id
+    member.guild = None
 
     # Roles
     role_mocks = []
@@ -33,7 +35,7 @@ def _make_mock_member(
     # Permissions
     perms = MagicMock()
     perms.manage_guild = manage_guild
-    perms.administrator = administrator
+    perms.administrator = administrator or is_admin
     member.guild_permissions = perms
 
     return member
@@ -655,3 +657,282 @@ async def test_project_lead_authorization(services):
     assert await auth_srv.can_mutate_task(contributor_member, task) is True
     # Outsider cannot mutate task
     assert await auth_srv.can_mutate_task(outsider_member, task) is False
+
+
+@pytest.mark.asyncio
+async def test_permission_aware_project_menu_ui(services):
+    """Test that ProjectMenuView dynamic elements show/hide based on server manager permission."""
+    from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+
+    # 1. Server Manager view
+    manager_member = _make_mock_member(1001, manage_guild=True)
+    manager_view = ProjectMenuView(proj_srv, team_srv, task_srv, user=manager_member)
+    assert manager_view.is_server_manager is True
+    assert len(manager_view.children) == 7
+    assert manager_view.new_project_btn is not None
+    assert manager_view.set_role_btn is not None
+    assert manager_view.set_lead_btn is not None
+    assert manager_view.archive_btn is not None
+    assert manager_view.restore_btn is not None
+    assert manager_view.list_projects_btn is not None
+    assert manager_view.hub_btn is not None
+
+    manager_embed = build_project_menu_embed(is_server_manager=True)
+    assert "New Project" in manager_embed.description
+    assert "Set Squad Role" in manager_embed.description
+    assert "Archive Project" in manager_embed.description
+
+    # 2. Non-server Manager view
+    regular_member = _make_mock_member(2002, manage_guild=False, administrator=False)
+    regular_view = ProjectMenuView(proj_srv, team_srv, task_srv, user=regular_member)
+    assert regular_view.is_server_manager is False
+    assert len(regular_view.children) == 2  # Active Projects and PM Main Menu
+    assert regular_view.new_project_btn is None
+    assert regular_view.set_role_btn is None
+    assert regular_view.set_lead_btn is None
+    assert regular_view.archive_btn is None
+    assert regular_view.restore_btn is None
+    assert regular_view.list_projects_btn is not None
+    assert regular_view.hub_btn is not None
+
+    regular_embed = build_project_menu_embed(is_server_manager=False)
+    assert "Active Projects" in regular_embed.description
+    assert "New Project" not in regular_embed.description
+    assert "Set Squad Role" not in regular_embed.description
+    assert "Archive Project" not in regular_embed.description
+
+
+@pytest.mark.asyncio
+async def test_permission_aware_team_menu_ui(services):
+    """Test that TeamMenuView dynamic buttons adapt based on manager/lead permissions."""
+    from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
+
+    team_srv = services["team"]
+    proj_srv = services["project"]
+    task_srv = services["task"]
+
+    # 1. Server Manager (can create teams, can assign members)
+    manager_view = TeamMenuView(
+        team_srv,
+        proj_srv,
+        task_srv,
+        can_create_teams=True,
+        can_assign_members=True,
+    )
+    assert len(manager_view.children) == 4
+    assert manager_view.create_team_btn is not None
+    assert manager_view.assign_member_btn is not None
+    assert manager_view.list_teams_btn is not None
+    assert manager_view.hub_btn is not None
+
+    manager_embed = build_team_menu_embed(can_create_teams=True, can_assign_members=True)
+    assert "Create Team" in manager_embed.description
+    assert "Assign Member" in manager_embed.description
+    assert "Team Roster" in manager_embed.description
+
+    # 2. Team Lead (cannot create teams, can assign members)
+    lead_view = TeamMenuView(
+        team_srv,
+        proj_srv,
+        task_srv,
+        can_create_teams=False,
+        can_assign_members=True,
+    )
+    assert len(lead_view.children) == 3
+    assert lead_view.create_team_btn is None
+    assert lead_view.assign_member_btn is not None
+    assert lead_view.list_teams_btn is not None
+    assert lead_view.hub_btn is not None
+
+    lead_embed = build_team_menu_embed(can_create_teams=False, can_assign_members=True)
+    assert "Create Team" not in lead_embed.description
+    assert "Assign Member" in lead_embed.description
+    assert "Team Roster" in lead_embed.description
+
+    # 3. Regular Member (cannot create teams, cannot assign members)
+    member_view = TeamMenuView(
+        team_srv,
+        proj_srv,
+        task_srv,
+        can_create_teams=False,
+        can_assign_members=False,
+    )
+    assert len(member_view.children) == 2
+    assert member_view.create_team_btn is None
+    assert member_view.assign_member_btn is None
+    assert member_view.list_teams_btn is not None
+    assert member_view.hub_btn is not None
+
+    member_embed = build_team_menu_embed(can_create_teams=False, can_assign_members=False)
+    assert "Create Team" not in member_embed.description
+    assert "Assign Member" not in member_embed.description
+    assert "Team Roster" in member_embed.description
+
+
+@pytest.mark.asyncio
+async def test_permission_aware_task_creation_project_filtering(services):
+    """Test that task creation views only offer projects the user has permissions for."""
+    from src.adapters.discord_bot.views.hub_menu import PmHubView
+    from src.adapters.discord_bot.views.task_menu import TaskMenuView, TaskSelectProjectView
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    auth_srv = AuthService(proj_srv, team_srv)
+
+    guild_id = 9990099
+    role_squad = 888999
+
+    # Create restricted project and public project
+    await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Secret Squad Ops",
+        prefix="SSO",
+        discord_role_id=role_squad,
+    )
+    proj_public = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Public Community Tasks",
+        prefix="PUB",
+    )
+
+    contributor_user = _make_mock_member(3001, role_ids=[role_squad])
+    outsider_user = _make_mock_member(3002, role_ids=[])
+
+    # Outsider in PmHubView new_task_btn
+    hub_view = PmHubView(proj_srv, team_srv, task_srv)
+
+    outsider_interaction = MagicMock(spec=discord.Interaction)
+    outsider_interaction.guild = MagicMock()
+    outsider_interaction.guild.id = guild_id
+    outsider_interaction.channel = MagicMock(spec=discord.TextChannel)
+    outsider_interaction.channel.id = 11111
+    outsider_interaction.channel.parent_id = None
+    outsider_interaction.user = outsider_user
+    outsider_interaction.response = MagicMock()
+    outsider_interaction.response.send_modal = AsyncMock()
+
+    await hub_view.new_task_btn.callback(outsider_interaction)
+    # Since outsider only has access to 1 project (proj_public), directly open TaskCreateModal
+    outsider_interaction.response.send_modal.assert_awaited_once()
+    modal = outsider_interaction.response.send_modal.call_args[0][0]
+    assert modal.project.id == proj_public.id
+
+    # Contributor in PmHubView new_task_btn
+    contributor_interaction = MagicMock(spec=discord.Interaction)
+    contributor_interaction.guild = MagicMock()
+    contributor_interaction.guild.id = guild_id
+    contributor_interaction.channel = MagicMock(spec=discord.TextChannel)
+    contributor_interaction.channel.id = 11111
+    contributor_interaction.channel.parent_id = None
+    contributor_interaction.user = contributor_user
+    contributor_interaction.response = MagicMock()
+    contributor_interaction.response.send_message = AsyncMock()
+
+    await hub_view.new_task_btn.callback(contributor_interaction)
+    # Contributor has access to 2 projects -> presents project selector view
+    contributor_interaction.response.send_message.assert_awaited_once()
+    picker_view = contributor_interaction.response.send_message.call_args.kwargs.get("view")
+    assert isinstance(picker_view, TaskSelectProjectView)
+    assert len(picker_view.all_projects) == 2
+
+    # Outsider in TaskMenuView _on_new_task_clicked
+    task_menu_view = TaskMenuView(
+        task_srv,
+        proj_srv,
+        team_srv,
+        auth_service=auth_srv,
+    )
+    task_menu_interaction = MagicMock(spec=discord.Interaction)
+    task_menu_interaction.guild = MagicMock()
+    task_menu_interaction.guild.id = guild_id
+    task_menu_interaction.channel = MagicMock(spec=discord.TextChannel)
+    task_menu_interaction.user = outsider_user
+    task_menu_interaction.response = MagicMock()
+    task_menu_interaction.response.edit_message = AsyncMock()
+
+    await task_menu_view._on_new_task_clicked(task_menu_interaction)
+    task_menu_interaction.response.edit_message.assert_awaited_once()
+    called_picker = task_menu_interaction.response.edit_message.call_args.kwargs.get("view")
+    assert isinstance(called_picker, TaskSelectProjectView)
+    # Filtered down to only 1 allowed project
+    assert len(called_picker.all_projects) == 1
+    assert called_picker.all_projects[0].id == proj_public.id
+
+
+@pytest.mark.asyncio
+async def test_auth_service_standalone_task_permissions_option_b(services):
+    """Verify that under Option B, standalone tasks are restricted to Server Managers & Team Leads."""
+    from src.adapters.discord_bot.views.task_menu import TaskMenuView
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    auth_srv = AuthService(proj_srv, team_srv)
+
+    guild_id = 8880001
+    # Create a team with a team lead
+    team = await team_srv.create_team(guild_id=guild_id, name="Security Team", discord_role_id=888801)
+    team_lead_user_id = 4001
+    await team_srv.add_team_lead(team.id, team_lead_user_id)
+
+    mock_guild = MagicMock(spec=discord.Guild)
+    mock_guild.id = guild_id
+
+    team_lead_member = _make_mock_member(team_lead_user_id)
+    team_lead_member.guild = mock_guild
+
+    admin_member = _make_mock_member(4002, is_admin=True)
+    admin_member.guild = mock_guild
+
+    regular_member = _make_mock_member(4003)
+    regular_member.guild = mock_guild
+
+    # 1. Admin / Server Manager is authorized for standalone tasks
+    assert await auth_srv.can_create_task_in_project(admin_member, None) is True
+
+    # 2. Team Lead is authorized for standalone tasks
+    assert await auth_srv.can_create_task_in_project(team_lead_member, None) is True
+
+    # 3. Regular member is rejected for standalone tasks
+    assert await auth_srv.can_create_task_in_project(regular_member, None) is False
+
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await auth_srv.require_task_creation(regular_member, None)
+    assert "You do not have permission to create standalone tasks" in str(exc_info.value)
+
+    # 4. TaskMenuView UI gating: regular member does not see standalone_btn
+    regular_view = TaskMenuView(
+        task_srv,
+        proj_srv,
+        team_srv,
+        auth_service=auth_srv,
+        can_create_standalone=False,
+    )
+    assert not hasattr(regular_view, "standalone_btn")
+
+    # 5. TaskMenuView UI gating: admin/lead sees standalone_btn
+    lead_view = TaskMenuView(
+        task_srv,
+        proj_srv,
+        team_srv,
+        auth_service=auth_srv,
+        can_create_standalone=True,
+    )
+    assert hasattr(lead_view, "standalone_btn")
+    assert lead_view.standalone_btn in lead_view.children
+
+    # 6. If regular member somehow clicks standalone_btn callback, it rejects with ephemeral message
+    bad_interaction = MagicMock(spec=discord.Interaction)
+    bad_interaction.guild = mock_guild
+    bad_interaction.user = regular_member
+    bad_interaction.response = MagicMock()
+    bad_interaction.response.send_message = AsyncMock()
+
+    await lead_view.standalone_btn.callback(bad_interaction)
+    bad_interaction.response.send_message.assert_awaited_once()
+    assert "Only Server Managers and Team Leads" in bad_interaction.response.send_message.call_args[0][0]

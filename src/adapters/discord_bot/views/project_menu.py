@@ -262,7 +262,7 @@ class ProjectChannelSelectView(discord.ui.View):
             self.task_service,
             initial_interaction=interaction,
         )
-        embed = build_project_menu_embed()
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -475,8 +475,13 @@ class ProjectActiveListView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -547,8 +552,13 @@ class ProjectArchiveConfirmView(discord.ui.View):
                     if t.discord_thread_id:
                         await interaction.client.sync_task_thread(t, action="archive")
 
-            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-            embed = build_project_menu_embed()
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+            )
+            embed = build_project_menu_embed(view.is_server_manager)
             embed.description = (
                 f"📦 **Project Archived!**\n"
                 f"Project **{archived.name} (`{archived.prefix}`)** and its active tasks have been archived.\n\n"
@@ -561,8 +571,13 @@ class ProjectArchiveConfirmView(discord.ui.View):
             )
 
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -630,8 +645,13 @@ class ProjectRestoreConfirmView(discord.ui.View):
                     if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
                         await interaction.client.sync_task_thread(t, action="unarchive")
 
-            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-            embed = build_project_menu_embed()
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+            )
+            embed = build_project_menu_embed(view.is_server_manager)
             embed.description = (
                 f"♻️ **Project Restored!**\n"
                 f"Project **{restored.name} (`{restored.prefix}`)** has been reactivated.\n\n"
@@ -644,8 +664,13 @@ class ProjectRestoreConfirmView(discord.ui.View):
             )
 
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -879,8 +904,13 @@ class ProjectArchiveSelectView(discord.ui.View):
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -1100,12 +1130,18 @@ class ProjectRestoreSelectView(discord.ui.View):
             project_service=self.project_service,
             team_service=self.team_service,
             task_service=self.task_service,
+            initial_interaction=interaction,
         )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -1152,7 +1188,12 @@ class ProjectAssignTimelineModal(discord.ui.Modal):
                 ),
                 color=discord.Color.green(),
             )
-            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+            )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1307,7 +1348,13 @@ class ProjectAssignTeamView(discord.ui.View):
                 ),
                 color=discord.Color.green(),
             )
-            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+            )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1331,8 +1378,13 @@ class ProjectAssignTeamView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        embed = build_project_menu_embed()
+        view = ProjectMenuView(
+            self.project_service,
+            self.team_service,
+            self.task_service,
+            initial_interaction=interaction,
+        )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -1362,9 +1414,7 @@ class ProjectRoleSelectView(discord.ui.View):
             discord.SelectOption(
                 label=f"{p.name} ({p.prefix})"[:100],
                 value=str(p.id),
-                description=(f"Role: @{p.discord_role_id}" if p.discord_role_id else "Public (No role restriction)")[
-                    :50
-                ],
+                description=(f"Role: @{p.discord_role_id}" if p.discord_role_id else "Public (No role)")[:50],
                 emoji="📁",
                 default=(i == 0),
             )
@@ -1380,7 +1430,7 @@ class ProjectRoleSelectView(discord.ui.View):
         self.proj_select.callback = self._on_project_changed
         self.add_item(self.proj_select)
 
-        # Row 1: Select Role
+        # Row 1: Select Discord Role
         self.role_select = discord.ui.RoleSelect(
             placeholder="🎭 Select Squad Discord Role...",
             min_values=1,
@@ -1392,7 +1442,7 @@ class ProjectRoleSelectView(discord.ui.View):
 
         # Row 2: Action Buttons
         self.assign_btn = discord.ui.Button(
-            label="Map Role",
+            label="Map Squad Role",
             emoji="🎭",
             style=discord.ButtonStyle.primary,
             row=2,
@@ -1401,7 +1451,7 @@ class ProjectRoleSelectView(discord.ui.View):
         self.add_item(self.assign_btn)
 
         self.clear_btn = discord.ui.Button(
-            label="Make Public (Clear Role)",
+            label="Clear Role (Make Public)",
             emoji="🌐",
             style=discord.ButtonStyle.secondary,
             row=2,
@@ -1452,7 +1502,9 @@ class ProjectRoleSelectView(discord.ui.View):
             if self.role_select.values:
                 self.selected_role = self.role_select.values[0]
             else:
-                await interaction.response.send_message("❌ Please select a Discord role to map.", ephemeral=True)
+                await interaction.response.send_message(
+                    "❌ Please select a Discord role to map to this project.", ephemeral=True
+                )
                 from src.adapters.discord_bot.menu_manager import menu_manager
 
                 menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -1471,6 +1523,7 @@ class ProjectRoleSelectView(discord.ui.View):
             view = ProjectMenuView(
                 self.project_service, self.team_service, self.task_service, initial_interaction=interaction
             )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1495,6 +1548,7 @@ class ProjectRoleSelectView(discord.ui.View):
             view = ProjectMenuView(
                 self.project_service, self.team_service, self.task_service, initial_interaction=interaction
             )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1505,7 +1559,7 @@ class ProjectRoleSelectView(discord.ui.View):
         view = ProjectMenuView(
             self.project_service, self.team_service, self.task_service, initial_interaction=interaction
         )
-        embed = build_project_menu_embed()
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -1644,6 +1698,7 @@ class ProjectLeadSelectView(discord.ui.View):
             view = ProjectMenuView(
                 self.project_service, self.team_service, self.task_service, initial_interaction=interaction
             )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1666,6 +1721,7 @@ class ProjectLeadSelectView(discord.ui.View):
             view = ProjectMenuView(
                 self.project_service, self.team_service, self.task_service, initial_interaction=interaction
             )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
@@ -1676,7 +1732,7 @@ class ProjectLeadSelectView(discord.ui.View):
         view = ProjectMenuView(
             self.project_service, self.team_service, self.task_service, initial_interaction=interaction
         )
-        embed = build_project_menu_embed()
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -1689,6 +1745,8 @@ class ProjectMenuView(discord.ui.View):
         team_service: TeamService | None = None,
         task_service: TaskService | None = None,
         initial_interaction: discord.Interaction | None = None,
+        user: discord.Member | discord.User | None = None,
+        is_server_manager: bool | None = None,
     ):
         super().__init__(timeout=180)
         self.project_service = project_service
@@ -1696,15 +1754,96 @@ class ProjectMenuView(discord.ui.View):
         self.task_service = task_service
         self._initial_interaction = initial_interaction
 
-        if self.task_service:
-            hub_btn = discord.ui.Button(
-                label="PM Main Menu",
-                emoji="🏠",
+        effective_user = user or (initial_interaction.user if initial_interaction else None)
+        if is_server_manager is not None:
+            self.is_server_manager = is_server_manager
+        elif effective_user is not None:
+            from src.services.auth_service import AuthService
+
+            self.is_server_manager = AuthService.is_server_manager(effective_user)
+        else:
+            self.is_server_manager = True
+
+        self._rebuild_items()
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+
+        if self.is_server_manager:
+            self.new_project_btn = discord.ui.Button(
+                label="New Project",
+                emoji="➕",
+                style=discord.ButtonStyle.primary,
+                row=0,
+            )
+            self.new_project_btn.callback = self._on_new_project_clicked
+            self.add_item(self.new_project_btn)
+        else:
+            self.new_project_btn = None
+
+        # Row 0: Active Projects (Always visible)
+        self.list_projects_btn = discord.ui.Button(
+            label="Active Projects",
+            emoji="📋",
+            style=discord.ButtonStyle.secondary if self.is_server_manager else discord.ButtonStyle.primary,
+            row=0,
+        )
+        self.list_projects_btn.callback = self._on_list_projects_clicked
+        self.add_item(self.list_projects_btn)
+
+        if self.is_server_manager:
+            self.set_role_btn = discord.ui.Button(
+                label="Set Squad Role",
+                emoji="🎭",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            self.set_role_btn.callback = self._on_set_role_clicked
+            self.add_item(self.set_role_btn)
+
+            self.set_lead_btn = discord.ui.Button(
+                label="Set Project Lead",
+                emoji="👑",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
-            hub_btn.callback = self._on_hub_clicked
-            self.add_item(hub_btn)
+            self.set_lead_btn.callback = self._on_set_lead_clicked
+            self.add_item(self.set_lead_btn)
+
+            self.archive_btn = discord.ui.Button(
+                label="Archive Project",
+                emoji="📦",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            self.archive_btn.callback = self._on_archive_clicked
+            self.add_item(self.archive_btn)
+
+            self.restore_btn = discord.ui.Button(
+                label="Restore Project",
+                emoji="♻️",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            self.restore_btn.callback = self._on_restore_clicked
+            self.add_item(self.restore_btn)
+        else:
+            self.set_role_btn = None
+            self.set_lead_btn = None
+            self.archive_btn = None
+            self.restore_btn = None
+
+        if self.task_service:
+            self.hub_btn = discord.ui.Button(
+                label="PM Main Menu",
+                emoji="🏠",
+                style=discord.ButtonStyle.secondary,
+                row=1 if self.is_server_manager else 0,
+            )
+            self.hub_btn.callback = self._on_hub_clicked
+            self.add_item(self.hub_btn)
+        else:
+            self.hub_btn = None
 
     async def on_timeout(self) -> None:
         try:
@@ -1728,8 +1867,7 @@ class ProjectMenuView(discord.ui.View):
             embed = build_hub_welcome_embed()
             await interaction.response.edit_message(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="New Project", emoji="➕", style=discord.ButtonStyle.primary, row=0)
-    async def new_project_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_new_project_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -1753,8 +1891,7 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="Active Projects", emoji="📋", style=discord.ButtonStyle.secondary, row=0)
-    async def list_projects_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_list_projects_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
@@ -1775,8 +1912,7 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Set Squad Role", emoji="🎭", style=discord.ButtonStyle.secondary, row=0)
-    async def set_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_set_role_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
@@ -1802,8 +1938,7 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Set Project Lead", emoji="👑", style=discord.ButtonStyle.secondary, row=1)
-    async def set_lead_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_set_lead_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
@@ -1829,8 +1964,7 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Archive Project", emoji="📦", style=discord.ButtonStyle.secondary, row=1)
-    async def archive_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_archive_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
@@ -1851,8 +1985,7 @@ class ProjectMenuView(discord.ui.View):
         embed = build_archive_select_embed(len(projects), 0, total_pages)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Restore Project", emoji="♻️", style=discord.ButtonStyle.secondary, row=1)
-    async def restore_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_restore_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         all_proj = await self.project_service.list_projects(interaction.guild.id, include_archived=True)
@@ -1875,10 +2008,13 @@ class ProjectMenuView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-def build_project_menu_embed() -> discord.Embed:
+def build_project_menu_embed(is_server_manager: bool = True) -> discord.Embed:
     embed = discord.Embed(
         title="📁 Project Management Control Center",
-        description=(
+        color=discord.Color.blurple(),
+    )
+    if is_server_manager:
+        embed.description = (
             "Manage project containers, channel bindings, squad roles, and project leads without typing commands.\n\n"
             "• **`➕ New Project`**: Create a project container bound to any Forum or Text channel\n"
             "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads\n"
@@ -1886,8 +2022,11 @@ def build_project_menu_embed() -> discord.Embed:
             "• **`👑 Set Project Lead`**: Designate the project owner / lead with elevated permissions\n"
             "• **`📦 Archive Project`**: Soft-delete a completed project\n"
             "• **`♻️ Restore Project`**: Bring back an archived project"
-        ),
-        color=discord.Color.blurple(),
-    )
+        )
+    else:
+        embed.description = (
+            "Browse active project containers, bound channels, and designated squad roles.\n\n"
+            "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads"
+        )
     embed.set_footer(text="dgg-pm • Zero-typing project management")
     return embed

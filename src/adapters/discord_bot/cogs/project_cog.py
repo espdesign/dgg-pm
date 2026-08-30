@@ -469,8 +469,13 @@ class ProjectCog(commands.Cog):
             from src.adapters.discord_bot.menu_manager import menu_manager
             from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
 
-            embed = build_project_menu_embed()
-            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+            )
+            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             await menu_manager.register_menu(interaction)
         except Exception as e:

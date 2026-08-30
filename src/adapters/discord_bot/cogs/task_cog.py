@@ -489,6 +489,14 @@ class TaskCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         try:
+            auth_srv = self.auth_service or (
+                AuthService(self.project_service, self.team_service) if self.team_service else None
+            )
+            if auth_srv:
+                await auth_srv.require_task_creation(interaction.user, None, guild_id=interaction.guild.id)
+                if assignee:
+                    await auth_srv.require_task_assignee_eligibility(interaction.guild, assignee.id, None)
+
             due_at = parse_datetime(due)
             watchers = extract_user_ids(cc)
 
@@ -839,6 +847,13 @@ class TaskCog(commands.Cog):
                 match = channel_projects[0]
                 project_label = f"[{match.prefix}] {match.name} (This Channel)"
 
+            auth_srv = self.auth_service or (
+                AuthService(self.project_service, self.team_service) if self.team_service else None
+            )
+            can_create_standalone = (
+                await auth_srv.can_create_task_in_project(interaction.user, None) if auth_srv else True
+            )
+
             view = TaskMenuView(
                 self.task_service,
                 self.project_service,
@@ -846,6 +861,9 @@ class TaskCog(commands.Cog):
                 projects=projects,
                 current_channel_id=channel_id,
                 parent_channel_id=parent_id,
+                auth_service=auth_srv,
+                initial_interaction=interaction,
+                can_create_standalone=can_create_standalone,
             )
             embed = build_task_board_embed(
                 tasks=tasks,

@@ -442,6 +442,10 @@ async def test_pm_hub_navigation(services):
     task_srv = services["task"]
     user_srv = services["user"]
 
+    guild_id = 9999999999
+    # Create project so New Task has an allowed project container
+    await proj_srv.create_project(guild_id=guild_id, name="Infrastructure", prefix="INF")
+
     hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
     welcome_embed = build_hub_welcome_embed()
     assert "Control Hub" in welcome_embed.title
@@ -449,7 +453,7 @@ async def test_pm_hub_navigation(services):
 
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock()
-    mock_interaction.guild.id = 9999999999
+    mock_interaction.guild.id = guild_id
     mock_interaction.user = MagicMock()
     mock_interaction.user.id = 123456789
     mock_interaction.user.display_name = "testuser"

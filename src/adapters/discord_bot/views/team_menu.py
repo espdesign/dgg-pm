@@ -113,7 +113,7 @@ class TeamCreateRoleSelectView(discord.ui.View):
             self.task_service,
             initial_interaction=interaction,
         )
-        embed = build_team_menu_embed()
+        embed = build_team_menu_embed(view.can_create_teams, view.can_assign_members)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -129,71 +129,80 @@ class TeamAssignMemberSelectView(discord.ui.View):
         initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
+        self.teams = {t.id: t for t in teams}
         self.team_service = team_service
         self.project_service = project_service
         self.task_service = task_service
-        self.teams = {t.id: t for t in teams}
-        self.selected_team_id: UUID | None = UUID(str(teams[0].id)) if teams else None
-        self.selected_user: discord.User | discord.Member | None = None
-        self.selected_role_type: TeamRoleType = TeamRoleType.MEMBER
         self._initial_interaction = initial_interaction
 
-        # Row 0: Team select
+        self.selected_team_id: UUID = teams[0].id
+        self.selected_user: discord.Member | discord.User | None = None
+        self.selected_role_type_str: str = "member"
+
+        # Row 0: Select Team Dropdown
         team_options = [
             discord.SelectOption(
                 label=t.name,
                 value=str(t.id),
                 description=f"Role: {t.discord_role_id}",
+                emoji="👥",
                 default=(i == 0),
             )
             for i, t in enumerate(teams[:25])
         ]
         self.team_select = discord.ui.Select(
-            placeholder="👥 Select Team...",
+            placeholder="👥 Select Target Team...",
             options=team_options,
-            row=0,
-        )
-        self.team_select.callback = self._on_team_selected
-        self.add_item(self.team_select)
-
-        # Row 1: User Select
-        self.user_select = discord.ui.UserSelect(
-            placeholder="👤 Pick Discord Member...",
-            row=1,
             min_values=1,
             max_values=1,
+            row=0,
+        )
+        self.team_select.callback = self._on_team_changed
+        self.add_item(self.team_select)
+
+        # Row 1: Select User / Member
+        self.user_select = discord.ui.UserSelect(
+            placeholder="👤 Select Discord Member...",
+            min_values=1,
+            max_values=1,
+            row=1,
         )
         self.user_select.callback = self._on_user_selected
         self.add_item(self.user_select)
 
-        # Row 2: Role Type Select (Default: Team Lead)
-        role_options = [
+        # Row 2: Select Role Type (Member, Lead, Remove Lead)
+        role_type_options = [
             discord.SelectOption(
-                label="⭐ Team Lead",
-                value="lead",
-                description="Assign Lead status (can manage tasks and squad roster)",
+                label="Team Member (Regular)",
+                value="member",
+                description="Assign member to squad roster",
+                emoji="👤",
                 default=True,
             ),
             discord.SelectOption(
-                label="👤 Team Member",
-                value="member",
-                description="Verify as standard squad member",
+                label="Team Lead (Elevated)",
+                value="lead",
+                description="Designate lead with team management permissions",
+                emoji="⭐",
             ),
             discord.SelectOption(
-                label="🚫 Remove Lead Status",
+                label="Remove Lead Status",
                 value="remove_lead",
-                description="Revoke Lead designation (remains team member)",
+                description="Demote from Team Lead back to regular member",
+                emoji="⬇️",
             ),
         ]
         self.role_select = discord.ui.Select(
-            placeholder="⭐ Select Role Type...",
-            options=role_options,
+            placeholder="🎭 Select Role Type...",
+            options=role_type_options,
+            min_values=1,
+            max_values=1,
             row=2,
         )
         self.role_select.callback = self._on_role_type_selected
         self.add_item(self.role_select)
 
-        # Row 3: Action buttons
+        # Row 3: Action Buttons
         self.confirm_btn = discord.ui.Button(
             label="Confirm Assignment",
             emoji="✅",
@@ -223,11 +232,10 @@ class TeamAssignMemberSelectView(discord.ui.View):
         except Exception:
             pass
 
-    async def _on_team_selected(self, interaction: discord.Interaction) -> None:
-        val = self.team_select.values[0]
-        self.selected_team_id = UUID(val)
+    async def _on_team_changed(self, interaction: discord.Interaction) -> None:
+        self.selected_team_id = UUID(self.team_select.values[0])
         for opt in self.team_select.options:
-            opt.default = opt.value == val
+            opt.default = opt.value == str(self.selected_team_id)
         await interaction.response.defer()
 
     async def _on_user_selected(self, interaction: discord.Interaction) -> None:
@@ -250,7 +258,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
             self.task_service,
             initial_interaction=interaction,
         )
-        embed = build_team_menu_embed()
+        embed = build_team_menu_embed(view.can_create_teams, view.can_assign_members)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
@@ -265,27 +273,20 @@ class TeamAssignMemberSelectView(discord.ui.View):
             if self.user_select.values:
                 self.selected_user = self.user_select.values[0]
             else:
-                await interaction.response.send_message("❌ Please select a Discord member to assign.", ephemeral=True)
+                await interaction.response.send_message("❌ Please select a Discord member first.", ephemeral=True)
                 from src.adapters.discord_bot.menu_manager import menu_manager
 
                 menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
                 return
 
-        action_type = getattr(self, "selected_role_type_str", "lead")
-
+        action_type = self.selected_role_type_str
         team = self.teams.get(self.selected_team_id)
-        if not team and interaction.guild:
-            teams_list = await self.team_service.list_teams(interaction.guild.id)
-            team = next((t for t in teams_list if t.id == self.selected_team_id), None)
 
         if not team:
             await interaction.response.send_message("❌ Team not found.", ephemeral=True)
-            from src.adapters.discord_bot.menu_manager import menu_manager
-
-            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
-        # Check authorization: must be server manager or Team Lead
+        # Check authorization
         if not AuthService.is_server_manager(interaction.user):
             is_lead = await self.team_service.is_team_lead(self.selected_team_id, interaction.user.id)
             if not is_lead:
@@ -320,27 +321,26 @@ class TeamAssignMemberSelectView(discord.ui.View):
 
         try:
             if action_type == "remove_lead":
-                await self.team_service.remove_team_lead(self.selected_team_id, user.id)
-                success_msg = f"✅ Removed Team Lead status from <@{user.id}> for **{team.name}**."
+                await self.team_service.remove_team_lead(self.selected_team_id, self.selected_user.id)
+                success_msg = f"✅ Removed Team Lead status from <@{self.selected_user.id}> for **{team.name}**."
             elif action_type == "lead":
-                await self.team_service.add_team_lead(self.selected_team_id, user.id)
-                success_msg = f"⭐ Designated <@{user.id}> as **Team Lead** for **{team.name}**."
+                await self.team_service.add_team_lead(self.selected_team_id, self.selected_user.id)
+                success_msg = f"⭐ Designated <@{self.selected_user.id}> as **Team Lead** for **{team.name}**."
             else:
                 await self.team_service.assign_member(
                     team_id=self.selected_team_id,
-                    user_discord_id=user.id,
+                    user_discord_id=self.selected_user.id,
                     role_type=TeamRoleType.MEMBER,
                 )
-                success_msg = f"✅ Verified <@{user.id}> as **Team Member** for **{team.name}**."
+                success_msg = f"✅ Verified <@{self.selected_user.id}> as **Team Member** for **{team.name}**."
 
-            # Return to main team menu with success notification
             view = TeamMenuView(
                 self.team_service,
                 self.project_service,
                 self.task_service,
                 initial_interaction=interaction,
             )
-            embed = build_team_menu_embed()
+            embed = build_team_menu_embed(view.can_create_teams, view.can_assign_members)
             embed.description = f"{success_msg}\n\n" + (embed.description or "")
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
@@ -442,7 +442,7 @@ class TeamRosterDetailView(discord.ui.View):
             self.task_service,
             initial_interaction=interaction,
         )
-        embed = build_team_menu_embed()
+        embed = build_team_menu_embed(view.can_create_teams, view.can_assign_members)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
@@ -455,6 +455,9 @@ class TeamMenuView(discord.ui.View):
         project_service: ProjectService | None = None,
         task_service: TaskService | None = None,
         initial_interaction: discord.Interaction | None = None,
+        user: discord.Member | discord.User | None = None,
+        can_create_teams: bool | None = None,
+        can_assign_members: bool | None = None,
     ):
         super().__init__(timeout=180)
         self.team_service = team_service
@@ -462,15 +465,74 @@ class TeamMenuView(discord.ui.View):
         self.task_service = task_service
         self._initial_interaction = initial_interaction
 
+        effective_user = user or (initial_interaction.user if initial_interaction else None)
+        if can_create_teams is not None:
+            self.can_create_teams = can_create_teams
+        elif effective_user is not None:
+            self.can_create_teams = AuthService.is_server_manager(effective_user)
+        else:
+            self.can_create_teams = True
+
+        if can_assign_members is not None:
+            self.can_assign_members = can_assign_members
+        elif effective_user is not None:
+            self.can_assign_members = AuthService.is_server_manager(effective_user)
+        else:
+            self.can_assign_members = True
+
+        self._rebuild_items()
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+
+        if self.can_create_teams:
+            self.create_team_btn = discord.ui.Button(
+                label="Create Team",
+                emoji="➕",
+                style=discord.ButtonStyle.primary,
+                row=0,
+            )
+            self.create_team_btn.callback = self._on_create_team_clicked
+            self.add_item(self.create_team_btn)
+        else:
+            self.create_team_btn = None
+
+        if self.can_assign_members:
+            self.assign_member_btn = discord.ui.Button(
+                label="Assign Member",
+                emoji="👤",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            self.assign_member_btn.callback = self._on_assign_member_clicked
+            self.add_item(self.assign_member_btn)
+        else:
+            self.assign_member_btn = None
+
+        # Row 0: Team Roster (Always visible)
+        self.list_teams_btn = discord.ui.Button(
+            label="Team Roster",
+            emoji="📋",
+            style=discord.ButtonStyle.secondary
+            if (self.can_create_teams or self.can_assign_members)
+            else discord.ButtonStyle.primary,
+            row=0,
+        )
+        self.list_teams_btn.callback = self._on_list_teams_clicked
+        self.roster_btn = self.list_teams_btn
+        self.add_item(self.list_teams_btn)
+
         if self.project_service and self.task_service:
-            hub_btn = discord.ui.Button(
+            self.hub_btn = discord.ui.Button(
                 label="PM Main Menu",
                 emoji="🏠",
                 style=discord.ButtonStyle.secondary,
-                row=1,
+                row=1 if (self.can_create_teams or self.can_assign_members) else 0,
             )
-            hub_btn.callback = self._on_hub_clicked
-            self.add_item(hub_btn)
+            self.hub_btn.callback = self._on_hub_clicked
+            self.add_item(self.hub_btn)
+        else:
+            self.hub_btn = None
 
     async def on_timeout(self) -> None:
         try:
@@ -494,8 +556,7 @@ class TeamMenuView(discord.ui.View):
             embed = build_hub_welcome_embed()
             await interaction.response.edit_message(content=None, embed=embed, view=view)
 
-    @discord.ui.button(label="Create Team", emoji="➕", style=discord.ButtonStyle.primary, row=0)
-    async def create_team_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_create_team_clicked(self, interaction: discord.Interaction) -> None:
         view = TeamCreateRoleSelectView(
             self.team_service,
             self.project_service,
@@ -509,8 +570,7 @@ class TeamMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Assign Member", emoji="👤", style=discord.ButtonStyle.secondary, row=0)
-    async def assign_member_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_assign_member_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         teams = await self.team_service.list_teams(interaction.guild.id)
@@ -537,8 +597,7 @@ class TeamMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Team Roster", emoji="📋", style=discord.ButtonStyle.secondary, row=0)
-    async def list_teams_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _on_list_teams_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         teams = await self.team_service.list_teams(interaction.guild.id)
@@ -574,16 +633,23 @@ class TeamMenuView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-def build_team_menu_embed() -> discord.Embed:
+def build_team_menu_embed(can_create_teams: bool = True, can_assign_members: bool = True) -> discord.Embed:
     embed = discord.Embed(
         title="👥 Team Management Control Center",
-        description=(
-            "Configure functional squads, map Discord roles, and assign team leads.\n\n"
-            "• **`➕ Create Team`**: Define a new team and map it to a Discord role\n"
-            "• **`👤 Assign Member`**: Pick a user and assign them as a Team Member or Lead\n"
-            "• **`📋 Team Roster`**: View all teams and their configured role mappings"
-        ),
         color=discord.Color.blurple(),
     )
+    bullets = []
+    if can_create_teams:
+        bullets.append("• **`➕ Create Team`**: Define a new team and map it to a Discord role")
+    if can_assign_members:
+        bullets.append("• **`👤 Assign Member`**: Pick a user and assign them as a Team Member or Lead")
+    bullets.append("• **`📋 Team Roster`**: View all teams and their configured role mappings")
+
+    if can_create_teams or can_assign_members:
+        desc = "Configure functional squads, map Discord roles, and assign team leads.\n\n" + "\n".join(bullets)
+    else:
+        desc = "Inspect configured functional squads and server team rosters.\n\n" + "\n".join(bullets)
+
+    embed.description = desc
     embed.set_footer(text="dgg-pm • Zero-typing team management")
     return embed

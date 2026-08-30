@@ -104,28 +104,44 @@ class AuthService:
                 "You must be the assignee, creator, project lead, a squad member, or a server manager."
             )
 
-    async def can_create_task_in_project(self, user: discord.Member | discord.User, project_id: UUID | None) -> bool:
-        """Determines if a user is authorized to create tasks in a project container.
+    async def can_create_task_in_project(
+        self,
+        user: discord.Member | discord.User,
+        project_id: UUID | None,
+        guild_id: int | None = None,
+    ) -> bool:
+        """Determines if a user is authorized to create tasks in a project container or standalone.
 
-        - Standalone tasks (project_id=None) can be created by any guild member.
-        - Server Managers can create tasks in any project.
+        - Server Managers can create tasks in any project and standalone.
+        - Standalone tasks (project_id=None): restricted to Server Managers and Team Leads.
         - Project Leads can create tasks in their projects.
         - If a project has a mapped squad Discord role: user must hold that role.
         - If a project has no role mapping and no mapped teams: open to all members.
         """
-        # Standalone task creation is open to all
-        if not project_id:
-            return True
-
         # Server Manager bypass
         if self.is_server_manager(user):
             return True
+
+        user_id = getattr(user, "id", None)
+
+        if not project_id:
+            # Standalone tasks are restricted to Server Managers (handled above) and Team Leads
+            if self.team_service and user_id:
+                guild = getattr(user, "guild", None)
+                target_guild_id = (
+                    guild.id if (guild and hasattr(guild, "id") and isinstance(guild.id, int)) else guild_id
+                )
+                if target_guild_id and isinstance(target_guild_id, int):
+                    teams = await self.team_service.list_teams(target_guild_id)
+                    for t in teams:
+                        if await self.team_service.is_team_lead(t.id, user_id):
+                            return True
+            return False
 
         project = await self.project_service.get_by_id(project_id)
         if not project:
             return False
 
-        user_id = getattr(user, "id", None)
         if project.lead_discord_id and user_id == project.lead_discord_id:
             return True
 
@@ -146,9 +162,19 @@ class AuthService:
         # If project has no role and no legacy teams, open to all server members
         return True
 
-    async def require_task_creation(self, user: discord.Member | discord.User, project_id: UUID | None) -> None:
+    async def require_task_creation(
+        self,
+        user: discord.Member | discord.User,
+        project_id: UUID | None,
+        guild_id: int | None = None,
+    ) -> None:
         """Raises PermissionDeniedError if the user cannot create tasks in the project."""
-        if not await self.can_create_task_in_project(user, project_id):
+        if not await self.can_create_task_in_project(user, project_id, guild_id=guild_id):
+            if not project_id:
+                raise PermissionDeniedError(
+                    "You do not have permission to create standalone tasks. "
+                    "You must be a Team Lead or a server manager, or create the task inside an active project."
+                )
             raise PermissionDeniedError(
                 "You do not have permission to create tasks in this project. "
                 "You must hold the project squad's Discord role, be the Project Lead, or be a server manager."

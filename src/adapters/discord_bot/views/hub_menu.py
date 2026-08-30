@@ -34,12 +34,14 @@ class HubTaskProjectSelectView(discord.ui.View):
         channel_projects: list[Project],
         target_channel: discord.ForumChannel | discord.TextChannel | discord.Thread | None,
         auth_service: AuthService | None = None,
+        allow_standalone: bool = False,
     ):
         super().__init__(timeout=60)
         self.task_service = task_service
         self.channel_projects = channel_projects
         self.target_channel = target_channel
         self.auth_service = auth_service
+        self.allow_standalone = allow_standalone
         self._initial_interaction: discord.Interaction | None = None
 
         options = []
@@ -52,16 +54,19 @@ class HubTaskProjectSelectView(discord.ui.View):
                     emoji="📁",
                 )
             )
-        options.append(
-            discord.SelectOption(
-                label="Standalone Task (No Project)",
-                value="standalone",
-                description="Create an ad-hoc unlinked chore/task",
-                emoji="📌",
+        if self.allow_standalone:
+            options.append(
+                discord.SelectOption(
+                    label="Standalone Task (No Project)",
+                    value="standalone",
+                    description="Create an ad-hoc unlinked chore/task",
+                    emoji="📌",
+                )
             )
-        )
 
-        self.selected_project_val: str | None = str(channel_projects[0].id) if channel_projects else "standalone"
+        self.selected_project_val: str | None = (
+            str(channel_projects[0].id) if channel_projects else ("standalone" if allow_standalone else None)
+        )
 
         self.select = discord.ui.Select(
             placeholder="📁 Select Project for New Task...",
@@ -101,6 +106,9 @@ class HubTaskProjectSelectView(discord.ui.View):
             )
         else:
             selected_proj = next((p for p in self.channel_projects if str(p.id) == val), None)
+            if not selected_proj:
+                await interaction.response.send_message("❌ Selected project not found.", ephemeral=True)
+                return
             modal = TaskCreateModal(
                 task_service=self.task_service,
                 project=selected_proj,
@@ -111,7 +119,10 @@ class HubTaskProjectSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_select_button_clicked(self, interaction: discord.Interaction) -> None:
-        val = self.selected_project_val or (str(self.channel_projects[0].id) if self.channel_projects else "standalone")
+        val = self.selected_project_val or (str(self.channel_projects[0].id) if self.channel_projects else None)
+        if not val:
+            await interaction.response.send_message("❌ Please select a project.", ephemeral=True)
+            return
         await self._open_modal(interaction, val)
 
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
@@ -311,6 +322,14 @@ class PmHubView(discord.ui.View):
                 target_channel = parent
 
         auth_srv = AuthService(self.project_service, self.team_service) if self.team_service else None
+        can_create_standalone = await auth_srv.can_create_task_in_project(interaction.user, None) if auth_srv else True
+
+        allowed_projects = []
+        for p in projects:
+            if not auth_srv or await auth_srv.can_create_task_in_project(interaction.user, p.id):
+                allowed_projects.append(p)
+
+        channel_projects = [p for p in allowed_projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
 
         if len(channel_projects) == 1:
             matched_proj = channel_projects[0]
@@ -334,6 +353,7 @@ class PmHubView(discord.ui.View):
                 channel_projects=channel_projects,
                 target_channel=target_channel,
                 auth_service=auth_srv,
+                allow_standalone=can_create_standalone,
             )
             picker_view._initial_interaction = interaction
             embed = discord.Embed(
@@ -344,8 +364,8 @@ class PmHubView(discord.ui.View):
             await interaction.response.send_message(embed=embed, view=picker_view, ephemeral=True)
         else:
             # 0 channel projects
-            if len(projects) == 1:
-                matched_proj = projects[0]
+            if len(allowed_projects) == 1:
+                matched_proj = allowed_projects[0]
                 if matched_proj.discord_channel_id and not isinstance(target_channel, discord.ForumChannel):
                     proj_chan = interaction.guild.get_channel(matched_proj.discord_channel_id)
                     if proj_chan:
@@ -357,20 +377,30 @@ class PmHubView(discord.ui.View):
                     auth_service=auth_srv,
                 )
                 await interaction.response.send_modal(modal)
-            elif len(projects) == 0:
-                modal = TaskCreateModal(
-                    task_service=self.task_service,
-                    project=None,
-                    target_channel=target_channel,
-                    auth_service=auth_srv,
-                )
-                await interaction.response.send_modal(modal)
+            elif len(allowed_projects) == 0:
+                if can_create_standalone:
+                    modal = TaskCreateModal(
+                        task_service=self.task_service,
+                        project=None,
+                        target_channel=target_channel,
+                        auth_service=auth_srv,
+                    )
+                    await interaction.response.send_modal(modal)
+                else:
+                    await interaction.response.send_message(
+                        "❌ You do not have permission to create tasks in any active projects. "
+                        "Contact a Project Lead or server manager to be added to a project squad.",
+                        ephemeral=True,
+                    )
+                    from src.adapters.discord_bot.menu_manager import menu_manager
+
+                    menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             else:
                 from src.adapters.discord_bot.menu_manager import menu_manager
 
                 await menu_manager.register_menu(interaction)
                 view = TaskSelectProjectView(
-                    projects=projects,
+                    projects=allowed_projects,
                     task_service=self.task_service,
                     project_service=self.project_service,
                     team_service=self.team_service,
@@ -475,13 +505,13 @@ class PmHubView(discord.ui.View):
         from src.adapters.discord_bot.menu_manager import menu_manager
 
         await menu_manager.register_menu(interaction)
-        embed = build_project_menu_embed()
         view = ProjectMenuView(
             self.project_service,
             self.team_service,
             self.task_service,
             initial_interaction=interaction,
         )
+        embed = build_project_menu_embed(view.is_server_manager)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
