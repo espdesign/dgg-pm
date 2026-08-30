@@ -85,7 +85,7 @@ async def test_task_builder_draft_prerequisite_selection(services):
     assert draft_view.prerequisite_short_ids == [t1.short_id]
 
     await select_view._on_done(interaction)
-    interaction.response.edit_message.assert_awaited_once()
+    assert interaction.response.edit_message.await_count == 2
 
 
 @pytest.mark.asyncio

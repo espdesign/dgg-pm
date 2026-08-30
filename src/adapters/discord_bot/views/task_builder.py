@@ -10,7 +10,7 @@ from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed, get_task_jump_url
-from src.domain.enums import PriorityLevel
+from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Project, Task
 from src.utils.date_parser import get_due_date_from_preset, parse_natural_date
 
@@ -239,43 +239,86 @@ class TaskDetailsModal(discord.ui.Modal):
 
 
 class DraftPrerequisiteSelectView(discord.ui.View):
-    """Ephemeral view to pick prerequisite tasks for a new task draft."""
+    """Interactive in-place view to pick prerequisite tasks for a new task draft."""
 
     def __init__(self, draft_view: TaskCreateDraftView, sibling_tasks: list[Task]):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)
         self.draft_view = draft_view
         self.sibling_tasks = sibling_tasks
 
         options: list[discord.SelectOption] = []
         for t in sibling_tasks[:25]:
             is_selected = t.short_id in draft_view.prerequisite_short_ids
+            emoji = "✅" if t.is_completed else ("⏳" if t.status == TaskStatus.IN_PROGRESS else "📋")
             options.append(
                 discord.SelectOption(
                     label=f"[{t.short_id}]"[:100],
                     value=t.short_id,
                     description=(t.title[:85] + "...") if len(t.title) > 85 else t.title,
                     default=is_selected,
-                    emoji="✅" if t.is_completed else "📋",
+                    emoji=emoji,
                 )
             )
 
         if options:
             self.select = discord.ui.Select(
-                placeholder="🔗 Pick Prerequisite Tasks...",
+                placeholder="🔗 Select Prerequisite Tasks (Blocks this task)...",
                 min_values=0,
                 max_values=len(options),
                 options=options,
+                row=0,
             )
             self.select.callback = self._on_select
             self.add_item(self.select)
 
-        done_btn = discord.ui.Button(label="Done", style=discord.ButtonStyle.success, emoji="✅")
+        done_btn = discord.ui.Button(
+            label="Done & Return to Draft",
+            style=discord.ButtonStyle.success,
+            emoji="✅",
+            row=1,
+        )
         done_btn.callback = self._on_done
         self.add_item(done_btn)
 
+        cancel_btn = discord.ui.Button(
+            label="Back to Draft",
+            style=discord.ButtonStyle.secondary,
+            emoji="↩️",
+            row=1,
+        )
+        cancel_btn.callback = self._on_done
+        self.add_item(cancel_btn)
+
+    def _build_picker_embed(self) -> discord.Embed:
+        sel = self.draft_view.prerequisite_short_ids
+        sel_text = ", ".join(f"`[{sid}]`" for sid in sel) if sel else "*None (Task can be started immediately)*"
+        proj_label = (
+            f"[{self.draft_view.project.prefix}] {self.draft_view.project.name}"
+            if self.draft_view.project
+            else "Project"
+        )
+        task_label = self.draft_view.title or "New Task"
+        embed = discord.Embed(
+            title=f"🔗 Configure Prerequisites: {task_label}",
+            description=(
+                f"Select tasks in **{proj_label}** that must be completed before **{task_label}** can be started.\n\n"
+                f"**Currently Selected ({len(sel)}):**\n{sel_text}\n\n"
+                "*Use the multi-select dropdown below, then click **Done & Return to Draft**.*"
+            ),
+            color=discord.Color.from_rgb(16, 152, 247),
+        )
+        return embed
+
     async def _on_select(self, interaction: discord.Interaction) -> None:
-        self.draft_view.prerequisite_short_ids = list(interaction.data.get("values", []))  # type: ignore
-        await interaction.response.defer()
+        values = (
+            getattr(self.select, "values", None) or (interaction.data.get("values") if interaction.data else None) or []
+        )
+        self.draft_view.prerequisite_short_ids = list(values)
+        if hasattr(self, "select"):
+            for opt in self.select.options:
+                opt.default = opt.value in self.draft_view.prerequisite_short_ids
+        embed = self._build_picker_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
 
     async def _on_done(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -291,16 +334,7 @@ class DraftPrerequisiteSelectView(discord.ui.View):
             target_channel=self.draft_view.target_channel or interaction.channel,
             prerequisite_short_ids=self.draft_view.prerequisite_short_ids,
         )
-        if self.draft_view._initial_interaction:
-            try:
-                await self.draft_view._initial_interaction.edit_original_response(embed=embed, view=self.draft_view)
-            except Exception:
-                pass
-        await interaction.response.edit_message(
-            content=f"✅ Configured {len(self.draft_view.prerequisite_short_ids)} prerequisite task(s) for this draft.",
-            embed=None,
-            view=None,
-        )
+        await interaction.response.edit_message(content=None, embed=embed, view=self.draft_view)
 
 
 class TaskCreateDraftView(discord.ui.View):
@@ -575,13 +609,8 @@ class TaskCreateDraftView(discord.ui.View):
             return
 
         view = DraftPrerequisiteSelectView(self, tasks)
-        proj_label = f"[{self.project.prefix}] {self.project.name}"
-        task_label = self.title or "this new task"
-        await interaction.response.send_message(
-            f"🔗 Select prerequisites for **{task_label}** in **{proj_label}**:",
-            view=view,
-            ephemeral=True,
-        )
+        embed = view._build_picker_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_edit_details_clicked(self, interaction: discord.Interaction) -> None:
         modal = TaskDetailsModal(
