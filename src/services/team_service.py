@@ -38,6 +38,28 @@ class TeamService:
     async def get_by_role_id(self, guild_id: int, role_id: int) -> Team | None:
         return await self.team_repo.get_by_role_id(guild_id, role_id)
 
+    async def get_or_create_team_for_role(
+        self,
+        guild_id: int,
+        role_id: int,
+        role_name: str,
+    ) -> Team:
+        """Finds an existing team by role ID or name, or creates a new one."""
+        team = await self.team_repo.get_by_role_id(guild_id, role_id)
+        if team:
+            return team
+
+        team_by_name = await self.team_repo.get_by_name(guild_id, role_name.strip())
+        if team_by_name:
+            return team_by_name
+
+        new_team = Team(
+            guild_id=guild_id,
+            name=role_name.strip(),
+            discord_role_id=role_id,
+        )
+        return await self.team_repo.create(new_team)
+
     async def add_team_lead(self, team_id: UUID, user_discord_id: int) -> None:
         await self.team_repo.add_team_lead(team_id, user_discord_id)
 

@@ -102,5 +102,8 @@ class ProjectService:
         )
         await self.project_repo.assign_team(pt)
 
+    async def remove_team_from_project(self, project_id: UUID, team_id: UUID) -> None:
+        await self.project_repo.remove_team(project_id, team_id)
+
     async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
         return await self.project_repo.list_teams_for_project(project_id)

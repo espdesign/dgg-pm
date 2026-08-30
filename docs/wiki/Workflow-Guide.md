@@ -1,6 +1,6 @@
 # 🚀 DGG-PM Workflow Guide
 
-This guide walks you through setting up squads, creating project containers, linking forum channels, and managing day-to-day task execution.
+This guide walks you through setting up project containers, binding Discord roles and forum channels, and managing day-to-day task execution.
 
 ---
 
@@ -8,10 +8,10 @@ This guide walks you through setting up squads, creating project containers, lin
 
 ```mermaid
 flowchart TD
-    subgraph Setup ["1. Initial Setup"]
-        T["Create Team (/pm team create)"] --> L["Designate Team Leads (/pm team lead)"]
-        P["Create Project (/pm project create)"] --> F["Auto-Setup Forum Tags & Pinned Hub"]
-        M["Map Team to Project (/pm project team)"]
+    subgraph Setup ["1. Instant Project Setup (1 Command)"]
+        P["/pm project create\n(name + prefix + role + forum)"] --> F["Auto-Setup PM Forum Tags & Pinned Control Hub"]
+        P --> R["Auto-Maps Discord Squad Role to Project"]
+        R --> L["(Optional) Designate Leads (/pm project lead)"]
     end
 
     subgraph Execution ["2. Daily Workflows"]
@@ -28,43 +28,38 @@ flowchart TD
 
 ## 🛠️ Step-by-Step Setup (Admins & Leads)
 
-### 1. Create Functional Teams
-Teams in DGG-PM map directly to Discord Server Roles. No manual member syncing is needed.
+### 1. Create a Project & Map Discord Role (1 Step)
+In DGG-PM, projects are directly bound to the Discord Server Role representing the functional squad working on that project.
 
 ```text
-/pm team create role:@Backend Developers team_name:Backend
-```
-
-*(Optional)* Designate Team Leads:
-```text
-/pm team lead action:add team_name:Backend user:@Alice
-```
-> [!NOTE]
-> Team leads can manage task mutations and assignments for their squads. If an admin strips the Discord role from a user, their lead privileges are revoked immediately.
-
----
-
-### 2. Create Projects & Bind Channels / Forums
-Create a project container and link it to a Discord Forum Channel or Text Channel:
-
-```text
-/pm project create name:Mobile App prefix:MOB channel:#mobile-dev-forum
+/pm project create name:Mobile App prefix:MOB role:@Mobile Developers channel:#mobile-dev-forum
 ```
 
 **What the bot does automatically:**
-1. Generates sequential IDs (`MOB-1`, `MOB-2`, etc.).
-2. Provisions standard PM tags in forum channels (`⏳ Not Started`, `🟡 In Progress`, `✅ Completed`, `🔴 High`, `🟡 Normal`, `🟢 Low`).
-3. Creates and **pins** an interactive **`📌 📊 Mobile App • Control Hub`** post right at the top of the forum.
+1. **Assigns Squad**: Directly maps `@Mobile Developers` to the project container. Only members holding this role can be assigned to tasks.
+2. **Generates Sequential IDs**: Starts task counter with the short prefix (`MOB-1`, `MOB-2`, etc.).
+3. **Provisions Forum Tags**: Automatically configures standard PM tags (`⏳ Not Started`, `🟡 In Progress`, `✅ Completed`, `🔴 High`, `🟡 Normal`, `🟢 Low`, `👤 Unassigned`).
+4. **Pins Control Hub**: Automatically creates and pins **`📌 📊 Mobile App • Control Hub`** right at the top of the forum channel.
 
 ---
 
-### 3. Map Teams to the Project
-Map which squads are authorized to work on this project container:
+### 2. Optional: Designate Team Leads
+Assign one or more members holding the project's role as Team Leads:
 
 ```text
-/pm project team project_name:Mobile App team_name:Backend action:map
+/pm project lead project_name:Mobile App user:@Alice action:add
 ```
-*(Task assignments on this project are strictly restricted to members holding mapped team roles).*
+> [!NOTE]
+> Team leads can manage task assignments and mutations for their project. If an admin strips the Discord role from a user in server settings, their lead privileges are revoked immediately and automatically cleaned up.
+
+---
+
+### 3. Optional: Add Additional Roles (Cross-Functional Projects)
+If a project needs multiple squads (e.g. adding `@QA` or `@Design`):
+
+```text
+/pm project role project_name:Mobile App role:@QA Engineers action:add
+```
 
 ---
 

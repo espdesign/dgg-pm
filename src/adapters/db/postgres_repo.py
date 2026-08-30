@@ -624,6 +624,15 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
             await session.merge(row)
             await session.commit()
 
+    async def remove_team(self, project_id: UUID, team_id: UUID) -> None:
+        async with self._get_session() as session:
+            stmt = delete(ProjectTeamTable).where(
+                ProjectTeamTable.project_id == project_id,
+                ProjectTeamTable.team_id == team_id,
+            )
+            await session.execute(stmt)
+            await session.commit()
+
     async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
         async with self._get_session() as session:
             stmt = (

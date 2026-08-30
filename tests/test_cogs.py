@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
 from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
 from src.domain.enums import NotificationPreference
@@ -446,3 +447,133 @@ def test_seed_script_production_safety_guards(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="appears to point to a production/cloud database"):
         check_production_safety_guard(1543430283250901023)
+
+
+@pytest.mark.asyncio
+async def test_pm_project_create_with_required_role(services):
+    """Verify /pm project create requires role, creates team, and assigns squad to project."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 1122334455
+
+    pm_cog = PmCog(
+        bot=MagicMock(),
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+    )
+
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 55667788
+    mock_role.name = "Mobile Engineers"
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await pm_cog.project_create.callback(
+        pm_cog,
+        interaction=interaction,
+        name="Mobile Redesign",
+        prefix="MOB",
+        role=mock_role,
+        channel=None,
+    )
+
+    interaction.followup.send.assert_awaited_once()
+    embed = interaction.followup.send.call_args.kwargs.get("embed")
+    assert embed is not None
+    assert "Mobile Redesign" in embed.title
+
+    # Verify project exists and team is mapped
+    project = await proj_srv.get_by_name(guild_id, "Mobile Redesign")
+    assert project is not None
+    assert project.prefix == "MOB"
+
+    teams = await proj_srv.list_teams_for_project(project.id)
+    assert len(teams) == 1
+    assert teams[0].discord_role_id == 55667788
+
+
+@pytest.mark.asyncio
+async def test_pm_project_role_and_lead_commands(services):
+    """Verify /pm project role (add/remove) and /pm project lead (add/remove)."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 9988776655
+
+    pm_cog = PmCog(
+        bot=MagicMock(),
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+    )
+
+    # 1. Seed project with primary role
+    p = await proj_srv.create_project(guild_id=guild_id, name="Cloud Backend", prefix="CLD")
+    t1 = await team_srv.create_team(guild_id=guild_id, name="Backend", discord_role_id=1001)
+    await proj_srv.assign_team_to_project(p.id, t1.id)
+
+    # 2. Add second role via /pm project role add
+    mock_role_qa = MagicMock(spec=discord.Role)
+    mock_role_qa.id = 1002
+    mock_role_qa.name = "QA Engineers"
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.guild_permissions = MagicMock(manage_guild=True, administrator=True)
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    await pm_cog.project_role.callback(
+        pm_cog,
+        interaction=interaction,
+        project_name="Cloud Backend",
+        role=mock_role_qa,
+        action="add",
+    )
+
+    teams = await proj_srv.list_teams_for_project(p.id)
+    assert len(teams) == 2
+    role_ids = {t.discord_role_id for t in teams}
+    assert 1001 in role_ids
+    assert 1002 in role_ids
+
+    # 3. Designate lead via /pm project lead add
+    mock_user_lead = MagicMock(spec=discord.Member)
+    mock_user_lead.id = 5050
+    mock_user_lead.roles = [mock_role_qa]
+
+    await pm_cog.project_lead.callback(
+        pm_cog,
+        interaction=interaction,
+        project_name="Cloud Backend",
+        user=mock_user_lead,
+        action="add",
+    )
+
+    t2 = next(t for t in teams if t.discord_role_id == 1002)
+    leads = await team_srv.list_team_leads(t2.id)
+    assert 5050 in leads
+
+    # 4. Remove role via /pm project role remove
+    await pm_cog.project_role.callback(
+        pm_cog,
+        interaction=interaction,
+        project_name="Cloud Backend",
+        role=mock_role_qa,
+        action="remove",
+    )
+    teams_after = await proj_srv.list_teams_for_project(p.id)
+    assert len(teams_after) == 1
+    assert teams_after[0].discord_role_id == 1001

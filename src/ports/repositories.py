@@ -148,6 +148,10 @@ class IProjectRepo(ABC):
         """Maps a team to a project."""
 
     @abstractmethod
+    async def remove_team(self, project_id: UUID, team_id: UUID) -> None:
+        """Unmaps a team from a project."""
+
+    @abstractmethod
     async def list_teams_for_project(self, project_id: UUID) -> list[Team]:
         """Lists all teams mapped to a project."""
 

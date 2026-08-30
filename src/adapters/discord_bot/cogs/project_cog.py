@@ -35,6 +35,7 @@ class ProjectCog(commands.Cog):
     @app_commands.describe(
         name="Name of the project (e.g. Infrastructure)",
         channel="Discord forum or text channel to bind as the project's task feed",
+        role="Discord server role representing the squad working on this project",
         prefix="Optional 3-4 letter prefix (e.g. INF)",
         description="Brief summary of the project goals",
         category="Category or domain (e.g. Engineering, Marketing)",
@@ -45,6 +46,7 @@ class ProjectCog(commands.Cog):
         interaction: discord.Interaction,
         name: str,
         channel: discord.ForumChannel | discord.TextChannel,
+        role: discord.Role | None = None,
         prefix: str | None = None,
         description: str | None = None,
         category: str | None = None,
@@ -69,6 +71,16 @@ class ProjectCog(commands.Cog):
                 discord_channel_id=channel.id,
                 category=category,
             )
+
+            role_field_val = None
+            if role:
+                team = await self.team_service.get_or_create_team_for_role(
+                    guild_id=interaction.guild.id,
+                    role_id=role.id,
+                    role_name=role.name,
+                )
+                await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
+                role_field_val = f"<@&{role.id}>"
 
             is_forum = isinstance(channel, discord.ForumChannel)
             chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
@@ -99,6 +111,8 @@ class ProjectCog(commands.Cog):
                 color=discord.Color.blue(),
             )
             embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
+            if role_field_val:
+                embed.add_field(name="Assigned Squad", value=role_field_val, inline=True)
             if project.discord_channel_id:
                 embed.add_field(
                     name="Bound Channel",

@@ -751,10 +751,11 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
     # ==========================================
     # Project Subgroup: /pm project <cmd>
     # ==========================================
-    @project_group.command(name="create", description="Create a project container and bind a forum/channel.")
+    @project_group.command(name="create", description="Create a project container, bind channel, and map team role.")
     @app_commands.describe(
         name="Project Name (e.g. Mobile App)",
         prefix="Short uppercase task prefix (e.g. MOB)",
+        role="Discord server role representing the squad working on this project",
         channel="Discord Forum or Text Channel to bind for tasks",
         description="Optional markdown project overview",
         category="Optional organizational category",
@@ -765,6 +766,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         interaction: discord.Interaction,
         name: str,
         prefix: str,
+        role: discord.Role,
         channel: discord.ForumChannel | discord.TextChannel | None = None,
         description: str | None = None,
         category: str | None = None,
@@ -782,6 +784,14 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 discord_channel_id=channel_id,
                 category=category,
             )
+
+            # Automatically create/retrieve team for role and map it to project
+            team = await self.team_service.get_or_create_team_for_role(
+                guild_id=interaction.guild.id,
+                role_id=role.id,
+                role_name=role.name,
+            )
+            await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
 
             hub_note = ""
             if channel:
@@ -802,6 +812,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 color=discord.Color.blue(),
             )
             embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
+            embed.add_field(name="Assigned Squad", value=f"<@&{role.id}>", inline=True)
             if project.discord_channel_id:
                 embed.add_field(name="Bound Channel", value=f"<#{project.discord_channel_id}>{hub_note}", inline=True)
 
@@ -881,6 +892,134 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring project '{project_name}'", logger, ephemeral=True)
+
+    @project_group.command(name="role", description="Map or unmap a Discord team role on a project container.")
+    @app_commands.describe(
+        project_name="Target project name",
+        role="Discord role representing the functional squad",
+        action="Map (add) or Unmap (remove) role from project",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Map Role to Project", value="add"),
+            app_commands.Choice(name="Unmap Role from Project", value="remove"),
+        ]
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def project_role(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        role: discord.Role,
+        action: str = "add",
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            team = await self.team_service.get_or_create_team_for_role(interaction.guild.id, role.id, role.name)
+
+            if action == "add":
+                await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
+                msg = f"🔗 Mapped role **{role.name}** (<@&{role.id}>) to project **{project.name}**."
+            else:
+                await self.project_service.remove_team_from_project(project_id=project.id, team_id=team.id)
+                msg = f"✂️ Unmapped role **{role.name}** from project **{project.name}**."
+
+            await interaction.followup.send(msg)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"managing project role for '{project_name}'", logger, ephemeral=True
+            )
+
+    @project_group.command(name="lead", description="Designate or remove a Team Lead for a project's squads.")
+    @app_commands.describe(
+        project_name="Target project name",
+        user="Discord member to designate or remove as Team Lead",
+        action="Action to perform (Add or Remove Lead)",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add Team Lead", value="add"),
+            app_commands.Choice(name="Remove Team Lead", value="remove"),
+        ]
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    async def project_lead(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        user: discord.Member,
+        action: str = "add",
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            teams = await self.project_service.list_teams_for_project(project.id)
+            if not teams:
+                await interaction.followup.send(
+                    f"❌ Project '{project.name}' has no assigned team roles.", ephemeral=True
+                )
+                return
+
+            # Check auth: server manager or active lead
+            is_manager = self.auth_service.is_server_manager(interaction.user)
+            if not is_manager:
+                is_any_lead = False
+                for t in teams:
+                    if await self.auth_service.can_manage_team_leads(interaction.user, t.id):
+                        is_any_lead = True
+                        break
+                if not is_any_lead:
+                    await interaction.followup.send(
+                        "❌ You do not have permission to manage team leads for this project.",
+                        ephemeral=True,
+                    )
+                    return
+
+            user_roles = {r.id for r in getattr(user, "roles", []) if hasattr(r, "id")}
+            matching_teams = [t for t in teams if t.discord_role_id in user_roles] if action == "add" else teams
+
+            if action == "add":
+                if not matching_teams:
+                    role_mentions = ", ".join(f"<@&{t.discord_role_id}>" for t in teams)
+                    await interaction.followup.send(
+                        f"❌ <@{user.id}> does not hold any of project **{project.name}**'s assigned roles "
+                        f"({role_mentions}).\nPlease assign them the Discord role first.",
+                        ephemeral=True,
+                    )
+                    return
+                for t in matching_teams:
+                    await self.team_service.add_team_lead(t.id, user.id)
+                msg = f"⭐ Designated <@{user.id}> as **Team Lead** for project **{project.name}**."
+            else:
+                for t in teams:
+                    await self.team_service.remove_team_lead(t.id, user.id)
+                msg = f"✅ Removed Team Lead status from <@{user.id}> for project **{project.name}**."
+
+            await interaction.followup.send(msg)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"managing lead for project '{project_name}'", logger, ephemeral=True
+            )
 
     @project_group.command(name="team", description="Map or unmap a functional squad to a project container.")
     @app_commands.describe(
