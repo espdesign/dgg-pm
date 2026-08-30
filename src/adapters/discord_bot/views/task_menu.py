@@ -245,7 +245,6 @@ class TaskMenuView(discord.ui.View):
         self.team_service = team_service
         self.projects = projects or []
         self.selected_project_id: UUID | None = None
-        self.selected_status: TaskStatus | None = None
         self.selected_assignee_id: int | None = None
 
         # Row 0: Action Buttons
@@ -307,11 +306,18 @@ class TaskMenuView(discord.ui.View):
         self.add_item(self.project_select)
 
         # Row 2: Status Filter Select
+        self.status_filter_value: str = "active"
         status_options = [
-            discord.SelectOption(label="All Statuses", value="all", emoji="📊", default=True),
+            discord.SelectOption(
+                label="Active Tasks (In Progress & Not Started)",
+                value="active",
+                emoji="⚡",
+                default=True,
+            ),
             discord.SelectOption(label="In Progress", value="inProgress", emoji="🟡"),
             discord.SelectOption(label="Not Started", value="notStarted", emoji="⚪"),
             discord.SelectOption(label="Completed", value="completed", emoji="🟢"),
+            discord.SelectOption(label="All Statuses (including Completed)", value="all", emoji="📊"),
         ]
         self.status_select = discord.ui.Select(
             placeholder="📊 Filter by Status...",
@@ -340,6 +346,12 @@ class TaskMenuView(discord.ui.View):
         )
         self.clear_member_btn.callback = self._on_clear_member_clicked
         self.add_item(self.clear_member_btn)
+
+    @property
+    def selected_status(self) -> TaskStatus | None:
+        if self.status_filter_value in ("inProgress", "notStarted", "completed"):
+            return TaskStatus(self.status_filter_value)
+        return None
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
@@ -377,8 +389,7 @@ class TaskMenuView(discord.ui.View):
         await self._render_filtered_board(interaction)
 
     async def _on_status_filter_changed(self, interaction: discord.Interaction) -> None:
-        val = self.status_select.values[0]
-        self.selected_status = None if val == "all" else TaskStatus(val)
+        self.status_filter_value = self.status_select.values[0]
         await self._render_filtered_board(interaction)
 
     async def _on_assignee_filter_changed(self, interaction: discord.Interaction) -> None:
@@ -392,7 +403,7 @@ class TaskMenuView(discord.ui.View):
 
     async def _on_reset_filters_clicked(self, interaction: discord.Interaction) -> None:
         self.selected_project_id = None
-        self.selected_status = None
+        self.status_filter_value = "active"
         self.selected_assignee_id = None
         await self._render_filtered_board(interaction)
 
@@ -400,12 +411,24 @@ class TaskMenuView(discord.ui.View):
         if not interaction.guild:
             return
 
+        filter_status = None
+        exclude_completed = False
+        if self.status_filter_value == "active":
+            exclude_completed = True
+            status_label = "Active Tasks (In Progress & Not Started)"
+        elif self.status_filter_value == "all":
+            status_label = "All Statuses (including Completed)"
+        else:
+            filter_status = TaskStatus(self.status_filter_value)
+            status_label = filter_status.value
+
         tasks, total = await self.task_service.list_tasks(
             guild_id=interaction.guild.id,
             project_id=self.selected_project_id,
             assignee_discord_id=self.selected_assignee_id,
-            status=self.selected_status,
+            status=filter_status,
             include_archived=False,
+            exclude_completed=exclude_completed,
             limit=15,
         )
 
@@ -419,7 +442,6 @@ class TaskMenuView(discord.ui.View):
                 if p:
                     project_label = f"[{p.prefix}] {p.name}"
 
-        status_label = self.selected_status.value if self.selected_status else "All Statuses"
         assignee_label = f"<@{self.selected_assignee_id}>" if self.selected_assignee_id else "All Members"
 
         embed = discord.Embed(

@@ -298,3 +298,35 @@ async def test_pm_hub_navigation(services):
     # Switch to tasks tab
     await hub_view.tasks_tab.callback(mock_interaction)
     assert mock_interaction.response.edit_message.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_task_menu_and_list_excludes_completed_by_default(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 9991234567
+
+    p = await proj_srv.create_project(guild_id=guild_id, name="Core Board", prefix="CRB")
+    await task_srv.create_task(guild_id=guild_id, title="Active 1", creator_discord_id=1, project_id=p.id)
+    await task_srv.create_task(guild_id=guild_id, title="Active 2", creator_discord_id=1, project_id=p.id)
+    t3 = await task_srv.create_task(guild_id=guild_id, title="Done 1", creator_discord_id=1, project_id=p.id)
+    await task_srv.update_status(
+        task_id=t3.id, new_status=TaskStatus.COMPLETED, expected_version=t3.version, actor_discord_id=1
+    )
+
+    # 1. Default list_tasks with exclude_completed=True
+    active_tasks, total = await task_srv.list_tasks(guild_id=guild_id, exclude_completed=True)
+    assert total == 2
+    titles = [t.title for t in active_tasks]
+    assert "Active 1" in titles
+    assert "Active 2" in titles
+    assert "Done 1" not in titles
+
+    # 2. list_tasks with exclude_completed=False
+    _, total_all = await task_srv.list_tasks(guild_id=guild_id, exclude_completed=False)
+    assert total_all == 3
+
+    # 3. list_tasks with status=TaskStatus.COMPLETED
+    completed_tasks, total_completed = await task_srv.list_tasks(guild_id=guild_id, status=TaskStatus.COMPLETED)
+    assert total_completed == 1
+    assert completed_tasks[0].title == "Done 1"

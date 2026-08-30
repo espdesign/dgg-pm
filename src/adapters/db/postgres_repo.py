@@ -320,6 +320,7 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
         assignee_discord_id: int | None = None,
         status: TaskStatus | None = None,
         include_archived: bool = False,
+        exclude_completed: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Task], int]:
@@ -333,6 +334,8 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 filters.append(TaskTable.assignee_discord_id == assignee_discord_id)
             if status:
                 filters.append(TaskTable.status == status.value)
+            elif exclude_completed:
+                filters.append(TaskTable.status != TaskStatus.COMPLETED.value)
 
             # Count total
             count_stmt = select(func.count()).select_from(TaskTable).where(*filters)

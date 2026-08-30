@@ -380,6 +380,7 @@ class TaskService:
         assignee_discord_id: int | None = None,
         status: TaskStatus | None = None,
         include_archived: bool = False,
+        exclude_completed: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Task], int]:
@@ -389,6 +390,7 @@ class TaskService:
             assignee_discord_id=assignee_discord_id,
             status=status,
             include_archived=include_archived,
+            exclude_completed=exclude_completed,
             limit=limit,
             offset=offset,
         )

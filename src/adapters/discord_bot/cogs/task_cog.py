@@ -576,9 +576,11 @@ class TaskCog(commands.Cog):
     )
     @app_commands.choices(
         status=[
-            app_commands.Choice(name="Not Started", value="notStarted"),
+            app_commands.Choice(name="Active (In Progress & Not Started)", value="active"),
             app_commands.Choice(name="In Progress", value="inProgress"),
+            app_commands.Choice(name="Not Started", value="notStarted"),
             app_commands.Choice(name="Completed", value="completed"),
+            app_commands.Choice(name="All (including Completed)", value="all"),
         ]
     )
     @app_commands.autocomplete(project_name=project_autocomplete)
@@ -607,19 +609,34 @@ class TaskCog(commands.Cog):
             if user:
                 title_parts.append(f"Assignee: {user.display_name}")
 
-            filter_status = TaskStatus(status) if status else None
-            if filter_status:
+            exclude_completed = False
+            filter_status = None
+            if status == "all":
+                filter_status = None
+                exclude_completed = False
+                title_parts.append("Status: All")
+            elif status in ("inProgress", "notStarted", "completed"):
+                filter_status = TaskStatus(status)
+                exclude_completed = False
                 title_parts.append(f"Status: {filter_status.value}")
+            else:
+                # Default: active only (inProgress and notStarted)
+                filter_status = None
+                exclude_completed = True
+                if status == "active":
+                    title_parts.append("Status: Active")
 
             tasks, total_count = await self.task_service.list_tasks(
                 guild_id=interaction.guild.id,
                 project_id=project_id,
                 assignee_discord_id=user.id if user else None,
                 status=filter_status,
+                include_archived=False,
+                exclude_completed=exclude_completed,
                 limit=100,
             )
 
-            title_context = "Tasks (" + ", ".join(title_parts) + ")" if title_parts else "All Active Tasks"
+            title_context = "Tasks (" + ", ".join(title_parts) + ")" if title_parts else "Active Tasks"
             embed = build_page_embed(tasks, 0, total_count, title_context)
             view = TaskListView(tasks, total_count, title_context)
 
