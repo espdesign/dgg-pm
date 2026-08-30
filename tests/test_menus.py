@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 import pytest
 
-from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+from src.adapters.discord_bot.views.hub_menu import (
+    HubBoardProjectSelectView,
+    HubTaskProjectSelectView,
+    PmHubView,
+    build_hub_welcome_embed,
+)
 from src.adapters.discord_bot.views.project_menu import (
     ProjectActiveListView,
     ProjectArchiveConfirmView,
@@ -435,6 +440,108 @@ async def test_pm_hub_navigation(services):
     await hub_view.settings_tab.callback(mock_interaction)
     assert mock_interaction.response.send_message.await_count == 3
     assert mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_pm_hub_multi_project_flows(services):
+    """Verify PmHubView in multi-project forums shows project selection for tasks and board."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    guild_id = 9988776655
+    channel_id = 33445566
+
+    p1 = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Project Alpha",
+        prefix="ALPH",
+        discord_channel_id=channel_id,
+    )
+    p2 = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Project Beta",
+        prefix="BETA",
+        discord_channel_id=channel_id,
+    )
+
+    hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
+
+    mock_channel = MagicMock(spec=discord.ForumChannel)
+    mock_channel.id = channel_id
+    mock_channel.name = "multi-forum"
+
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock()
+    mock_interaction.guild.id = guild_id
+    mock_interaction.user = MagicMock()
+    mock_interaction.user.id = 123456789
+    mock_interaction.user.display_name = "testuser"
+    mock_interaction.channel = mock_channel
+    mock_interaction.response = MagicMock()
+    mock_interaction.response.send_message = AsyncMock()
+    mock_interaction.response.send_modal = AsyncMock()
+    mock_interaction.response.edit_message = AsyncMock()
+
+    # 1. Clicking New Task in multi-project forum should send ephemeral HubTaskProjectSelectView
+    await hub_view.new_task_btn.callback(mock_interaction)
+    mock_interaction.response.send_message.assert_awaited_once()
+    send_args = mock_interaction.response.send_message.call_args
+    assert send_args.kwargs.get("ephemeral") is True
+    picker_view = send_args.kwargs.get("view")
+    assert isinstance(picker_view, HubTaskProjectSelectView)
+    assert len(picker_view.select.options) == 3  # Alpha, Beta, Standalone
+
+    # 2. Select Project Alpha -> opens TaskCreateModal for Alpha
+    picker_view.select._values = [str(p1.id)]
+    select_interaction = MagicMock(spec=discord.Interaction)
+    select_interaction.response = MagicMock()
+    select_interaction.response.send_modal = AsyncMock()
+    await picker_view._on_select(select_interaction)
+    select_interaction.response.send_modal.assert_awaited_once()
+    modal = select_interaction.response.send_modal.call_args.args[0]
+    assert isinstance(modal, TaskCreateModal)
+    assert modal.project.id == p1.id
+
+    # 3. Select Standalone -> opens TaskCreateModal with project=None
+    picker_view.select._values = ["standalone"]
+    select_interaction2 = MagicMock(spec=discord.Interaction)
+    select_interaction2.response = MagicMock()
+    select_interaction2.response.send_modal = AsyncMock()
+    await picker_view._on_select(select_interaction2)
+    select_interaction2.response.send_modal.assert_awaited_once()
+    modal2 = select_interaction2.response.send_modal.call_args.args[0]
+    assert isinstance(modal2, TaskCreateModal)
+    assert modal2.project is None
+
+    # 4. Clicking Task Board in multi-project forum should send ephemeral HubBoardProjectSelectView
+    board_interaction = MagicMock(spec=discord.Interaction)
+    board_interaction.guild = MagicMock()
+    board_interaction.guild.id = guild_id
+    board_interaction.channel = mock_channel
+    board_interaction.response = MagicMock()
+    board_interaction.response.send_message = AsyncMock()
+
+    await hub_view.tasks_tab.callback(board_interaction)
+    board_interaction.response.send_message.assert_awaited_once()
+    board_send_args = board_interaction.response.send_message.call_args
+    assert board_send_args.kwargs.get("ephemeral") is True
+    board_picker_view = board_send_args.kwargs.get("view")
+    assert isinstance(board_picker_view, HubBoardProjectSelectView)
+    assert len(board_picker_view.select.options) == 3  # All, Alpha, Beta
+
+    # 5. Select Project Beta in board picker -> edits message to TaskMenuView scoped to Beta
+    board_picker_view.select._values = [str(p2.id)]
+    board_select_interaction = MagicMock(spec=discord.Interaction)
+    board_select_interaction.guild = MagicMock()
+    board_select_interaction.guild.id = guild_id
+    board_select_interaction.response = MagicMock()
+    board_select_interaction.response.edit_message = AsyncMock()
+    await board_picker_view._on_select(board_select_interaction)
+    board_select_interaction.response.edit_message.assert_awaited_once()
+    task_view = board_select_interaction.response.edit_message.call_args.kwargs.get("view")
+    assert isinstance(task_view, TaskMenuView)
+    assert task_view.selected_project_id == p2.id
 
 
 @pytest.mark.asyncio

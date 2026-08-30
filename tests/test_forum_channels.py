@@ -720,3 +720,79 @@ async def test_task_create_modal_inside_forum_thread_creates_new_forum_post(serv
     create_args = mock_forum.create_thread.call_args.kwargs
     assert "[MOB-1] Fix crash on splash screen" in create_args["name"]
     mock_hub_thread.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_pinned_hub_post_multi_project_update(services):
+    """Verify ensure_pinned_hub_post updates existing thread post when second project is bound."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    guild_id = 88776655
+
+    mock_guild = MagicMock()
+    mock_guild.id = guild_id
+
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 44556677
+    mock_forum.name = "shared-projects"
+    mock_forum.guild = mock_guild
+    mock_forum.available_tags = []
+    mock_forum.threads = []
+    mock_forum.edit = AsyncMock()
+
+    mock_starter_msg = MagicMock()
+    mock_starter_msg.edit = AsyncMock()
+
+    mock_thread = MagicMock()
+    mock_thread.id = 11229988
+    mock_thread.name = "📌 📊 #shared-projects • Control Hub"
+    mock_thread.edit = AsyncMock()
+    mock_thread.starter_message = mock_starter_msg
+    mock_forum.create_thread = AsyncMock(return_value=mock_thread)
+
+    # 1. Create Project 1 and initialize hub
+    p1 = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Frontend App",
+        prefix="FRONT",
+        discord_channel_id=mock_forum.id,
+    )
+
+    ok1, msg1 = await ensure_pinned_hub_post(
+        channel=mock_forum,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        project_name=p1.name,
+    )
+    assert ok1 is True
+    assert "Created and pinned" in msg1
+    mock_forum.create_thread.assert_awaited_once()
+
+    # Place the created thread in forum's threads
+    mock_forum.threads = [mock_thread]
+
+    # 2. Create Project 2 bound to the same forum
+    p2 = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Backend API",
+        prefix="BACK",
+        discord_channel_id=mock_forum.id,
+    )
+
+    ok2, msg2 = await ensure_pinned_hub_post(
+        channel=mock_forum,
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        project_name=p2.name,
+    )
+    assert ok2 is True
+    assert "Updated Control Hub" in msg2
+    assert mock_thread.edit.await_count == 2
+    mock_thread.edit.assert_awaited_with(name="📌 📊 #shared-projects • Control Hub", pinned=True)
+    mock_starter_msg.edit.assert_awaited_once()
+    edited_embed = mock_starter_msg.edit.call_args.kwargs["embed"]
+    assert "Frontend App" in edited_embed.description
+    assert "Backend API" in edited_embed.description

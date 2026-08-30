@@ -241,14 +241,29 @@ async def ensure_pinned_hub_post(
 ) -> tuple[bool, str]:
     """Ensures a pinned Project Management Hub post exists in the given Forum or Text channel."""
     from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+    from src.domain.models import Project
 
-    embed = build_hub_welcome_embed()
-    if project_name:
-        embed.title = f"🎛️ {project_name} • Control Hub"
-        embed.description = (
-            f"Interactive management dashboard for **{project_name}**.\n"
-            "Click any button below to perform operations without typing commands."
-        )
+    bound_projects: list[Project] = []
+    guild = getattr(channel, "guild", None)
+    if project_service and guild and hasattr(guild, "id"):
+        try:
+            all_projs = await project_service.list_projects(guild.id, include_archived=False)
+            bound_projects = [p for p in all_projs if p.discord_channel_id == channel.id]
+        except Exception as e:
+            logger.warning("Could not list projects for channel %s: %s", channel.id, e)
+
+    if not bound_projects and project_name:
+        guild_id = getattr(guild, "id", 0)
+        bound_projects = [
+            Project(
+                guild_id=guild_id,
+                name=project_name,
+                prefix=project_name[:4].upper().replace(" ", ""),
+            )
+        ]
+
+    channel_name = getattr(channel, "name", None)
+    embed = build_hub_welcome_embed(channel_name=channel_name, bound_projects=bound_projects)
 
     view = None
     if project_service and team_service and task_service:
@@ -262,9 +277,13 @@ async def ensure_pinned_hub_post(
     if isinstance(channel, discord.ForumChannel):
         # 1. Setup standard tags first
         await setup_forum_tags(channel)
+        for bp in bound_projects:
+            await ensure_project_tag(channel, bp.name)
+        if project_name and not any(bp.name == project_name for bp in bound_projects):
+            await ensure_project_tag(channel, project_name)
 
         # 2. Check if a thread with Control Hub / Management Hub already exists
-        post_title = f"📌 📊 {project_name + ' • ' if project_name else ''}Control Hub"
+        post_title = f"📌 📊 #{channel.name} • Control Hub" if channel_name else "📌 📊 Control Hub"
         existing_thread = None
         if hasattr(channel, "threads"):
             for t in channel.threads:
@@ -273,7 +292,34 @@ async def ensure_pinned_hub_post(
                     break
 
         if existing_thread:
-            return True, f"Pinned Hub already exists in #{channel.name} (<#{existing_thread.id}>)."
+            try:
+                if hasattr(existing_thread, "edit"):
+                    edit_res = existing_thread.edit(name=post_title, pinned=True)
+                    if hasattr(edit_res, "__await__"):
+                        await edit_res
+            except Exception as e:
+                logger.warning("Could not edit thread title/pin for %s: %s", getattr(existing_thread, "id", None), e)
+
+            msg_to_edit = getattr(existing_thread, "starter_message", None)
+            if not msg_to_edit and hasattr(existing_thread, "fetch_message"):
+                try:
+                    fetch_res = existing_thread.fetch_message(existing_thread.id)
+                    if hasattr(fetch_res, "__await__"):
+                        msg_to_edit = await fetch_res
+                except Exception:
+                    pass
+            if msg_to_edit and hasattr(msg_to_edit, "edit"):
+                try:
+                    edit_res = msg_to_edit.edit(embed=embed, view=view)
+                    if hasattr(edit_res, "__await__"):
+                        await edit_res
+                except Exception as e:
+                    logger.warning(
+                        "Could not edit starter message in thread %s: %s", getattr(existing_thread, "id", None), e
+                    )
+
+            thread_id = getattr(existing_thread, "id", channel.id)
+            return True, f"Updated Control Hub in forum #{channel.name} (<#{thread_id}>)."
 
         try:
             thread_with_msg = await channel.create_thread(
@@ -299,10 +345,35 @@ async def ensure_pinned_hub_post(
             return False, f"Failed to create forum hub: {e}"
 
     elif isinstance(channel, discord.TextChannel):
+        existing_msg = None
+        if hasattr(channel, "pins"):
+            try:
+                pins_res = channel.pins()
+                pins = await pins_res if hasattr(pins_res, "__await__") else pins_res
+                for m in pins or []:
+                    if getattr(m, "embeds", None) and any(
+                        "Control Hub" in (getattr(e, "title", "") or "") for e in m.embeds
+                    ):
+                        existing_msg = m
+                        break
+            except Exception:
+                pass
+
+        if existing_msg and hasattr(existing_msg, "edit"):
+            try:
+                edit_res = existing_msg.edit(embed=embed, view=view)
+                if hasattr(edit_res, "__await__"):
+                    await edit_res
+                return True, f"Updated pinned Control Hub in #{channel.name}."
+            except Exception as e:
+                logger.warning("Could not edit pinned message in text channel %s: %s", channel.id, e)
+
         try:
             msg = await channel.send(embed=embed, view=view)
             try:
-                await msg.pin()
+                pin_res = msg.pin()
+                if hasattr(pin_res, "__await__"):
+                    await pin_res
             except Exception as e:
                 logger.warning("Could not pin message in text channel %s: %s", channel.id, e)
             return True, f"Posted and pinned Control Hub in #{channel.name}."
