@@ -539,3 +539,66 @@ async def test_pm_cog_post_hub_and_subgroups(services):
 
     await pm_cog.help_command.callback(pm_cog, interaction=interaction_help)
     interaction_help.response.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pm_hub_view_ephemeral_interactions(services):
+    """Verify PmHubView button interactions respond ephemerally and open modals without mutating public post."""
+    from src.adapters.discord_bot.views.hub_menu import PmHubView
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    guild_id = 999111222
+
+    # Seed a project
+    await proj_srv.create_project(guild_id=guild_id, name="Infra", prefix="INF", discord_channel_id=12345)
+
+    hub_view = PmHubView(
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        user_service=user_srv,
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.channel = MagicMock()
+    interaction.channel.id = 12345
+    interaction.channel.parent_id = None
+    interaction.user = MagicMock()
+    interaction.user.id = 777888
+    interaction.response = MagicMock()
+    interaction.response.send_modal = AsyncMock()
+    interaction.response.send_message = AsyncMock()
+
+    # 1. Click New Task -> opens modal
+    await hub_view.new_task_btn.callback(interaction)
+    interaction.response.send_modal.assert_awaited_once()
+
+    # 2. Click Task Board -> sends ephemeral response
+    await hub_view.tasks_tab.callback(interaction)
+    assert interaction.response.send_message.await_count == 1
+    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+    # 3. Click Projects Hub -> sends ephemeral response
+    await hub_view.projects_tab.callback(interaction)
+    assert interaction.response.send_message.await_count == 2
+    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+    # 4. Click Teams Hub -> sends ephemeral response
+    await hub_view.teams_tab.callback(interaction)
+    assert interaction.response.send_message.await_count == 3
+    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+    # 5. Click My Settings -> sends ephemeral response
+    await hub_view.settings_tab.callback(interaction)
+    assert interaction.response.send_message.await_count == 4
+    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+
+    # 6. Click Guides -> sends ephemeral response
+    await hub_view.guide_tab.callback(interaction)
+    assert interaction.response.send_message.await_count == 5
+    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True

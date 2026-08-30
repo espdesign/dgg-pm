@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import discord
 
 from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
-from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_board_embed
+from src.adapters.discord_bot.views.task_menu import TaskCreateModal, TaskMenuView, build_task_board_embed
 from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -19,7 +19,11 @@ logger = logging.getLogger("dgg_pm.views.hub_menu")
 
 
 class PmHubView(discord.ui.View):
-    """Master Hub View allowing seamless switching between Project, Team, Task, and Guide centers."""
+    """Master Hub View allowing seamless opening of private interactive sessions for each user.
+
+    All button interactions respond ephemerally or open modals, ensuring the public pinned
+    control post in the forum/channel is never modified or disrupted by individual user clicks.
+    """
 
     def __init__(
         self,
@@ -34,19 +38,41 @@ class PmHubView(discord.ui.View):
         self.task_service = task_service
         self.user_service = user_service
 
-    @discord.ui.button(label="Projects Hub", emoji="📁", style=discord.ButtonStyle.primary, row=0)
-    async def projects_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        embed = build_project_menu_embed()
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        await interaction.response.edit_message(embed=embed, view=view)
+    @discord.ui.button(
+        label="New Task",
+        emoji="➕",
+        style=discord.ButtonStyle.success,
+        row=0,
+        custom_id="pm_hub:new_task",
+    )
+    async def new_task_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        channel_id = interaction.channel.id if interaction.channel else None
+        parent_id = getattr(interaction.channel, "parent_id", None)
+        channel_ids = {cid for cid in (channel_id, parent_id) if cid}
+        channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
+        matched_proj = channel_projects[0] if channel_projects else (projects[0] if len(projects) == 1 else None)
 
-    @discord.ui.button(label="Teams Hub", emoji="👥", style=discord.ButtonStyle.primary, row=0)
-    async def teams_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        embed = build_team_menu_embed()
-        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
-        await interaction.response.edit_message(embed=embed, view=view)
+        from src.services.auth_service import AuthService
 
-    @discord.ui.button(label="Tasks Hub", emoji="⚡", style=discord.ButtonStyle.primary, row=0)
+        auth_srv = AuthService(self.project_service, self.team_service)
+        modal = TaskCreateModal(
+            task_service=self.task_service,
+            project=matched_proj,
+            target_channel=interaction.channel,
+            auth_service=auth_srv,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="Task Board",
+        emoji="⚡",
+        style=discord.ButtonStyle.primary,
+        row=0,
+        custom_id="pm_hub:task_board",
+    )
     async def tasks_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             return
@@ -85,9 +111,39 @@ class PmHubView(discord.ui.View):
             status_label="Active Tasks (In Progress & Not Started)",
             assignee_label="All Members",
         )
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="My Settings", emoji="⚙️", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(
+        label="Projects Hub",
+        emoji="📁",
+        style=discord.ButtonStyle.primary,
+        row=0,
+        custom_id="pm_hub:projects",
+    )
+    async def projects_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        embed = build_project_menu_embed()
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="Teams Hub",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        row=0,
+        custom_id="pm_hub:teams",
+    )
+    async def teams_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        embed = build_team_menu_embed()
+        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="My Settings",
+        emoji="⚙️",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+        custom_id="pm_hub:settings",
+    )
     async def settings_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         from src.adapters.discord_bot.views.settings_menu import UserSettingsView, build_settings_embed
 
@@ -103,12 +159,18 @@ class PmHubView(discord.ui.View):
             task_service=self.task_service,
         )
         embed = build_settings_embed(interaction.user, current_pref)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Guides", emoji="📖", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(
+        label="Guides",
+        emoji="📖",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+        custom_id="pm_hub:guides",
+    )
     async def guide_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed = build_hub_welcome_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 def build_hub_welcome_embed() -> discord.Embed:
@@ -116,29 +178,34 @@ def build_hub_welcome_embed() -> discord.Embed:
         title="🎛️ Project Management Control Hub",
         description=(
             "Welcome to **dgg-pm**! Manage your entire workflow with interactive dashboards.\n"
-            "Click any of the hub tabs below to access dedicated management controls without typing CLI commands."
+            "Click any button below to launch a private interactive workspace without modifying this hub for others."
         ),
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="📁 Projects Hub (`/project-menu`)",
-        value="Create project containers, bind channels, and map squads.",
+        name="➕ New Task",
+        value="Open the task creation form for this project.",
         inline=False,
     )
     embed.add_field(
-        name="👥 Teams Hub (`/team-menu`)",
-        value="Create squads, map Discord roles, and assign team leads/members.",
+        name="⚡ Task Board",
+        value="Launch private interactive task board with filters and pagination.",
         inline=False,
     )
     embed.add_field(
-        name="⚡ Tasks Hub (`/task-menu`)",
-        value="Create tasks, filter active boards, and update execution status.",
+        name="📁 Projects Hub",
+        value="View project containers, bound channels, and mapped squads.",
         inline=False,
     )
     embed.add_field(
-        name="⚙️ My Settings (`/my-settings`)",
-        value="Customize your personal notification delivery (DM, Channel Ping, Both, Silent).",
+        name="👥 Teams Hub",
+        value="Inspect squad rosters, Discord roles, and team leads.",
         inline=False,
     )
-    embed.set_footer(text="dgg-pm • Zero-typing project management")
+    embed.add_field(
+        name="⚙️ My Settings",
+        value="Configure your personal notification delivery (DM, Channel Ping, Both, Silent).",
+        inline=False,
+    )
+    embed.set_footer(text="dgg-pm • Zero-clutter Discord-native project management")
     return embed

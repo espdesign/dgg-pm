@@ -7,6 +7,7 @@ from discord.ext import commands
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
+from src.adapters.discord_bot.views.hub_menu import PmHubView
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
@@ -61,6 +62,16 @@ class DggPmBot(commands.Bot):
             )
         )
         logger.info("Loaded Discord cog: PmCog (unified /pm namespace)")
+
+        # Register persistent views
+        self.add_view(
+            PmHubView(
+                project_service=self.project_service,
+                team_service=self.team_service,
+                task_service=self.task_service,
+                user_service=self.user_service,
+            )
+        )
 
         # Sync application slash commands
         if settings.DISCORD_GUILD_ID:

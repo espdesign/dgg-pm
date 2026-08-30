@@ -23,22 +23,33 @@ In Discord Forum Channels, users cannot type slash commands at the forum root le
 
 To make forum channels completely self-sufficient:
 - When a project is created and linked to a forum channel, the bot automatically creates and **pins** a permanent thread post: **`📌 📊 [Project Name] • Control Hub`**.
-- The post contains the interactive Master Hub View with live buttons:
-  - **`⚡ Tasks Hub`**: Create tasks via modals, filter active task boards.
-  - **`📁 Projects Hub`**: Switch containers, view bound channels.
-  - **`👥 Teams Hub`**: View squad rosters and leads.
-  - **`⚙️ My Settings`**: Change personal notification delivery preferences.
+- The post contains persistent interactive buttons:
+  - **`➕ New Task`**: Opens the task creation popup modal directly.
+  - **`⚡ Task Board`**: Launches a private interactive board with filters and pagination.
+  - **`📁 Projects Hub`**: Launches a private project directory workspace.
+  - **`👥 Teams Hub`**: Launches a private squad roster inspector.
+  - **`⚙️ My Settings`**: Launches personal notification settings.
   - **`📖 Guides`**: Interactive documentation.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  🎛️ Mobile App • Control Hub                             │
+│  📌 📊 Mobile App • Control Hub (Public / Pinned)        │
 │  Interactive management dashboard for Mobile App.        │
 │                                                          │
-│  [ 📁 Projects Hub ] [ 👥 Teams Hub ] [ ⚡ Tasks Hub ]   │
-│  [ ⚙️ My Settings ]   [ 📖 Guides ]                       │
+│  [ ➕ New Task ] [ ⚡ Task Board ] [ 📁 Projects Hub ]   │
+│  [ 👥 Teams Hub ] [ ⚙️ My Settings ] [ 📖 Guides ]       │
+└──────────────────────────┬───────────────────────────────┘
+                           │ (Alice clicks [ ⚡ Task Board ])
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│  🔒 Task Board (Only visible to Alice • Ephemeral)       │
+│  Interactive filters, pagination, and actions.           │
+│  [ ◀ Prev ] [ Next ▶ ] [ 🔍 Filter ]                     │
 └──────────────────────────────────────────────────────────┘
 ```
+
+> [!TIP]
+> **Zero Public Disruption**: All button interactions from the pinned hub respond **ephemerally** or open popup modals. The public pinned post remains pristine and is never altered or replaced when individual members interact with it.
 
 ---
 
