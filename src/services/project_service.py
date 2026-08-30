@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from src.domain.models import Project, ProjectTeam
@@ -65,9 +66,9 @@ class ProjectService:
     async def list_projects(self, guild_id: int, include_archived: bool = False) -> list[Project]:
         return await self.project_repo.list_projects(guild_id, include_archived=include_archived)
 
-    async def allocate_next_short_id(self, project_id: UUID) -> tuple[int, str]:
+    async def allocate_next_short_id(self, project_id: UUID, session: Any = None) -> tuple[int, str]:
         """Atomically increments next_task_number and returns (task_number, short_id)."""
-        task_num, prefix = await self.project_repo.increment_task_number_atomic(project_id)
+        task_num, prefix = await self.project_repo.increment_task_number_atomic(project_id, session=session)
         short_id = f"{prefix}-{task_num}"
         return task_num, short_id
 

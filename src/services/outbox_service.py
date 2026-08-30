@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -17,6 +19,7 @@ class OutboxService:
         idempotency_key: str,
         payload: dict[str, Any],
         scheduled_for: datetime | None = None,
+        session: Any | None = None,
     ) -> OutboxEvent:
         event = OutboxEvent(
             idempotency_key=idempotency_key,
@@ -25,9 +28,9 @@ class OutboxService:
             status=OutboxStatus.PENDING,
             scheduled_for=scheduled_for or datetime.now(UTC),
         )
-        return await self.outbox_repo.enqueue(event)
+        return await self.outbox_repo.enqueue(event, session=session)
 
-    async def schedule_task_reminders(self, task: Task) -> list[OutboxEvent]:
+    async def schedule_task_reminders(self, task: Task, session: Any | None = None) -> list[OutboxEvent]:
         """Schedules tiered reminders (T-24h, T-1h, Due) for a task if due_at is set."""
         if not task.due_at or task.is_completed or task.is_archived:
             return []
@@ -48,10 +51,12 @@ class OutboxService:
                     "title": task.title,
                     "guild_id": task.guild_id,
                     "assignee_discord_id": task.assignee_discord_id,
+                    "discord_thread_id": task.discord_thread_id,
                     "reminder_type": "24h",
                     "due_at": due_utc.isoformat(),
                 },
                 scheduled_for=t_24h,
+                session=session,
             )
             scheduled_events.append(evt)
 
@@ -67,10 +72,12 @@ class OutboxService:
                     "title": task.title,
                     "guild_id": task.guild_id,
                     "assignee_discord_id": task.assignee_discord_id,
+                    "discord_thread_id": task.discord_thread_id,
                     "reminder_type": "1h",
                     "due_at": due_utc.isoformat(),
                 },
                 scheduled_for=t_1h,
+                session=session,
             )
             scheduled_events.append(evt)
 
@@ -85,14 +92,16 @@ class OutboxService:
                     "title": task.title,
                     "guild_id": task.guild_id,
                     "assignee_discord_id": task.assignee_discord_id,
+                    "discord_thread_id": task.discord_thread_id,
                     "reminder_type": "due",
                     "due_at": due_utc.isoformat(),
                 },
                 scheduled_for=due_utc,
+                session=session,
             )
             scheduled_events.append(evt)
 
         return scheduled_events
 
-    async def cancel_task_reminders(self, task_id: UUID) -> int:
-        return await self.outbox_repo.cancel_task_reminders(task_id)
+    async def cancel_task_reminders(self, task_id: UUID, session: Any | None = None) -> int:
+        return await self.outbox_repo.cancel_task_reminders(task_id, session=session)

@@ -20,6 +20,7 @@ from src.adapters.db.postgres_repo import (  # noqa: E402
     PostgresUserPreferenceRepo,
 )
 from src.adapters.db.session import async_session_factory, close_db, init_db  # noqa: E402
+from src.adapters.db.unit_of_work import SqlAlchemyUnitOfWork  # noqa: E402
 from src.adapters.discord_bot.bot import DggPmBot  # noqa: E402
 from src.adapters.discord_bot.discord_notifier import DiscordNotifier  # noqa: E402
 from src.adapters.worker.outbox_worker import OutboxWorker  # noqa: E402
@@ -52,10 +53,11 @@ async def run_app() -> None:
     outbox_repo = PostgresOutboxRepo(async_session_factory)
     user_pref_repo = PostgresUserPreferenceRepo(async_session_factory)
 
+    uow = SqlAlchemyUnitOfWork(async_session_factory)
     project_service = ProjectService(project_repo)
     team_service = TeamService(team_repo)
     outbox_service = OutboxService(outbox_repo)
-    task_service = TaskService(task_repo, project_service, outbox_service)
+    task_service = TaskService(task_repo, project_service, outbox_service, uow=uow)
     user_service = UserService(user_pref_repo)
 
     # 3. Wire Discord Bot & Notifier

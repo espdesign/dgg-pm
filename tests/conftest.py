@@ -18,6 +18,7 @@ from src.adapters.db.postgres_repo import (
     PostgresUserPreferenceRepo,
 )
 from src.adapters.db.tables import Base
+from src.adapters.db.unit_of_work import SqlAlchemyUnitOfWork
 from src.services.outbox_service import OutboxService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -74,11 +75,17 @@ async def repos(db_session: AsyncSession):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def services(repos):
+async def services(repos, async_engine: AsyncEngine):
+    session_factory = async_sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    uow = SqlAlchemyUnitOfWork(session_factory)
     project_service = ProjectService(repos["project"])
     team_service = TeamService(repos["team"])
     outbox_service = OutboxService(repos["outbox"])
-    task_service = TaskService(repos["task"], project_service, outbox_service)
+    task_service = TaskService(repos["task"], project_service, outbox_service, uow=uow)
     user_service = UserService(repos["user"])
     return {
         "project": project_service,
@@ -86,4 +93,5 @@ async def services(repos):
         "outbox": outbox_service,
         "task": task_service,
         "user": user_service,
+        "uow": uow,
     }

@@ -57,6 +57,7 @@ async def test_tiered_reminder_scheduling_and_cancellation(services, db_session)
     )
 
     # Reminders should now be CANCELLED
+    db_session.expire_all()
     res_after = await db_session.execute(stmt)
     rows_after = res_after.scalars().all()
     cancelled_reminders = [

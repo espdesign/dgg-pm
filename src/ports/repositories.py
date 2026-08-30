@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from src.domain.enums import NotificationPreference, PriorityLevel, TaskStatus
@@ -17,7 +18,7 @@ from src.domain.models import (
 
 class ITaskRepo(ABC):
     @abstractmethod
-    async def create(self, task: Task) -> Task:
+    async def create(self, task: Task, session: Any | None = None) -> Task:
         """Persists a new task and its initial watchers."""
 
     @abstractmethod
@@ -39,6 +40,7 @@ class ITaskRepo(ABC):
         expected_version: int,
         new_status: TaskStatus,
         completed_at: datetime | None,
+        session: Any | None = None,
     ) -> Task | None:
         """Optimistic concurrency update for task status. Returns updated Task or None on conflict."""
 
@@ -54,6 +56,7 @@ class ITaskRepo(ABC):
         due_at: datetime | None = None,
         clear_due_at: bool = False,
         watchers: list[int] | None = None,
+        session: Any | None = None,
     ) -> Task | None:
         """Updates task metadata attributes and increments version. Returns updated Task or None."""
 
@@ -91,11 +94,11 @@ class ITaskRepo(ABC):
         """Searches open tasks for slash command autocomplete."""
 
     @abstractmethod
-    async def set_archived(self, task_id: UUID, is_archived: bool) -> Task | None:
+    async def set_archived(self, task_id: UUID, is_archived: bool, session: Any | None = None) -> Task | None:
         """Soft-deletes or unarchives a task."""
 
     @abstractmethod
-    async def add_history(self, history: TaskHistory) -> TaskHistory:
+    async def add_history(self, history: TaskHistory, session: Any | None = None) -> TaskHistory:
         """Appends a task history audit entry."""
 
     @abstractmethod
@@ -125,7 +128,7 @@ class IProjectRepo(ABC):
         """Fetches project bound to a Discord channel/thread."""
 
     @abstractmethod
-    async def increment_task_number_atomic(self, project_id: UUID) -> tuple[int, str]:
+    async def increment_task_number_atomic(self, project_id: UUID, session: Any | None = None) -> tuple[int, str]:
         """Atomically increments next_task_number and returns (allocated_number, prefix)."""
 
     @abstractmethod
@@ -169,7 +172,7 @@ class ITeamRepo(ABC):
 
 class IOutboxRepo(ABC):
     @abstractmethod
-    async def enqueue(self, event: OutboxEvent) -> OutboxEvent:
+    async def enqueue(self, event: OutboxEvent, session: Any | None = None) -> OutboxEvent:
         """Persists an outbox event."""
 
     @abstractmethod
@@ -191,7 +194,7 @@ class IOutboxRepo(ABC):
         """Updates an event with new scheduled time or FAILED status on rate limits/errors."""
 
     @abstractmethod
-    async def cancel_task_reminders(self, task_id: UUID) -> int:
+    async def cancel_task_reminders(self, task_id: UUID, session: Any | None = None) -> int:
         """Cancels all pending reminder events for a task."""
 
 

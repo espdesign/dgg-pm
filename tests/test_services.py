@@ -243,3 +243,35 @@ async def test_user_service_preferences(services):
     bulk = await user_srv.get_preferences_bulk(guild_id, [user_id, 999999])
     assert bulk[user_id] == NotificationPreference.CHANNEL
     assert bulk[999999] == NotificationPreference.DM
+
+
+@pytest.mark.asyncio
+async def test_task_creation_atomic_rollback(services, repos):
+    """Verify that if outbox enqueueing fails, the task and history are completely rolled back."""
+    task_srv = services["task"]
+    outbox_srv = services["outbox"]
+    task_repo = repos["task"]
+    guild_id = 999888777666
+
+    # Mock outbox_service.enqueue_event to raise an exception
+    original_enqueue = outbox_srv.enqueue_event
+
+    async def failing_enqueue(*args, **kwargs):
+        raise RuntimeError("Simulated transient database/outbox error during enqueue")
+
+    outbox_srv.enqueue_event = failing_enqueue
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated transient database/outbox error"):
+            await task_srv.create_task(
+                guild_id=guild_id,
+                title="This Task Must Roll Back",
+                creator_discord_id=12345,
+            )
+
+        # Confirm the task was NEVER persisted to the database
+        tasks, total = await task_repo.list_tasks(guild_id=guild_id)
+        assert total == 0
+        assert len(tasks) == 0
+    finally:
+        outbox_srv.enqueue_event = original_enqueue

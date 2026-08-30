@@ -58,13 +58,18 @@ class BasePostgresRepo:
             self._session = None
             self._session_factory = session_or_factory
 
+    def _should_commit(self, session: AsyncSession | None) -> bool:
+        return session is None and self._session is None
+
     @asynccontextmanager
-    async def _get_session(self) -> AsyncGenerator[AsyncSession, None]:
-        if self._session is not None:
+    async def _get_session(self, session: AsyncSession | None = None) -> AsyncGenerator[AsyncSession, None]:
+        if session is not None:
+            yield session
+        elif self._session is not None:
             yield self._session
         else:
-            async with self._session_factory() as session:
-                yield session
+            async with self._session_factory() as s:
+                yield s
 
 
 def _to_domain_task(row: TaskTable) -> Task:
@@ -144,8 +149,8 @@ def _to_domain_outbox(row: OutboxEventTable) -> OutboxEvent:
 
 
 class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
-    async def create(self, task: Task) -> Task:
-        async with self._get_session() as session:
+    async def create(self, task: Task, session: AsyncSession | None = None) -> Task:
+        async with self._get_session(session) as sess:
             row = TaskTable(
                 id=task.id,
                 guild_id=task.guild_id,
@@ -168,7 +173,7 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 created_at=task.created_at,
                 updated_at=task.updated_at,
             )
-            session.add(row)
+            sess.add(row)
 
             for watcher_id in task.watchers:
                 watcher_row = TaskWatcherTable(
@@ -176,9 +181,12 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                     user_discord_id=watcher_id,
                     created_at=task.created_at,
                 )
-                session.add(watcher_row)
+                sess.add(watcher_row)
 
-            await session.commit()
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
             return task
 
     async def get_by_id(self, task_id: UUID) -> Task | None:
@@ -222,8 +230,9 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
         expected_version: int,
         new_status: TaskStatus,
         completed_at: datetime | None,
+        session: AsyncSession | None = None,
     ) -> Task | None:
-        async with self._get_session() as session:
+        async with self._get_session(session) as sess:
             now = datetime.now(UTC)
             stmt = (
                 update(TaskTable)
@@ -236,12 +245,18 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 )
                 .returning(TaskTable)
             )
-            res = await session.execute(stmt)
+            res = await sess.execute(stmt)
             row = res.scalar_one_or_none()
             if not row:
                 return None
-            await session.commit()
-        return await self.get_by_id(task_id)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
+            fetch_stmt = select(TaskTable).options(selectinload(TaskTable.watchers)).where(TaskTable.id == task_id)
+            fetch_res = await sess.execute(fetch_stmt)
+            updated_row = fetch_res.scalar_one_or_none()
+            return _to_domain_task(updated_row) if updated_row else None
 
     async def update_task(
         self,
@@ -254,8 +269,9 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
         due_at: datetime | None = None,
         clear_due_at: bool = False,
         watchers: list[int] | None = None,
+        session: AsyncSession | None = None,
     ) -> Task | None:
-        async with self._get_session() as session:
+        async with self._get_session(session) as sess:
             values: dict[str, Any] = {
                 "version": TaskTable.version + 1,
                 "updated_at": datetime.now(UTC),
@@ -276,7 +292,7 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 values["due_at"] = due_at
 
             stmt = update(TaskTable).where(TaskTable.id == task_id).values(**values).returning(TaskTable)
-            res = await session.execute(stmt)
+            res = await sess.execute(stmt)
             row = res.scalar_one_or_none()
             if not row:
                 return None
@@ -285,18 +301,25 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
             if watchers is not None:
                 clean_watchers = list(set(watchers))
                 del_stmt = delete(TaskWatcherTable).where(TaskWatcherTable.task_id == task_id)
-                await session.execute(del_stmt)
+                await sess.execute(del_stmt)
                 now = datetime.now(UTC)
                 for uid in clean_watchers:
-                    session.add(
+                    sess.add(
                         TaskWatcherTable(
                             task_id=task_id,
                             user_discord_id=uid,
                             created_at=now,
                         )
                     )
-            await session.commit()
-        return await self.get_by_id(task_id)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
+
+            fetch_stmt = select(TaskTable).options(selectinload(TaskTable.watchers)).where(TaskTable.id == task_id)
+            fetch_res = await sess.execute(fetch_stmt)
+            updated_row = fetch_res.scalar_one_or_none()
+            return _to_domain_task(updated_row) if updated_row else None
 
     async def update_discord_message(
         self,
@@ -395,8 +418,8 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
             rows = res.scalars().all()
             return [_to_domain_task(r) for r in rows]
 
-    async def set_archived(self, task_id: UUID, is_archived: bool) -> Task | None:
-        async with self._get_session() as session:
+    async def set_archived(self, task_id: UUID, is_archived: bool, session: AsyncSession | None = None) -> Task | None:
+        async with self._get_session(session) as sess:
             now = datetime.now(UTC) if is_archived else None
             stmt = (
                 update(TaskTable)
@@ -404,15 +427,21 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 .values(archived_at=now, updated_at=datetime.now(UTC))
                 .returning(TaskTable)
             )
-            res = await session.execute(stmt)
+            res = await sess.execute(stmt)
             row = res.scalar_one_or_none()
             if not row:
                 return None
-            await session.commit()
-        return await self.get_by_id(task_id)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
+            fetch_stmt = select(TaskTable).options(selectinload(TaskTable.watchers)).where(TaskTable.id == task_id)
+            fetch_res = await sess.execute(fetch_stmt)
+            updated_row = fetch_res.scalar_one_or_none()
+            return _to_domain_task(updated_row) if updated_row else None
 
-    async def add_history(self, history: TaskHistory) -> TaskHistory:
-        async with self._get_session() as session:
+    async def add_history(self, history: TaskHistory, session: AsyncSession | None = None) -> TaskHistory:
+        async with self._get_session(session) as sess:
             row = TaskHistoryTable(
                 id=history.id,
                 task_id=history.task_id,
@@ -423,8 +452,11 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 notes=history.notes,
                 created_at=history.created_at,
             )
-            session.add(row)
-            await session.commit()
+            sess.add(row)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
             return history
 
     async def get_history(self, task_id: UUID) -> list[TaskHistory]:
@@ -508,8 +540,10 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
             row = res.scalar_one_or_none()
             return _to_domain_project(row) if row else None
 
-    async def increment_task_number_atomic(self, project_id: UUID) -> tuple[int, str]:
-        async with self._get_session() as session:
+    async def increment_task_number_atomic(
+        self, project_id: UUID, session: AsyncSession | None = None
+    ) -> tuple[int, str]:
+        async with self._get_session(session) as sess:
             now = datetime.now(UTC)
             stmt = (
                 update(ProjectTable)
@@ -520,11 +554,14 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
                 )
                 .returning(ProjectTable.next_task_number - 1, ProjectTable.prefix)
             )
-            res = await session.execute(stmt)
+            res = await sess.execute(stmt)
             row = res.first()
             if not row:
                 raise ValueError(f"Project with ID {project_id} not found for atomic counter update")
-            await session.commit()
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
             return row[0], row[1]
 
     async def list_projects(self, guild_id: int, include_archived: bool = False) -> list[Project]:
@@ -634,9 +671,9 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
 
 
 class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
-    async def enqueue(self, event: OutboxEvent) -> OutboxEvent:
-        async with self._get_session() as session:
-            bind = session.bind
+    async def enqueue(self, event: OutboxEvent, session: AsyncSession | None = None) -> OutboxEvent:
+        async with self._get_session(session) as sess:
+            bind = sess.bind
             dialect_name = bind.dialect.name if bind else ""
 
             if dialect_name == "postgresql":
@@ -665,8 +702,11 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                         },
                     )
                 )
-                await session.execute(stmt)
-                await session.commit()
+                await sess.execute(stmt)
+                if self._should_commit(session):
+                    await sess.commit()
+                else:
+                    await sess.flush()
                 return event
 
             if dialect_name == "sqlite":
@@ -695,13 +735,16 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                         },
                     )
                 )
-                await session.execute(stmt)
-                await session.commit()
+                await sess.execute(stmt)
+                if self._should_commit(session):
+                    await sess.commit()
+                else:
+                    await sess.flush()
                 return event
 
             # Fallback
             stmt = select(OutboxEventTable).where(OutboxEventTable.idempotency_key == event.idempotency_key)
-            res = await session.execute(stmt)
+            res = await sess.execute(stmt)
             existing = res.scalar_one_or_none()
             if existing:
                 existing.payload = event.payload
@@ -721,8 +764,11 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                     created_at=event.created_at,
                     processed_at=event.processed_at,
                 )
-                session.add(row)
-            await session.commit()
+                sess.add(row)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
             return event
 
     async def fetch_pending_batch(self, limit: int = 10) -> list[OutboxEvent]:
@@ -787,8 +833,8 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
             await session.execute(stmt)
             await session.commit()
 
-    async def cancel_task_reminders(self, task_id: UUID) -> int:
-        async with self._get_session() as session:
+    async def cancel_task_reminders(self, task_id: UUID, session: AsyncSession | None = None) -> int:
+        async with self._get_session(session) as sess:
             prefix = f"task_due:{task_id}:"
             stmt = (
                 update(OutboxEventTable)
@@ -798,8 +844,11 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                 )
                 .values(status=OutboxStatus.CANCELLED.value)
             )
-            res = await session.execute(stmt)
-            await session.commit()
+            res = await sess.execute(stmt)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
             return res.rowcount or 0
 
 
