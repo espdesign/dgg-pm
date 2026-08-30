@@ -53,17 +53,17 @@ PROJECT_TAG_EMOJI = "📁"
 
 
 def project_tag_name(project_name: str) -> str:
-    """Builds the per-project forum tag name, e.g. '📁 Mobile App'."""
-    return f"{PROJECT_TAG_EMOJI} {project_name}".strip()
+    """Builds the per-project forum tag name, e.g. 'Mobile App'."""
+    return project_name.strip()
 
 
 def _matches_project_tag(tag_name: str, project_name: str | None) -> bool:
     """Checks if a tag name is the per-project tag for the given project."""
     if not project_name:
         return False
-    expected = project_tag_name(project_name).lower()
-    clean = tag_name.lower().replace("[", "").replace("]", "").strip()
-    return clean == expected or clean == project_name.lower()
+    expected = project_name.strip().lower()
+    clean = tag_name.lower().replace(PROJECT_TAG_EMOJI, "").replace("[", "").replace("]", "").strip()
+    return clean == expected
 
 
 def _matches_keyword(tag_name: str, keywords: list[str]) -> bool:
@@ -200,7 +200,7 @@ async def setup_forum_tags(forum_channel: discord.ForumChannel) -> tuple[int, in
 
 
 async def ensure_project_tag(forum_channel: discord.ForumChannel, project_name: str) -> str | None:
-    """Ensures a per-project tag (e.g. '📁 Mobile App') exists in the ForumChannel.
+    """Ensures a per-project tag (e.g. 'Mobile App' with emoji '📁') exists in the ForumChannel.
 
     Returns an error message on failure, or None on success.
     """
@@ -214,15 +214,38 @@ async def ensure_project_tag(forum_channel: discord.ForumChannel, project_name: 
     )
 
     existing_tags = list(getattr(forum_channel, "available_tags", []) or [])
-    if any(_matches_project_tag(t.name, project_name) for t in existing_tags):
-        return None
+    for idx, t in enumerate(existing_tags):
+        if _matches_project_tag(t.name, project_name):
+            # If the tag has a legacy double-emoji name ('📁 Project Name'), clean it up
+            if t.name.startswith(f"{PROJECT_TAG_EMOJI} "):
+                tag_emoji = getattr(t, "emoji", None)
+                if not isinstance(tag_emoji, (str, discord.Emoji, discord.PartialEmoji)):
+                    tag_emoji = PROJECT_TAG_EMOJI
+                is_mod = bool(getattr(t, "moderated", False))
+                updated_tag = discord.ForumTag(
+                    name=project_tag_name(project_name),
+                    emoji=tag_emoji,
+                    moderated=is_mod,
+                )
+                existing_tags[idx] = updated_tag
+                try:
+                    await forum_channel.edit(available_tags=existing_tags)
+                    logger.info(
+                        "Migrated legacy forum tag '%s' to '%s' in forum #%s",
+                        t.name,
+                        updated_tag.name,
+                        forum_channel.id,
+                    )
+                except Exception as e:
+                    logger.debug("Could not clean up legacy forum tag name: %s", e)
+            return None
 
     if len(existing_tags) >= 20:
         return "Forum is at Discord's 20-tag limit; could not add project tag."
 
     try:
         await forum_channel.edit(available_tags=[*existing_tags, new_tag])
-        logger.info("Added per-project forum tag '📁 %s' to forum #%s", project_name, forum_channel.id)
+        logger.info("Added per-project forum tag '%s' (emoji 📁) to forum #%s", project_name, forum_channel.id)
         return None
     except discord.Forbidden:
         return "Bot lacks 'Manage Channels' permission in this forum."

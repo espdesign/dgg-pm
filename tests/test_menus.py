@@ -147,7 +147,7 @@ async def test_project_menu_and_modal(services):
     saved = [
         c.kwargs.get("available_tags", []) for c in mock_forum.edit.await_args_list if "available_tags" in c.kwargs
     ]
-    assert any(t.name == "📁 Mobile Redesign" for tags in saved for t in tags)
+    assert any(t.name == "Mobile Redesign" for tags in saved for t in tags)
 
     # Confirm note surfaced in the embed
     embed2 = interaction2.response.send_message.call_args.kwargs.get("embed")

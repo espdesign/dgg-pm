@@ -20,10 +20,12 @@ from src.domain.enums import EventType, PriorityLevel, TaskStatus
 from src.domain.models import OutboxEvent, Task
 
 
-def _create_mock_tag(tag_id: int, name: str) -> MagicMock:
+def _create_mock_tag(tag_id: int, name: str, emoji: str | None = None) -> MagicMock:
     tag = MagicMock(spec=discord.ForumTag)
     tag.id = tag_id
     tag.name = name
+    tag.emoji = emoji
+    tag.moderated = False
     return tag
 
 
@@ -137,7 +139,7 @@ async def test_project_create_with_forum_channel(services):
     project_tag_saved = [
         c.kwargs.get("available_tags", []) for c in mock_forum.edit.await_args_list if "available_tags" in c.kwargs
     ]
-    assert any("📁 Security Audit" == t.name for tags in project_tag_saved for t in tags)
+    assert any("Security Audit" == t.name for tags in project_tag_saved for t in tags)
 
 
 @pytest.mark.asyncio
@@ -415,26 +417,36 @@ async def test_setup_forum_tags_forbidden():
 
 @pytest.mark.asyncio
 async def test_ensure_project_tag():
-    """Verify ensure_project_tag adds a per-project tag and is idempotent."""
+    """Verify ensure_project_tag adds a clean per-project tag, is idempotent, and migrates legacy tags."""
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 1230001
     mock_forum.name = "eng-backlog"
     mock_forum.available_tags = []
     mock_forum.edit = AsyncMock()
 
-    # First call adds the project tag
+    # First call adds the clean project tag
     err = await ensure_project_tag(mock_forum, "Mobile App")
     assert err is None
     saved = mock_forum.edit.call_args.kwargs.get("available_tags")
-    assert any(t.name == "📁 Mobile App" for t in saved)
+    assert any(t.name == "Mobile App" for t in saved)
 
-    # Existing tag present -> idempotent, no further edit
-    tag_project = _create_mock_tag(50, "📁 Mobile App")
+    # Clean tag present -> idempotent, no further edit
+    tag_project = _create_mock_tag(50, "Mobile App")
     mock_forum.available_tags = [tag_project]
     mock_forum.edit.reset_mock()
     err = await ensure_project_tag(mock_forum, "Mobile App")
     assert err is None
     mock_forum.edit.assert_not_awaited()
+
+    # Legacy tag present ('📁 Mobile App') -> migrated to 'Mobile App'
+    tag_legacy = _create_mock_tag(50, "📁 Mobile App")
+    mock_forum.available_tags = [tag_legacy]
+    mock_forum.edit.reset_mock()
+    err = await ensure_project_tag(mock_forum, "Mobile App")
+    assert err is None
+    mock_forum.edit.assert_awaited_once()
+    migrated_tags = mock_forum.edit.call_args.kwargs.get("available_tags")
+    assert any(t.name == "Mobile App" for t in migrated_tags)
 
 
 @pytest.mark.asyncio
