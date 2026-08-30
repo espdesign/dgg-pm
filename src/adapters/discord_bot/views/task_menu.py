@@ -33,7 +33,13 @@ class TaskCreateModal(discord.ui.Modal):
         project: Project | None = None,
         target_channel: discord.TextChannel | discord.Thread | None = None,
     ):
-        title_str = f"New Task: {project.prefix}" if project else "New Standalone Task"
+        if project:
+            title_str = f"New Task: [{project.prefix}] {project.name[:22]}"
+            title_placeholder = f"Task for {project.name} (e.g. Implement OAuth2 login)"
+        else:
+            title_str = "New Standalone Task (Ad-hoc)"
+            title_placeholder = "Ad-hoc chore (e.g. Renew SSL, Update server banner)"
+
         super().__init__(title=title_str)
         self.task_service = task_service
         self.project = project
@@ -41,7 +47,7 @@ class TaskCreateModal(discord.ui.Modal):
 
         self.title_input = discord.ui.TextInput(
             label="Task Title",
-            placeholder="e.g. Implement OAuth2 login, Database migration",
+            placeholder=title_placeholder,
             required=True,
             max_length=100,
         )
@@ -114,34 +120,38 @@ class TaskCreateModal(discord.ui.Modal):
 
             target_chan = self.target_channel or interaction.channel
             embed = build_task_embed(task, project_name=self.project.name if self.project else None)
-            view = TaskActionView(
-                task_id=task.id,
-                current_status=task.status,
-                current_priority=task.priority,
-                task_service=self.task_service,
-            )
 
             msg = None
-            if isinstance(target_chan, (discord.TextChannel, discord.Thread)):
+            if isinstance(target_chan, discord.TextChannel):
+                # Send clean root message in parent channel without component rows
+                msg = await target_chan.send(embed=embed)
+                thread = await msg.create_thread(
+                    name=f"[{task.short_id}] {task.title[:90]}",
+                    auto_archive_duration=1440,
+                )
+                thread_view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
+                if task.assignee_discord_id:
+                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+                await thread.send(content=thread_intro, view=thread_view)
+                await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
+            elif isinstance(target_chan, discord.Thread):
+                view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
                 msg = await target_chan.send(embed=embed, view=view)
-                if isinstance(target_chan, discord.TextChannel):
-                    thread = await msg.create_thread(
-                        name=f"[{task.short_id}] {task.title[:90]}",
-                        auto_archive_duration=1440,
-                    )
-                    thread_view = TaskActionView(
-                        task_id=task.id,
-                        current_status=task.status,
-                        current_priority=task.priority,
-                        task_service=self.task_service,
-                    )
-                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                    if task.assignee_discord_id:
-                        thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                    await thread.send(content=thread_intro, embed=embed, view=thread_view)
-                    await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
-                else:
-                    await self.task_service.update_discord_message_ids(task.id, msg.id, None)
+                await self.task_service.update_discord_message_ids(task.id, msg.id, target_chan.id)
+            elif target_chan:
+                msg = await target_chan.send(embed=embed)
+                await self.task_service.update_discord_message_ids(task.id, msg.id, None)
 
             await interaction.response.send_message(
                 f"✅ Created task **[{task.short_id}] {task.title}**!",
@@ -209,13 +219,18 @@ class TaskSelectProjectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
+        projects = (
+            await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            if interaction.guild
+            else []
+        )
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service, projects=projects)
         embed = build_task_menu_embed()
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class TaskMenuView(discord.ui.View):
-    """Control Center View for Task Operations and Live Interactive Filtering."""
+    """Control Center View for Task Operations and Real-time Multi-dimensional Filtering."""
 
     def __init__(
         self,
@@ -228,8 +243,10 @@ class TaskMenuView(discord.ui.View):
         self.task_service = task_service
         self.project_service = project_service
         self.team_service = team_service
+        self.projects = projects or []
         self.selected_project_id: UUID | None = None
         self.selected_status: TaskStatus | None = None
+        self.selected_assignee_id: int | None = None
 
         # Row 0: Action Buttons
         self.new_task_btn = discord.ui.Button(
@@ -250,14 +267,14 @@ class TaskMenuView(discord.ui.View):
         self.standalone_btn.callback = self._on_standalone_clicked
         self.add_item(self.standalone_btn)
 
-        self.refresh_btn = discord.ui.Button(
-            label="Refresh Board",
+        self.reset_btn = discord.ui.Button(
+            label="Reset Filters",
             emoji="🔄",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
-        self.refresh_btn.callback = self._on_refresh_clicked
-        self.add_item(self.refresh_btn)
+        self.reset_btn.callback = self._on_reset_filters_clicked
+        self.add_item(self.reset_btn)
 
         if self.team_service:
             self.hub_btn = discord.ui.Button(
@@ -269,7 +286,27 @@ class TaskMenuView(discord.ui.View):
             self.hub_btn.callback = self._on_hub_clicked
             self.add_item(self.hub_btn)
 
-        # Row 1: Status Filter Select
+        # Row 1: Project Scope Filter Dropdown
+        project_options = [
+            discord.SelectOption(label="All Projects (Global Scope)", value="all", emoji="🌐", default=True)
+        ]
+        for p in self.projects[:24]:
+            project_options.append(
+                discord.SelectOption(
+                    label=f"[{p.prefix}] {p.name}"[:100],
+                    value=str(p.id),
+                    emoji="📁",
+                )
+            )
+        self.project_select = discord.ui.Select(
+            placeholder="📁 Filter by Project Scope...",
+            options=project_options,
+            row=1,
+        )
+        self.project_select.callback = self._on_project_filter_changed
+        self.add_item(self.project_select)
+
+        # Row 2: Status Filter Select
         status_options = [
             discord.SelectOption(label="All Statuses", value="all", emoji="📊", default=True),
             discord.SelectOption(label="In Progress", value="inProgress", emoji="🟡"),
@@ -279,10 +316,30 @@ class TaskMenuView(discord.ui.View):
         self.status_select = discord.ui.Select(
             placeholder="📊 Filter by Status...",
             options=status_options,
-            row=1,
+            row=2,
         )
         self.status_select.callback = self._on_status_filter_changed
         self.add_item(self.status_select)
+
+        # Row 3: Assignee User Select Picker
+        self.assignee_select = discord.ui.UserSelect(
+            placeholder="👤 Filter by Assignee / Member...",
+            row=3,
+            min_values=1,
+            max_values=1,
+        )
+        self.assignee_select.callback = self._on_assignee_filter_changed
+        self.add_item(self.assignee_select)
+
+        # Row 4: Clear Member Filter Button
+        self.clear_member_btn = discord.ui.Button(
+            label="Clear Assignee Filter",
+            emoji="👤",
+            style=discord.ButtonStyle.secondary,
+            row=4,
+        )
+        self.clear_member_btn.callback = self._on_clear_member_clicked
+        self.add_item(self.clear_member_btn)
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
@@ -314,12 +371,29 @@ class TaskMenuView(discord.ui.View):
         modal = TaskCreateModal(self.task_service, project=None, target_channel=interaction.channel)
         await interaction.response.send_modal(modal)
 
+    async def _on_project_filter_changed(self, interaction: discord.Interaction) -> None:
+        val = self.project_select.values[0]
+        self.selected_project_id = None if val == "all" else UUID(val)
+        await self._render_filtered_board(interaction)
+
     async def _on_status_filter_changed(self, interaction: discord.Interaction) -> None:
         val = self.status_select.values[0]
         self.selected_status = None if val == "all" else TaskStatus(val)
         await self._render_filtered_board(interaction)
 
-    async def _on_refresh_clicked(self, interaction: discord.Interaction) -> None:
+    async def _on_assignee_filter_changed(self, interaction: discord.Interaction) -> None:
+        selected_user = self.assignee_select.values[0]
+        self.selected_assignee_id = selected_user.id
+        await self._render_filtered_board(interaction)
+
+    async def _on_clear_member_clicked(self, interaction: discord.Interaction) -> None:
+        self.selected_assignee_id = None
+        await self._render_filtered_board(interaction)
+
+    async def _on_reset_filters_clicked(self, interaction: discord.Interaction) -> None:
+        self.selected_project_id = None
+        self.selected_status = None
+        self.selected_assignee_id = None
         await self._render_filtered_board(interaction)
 
     async def _render_filtered_board(self, interaction: discord.Interaction) -> None:
@@ -329,20 +403,38 @@ class TaskMenuView(discord.ui.View):
         tasks, total = await self.task_service.list_tasks(
             guild_id=interaction.guild.id,
             project_id=self.selected_project_id,
+            assignee_discord_id=self.selected_assignee_id,
             status=self.selected_status,
             include_archived=False,
             limit=15,
         )
 
-        status_label = self.selected_status.value if self.selected_status else "All"
+        project_label = "All Projects (Global Scope)"
+        if self.selected_project_id:
+            match = next((p for p in self.projects if p.id == self.selected_project_id), None)
+            if match:
+                project_label = f"[{match.prefix}] {match.name}"
+            else:
+                p = await self.project_service.get_by_id(self.selected_project_id)
+                if p:
+                    project_label = f"[{p.prefix}] {p.name}"
+
+        status_label = self.selected_status.value if self.selected_status else "All Statuses"
+        assignee_label = f"<@{self.selected_assignee_id}>" if self.selected_assignee_id else "All Members"
+
         embed = discord.Embed(
             title=f"⚡ Task Board ({total} tasks found)",
-            description=f"**Filters Active**: Status: `{status_label}`",
+            description=(
+                f"**Active Board Filters**:\n"
+                f"• **Project Scope**: `{project_label}`\n"
+                f"• **Status**: `{status_label}`\n"
+                f"• **Assignee**: {assignee_label}\n"
+            ),
             color=discord.Color.blurple(),
         )
 
         if not tasks:
-            embed.add_field(name="No Tasks", value="No tasks match the active filter criteria.", inline=False)
+            embed.add_field(name="No Tasks Found", value="No tasks match the active filter combination.", inline=False)
         else:
             for t in tasks:
                 icon = "🟢" if t.is_completed else ("🟡" if t.status == TaskStatus.IN_PROGRESS else "⚪")
@@ -354,6 +446,7 @@ class TaskMenuView(discord.ui.View):
                     inline=False,
                 )
 
+        embed.set_footer(text="dgg-pm • Multi-dimensional task board")
         await interaction.response.edit_message(embed=embed, view=self)
 
 
@@ -361,11 +454,15 @@ def build_task_menu_embed() -> discord.Embed:
     embed = discord.Embed(
         title="⚡ Task Operations Control Center",
         description=(
-            "Create, filter, and track tasks across all projects with zero typing.\n\n"
-            "• **`✨ New Project Task`**: Pick a project and create a new task with full thread support\n"
-            "• **`📌 Standalone Task`**: Create an ad-hoc task in the current channel\n"
-            "• **`📊 Filter Menu`**: Filter board in real-time by status (In Progress, Completed, Not Started)\n"
-            "• **`🔄 Refresh Board`**: Reload the latest task state"
+            "Create, filter, and manage tasks with zero typing.\n\n"
+            "**Task Types**:\n"
+            "• **`✨ New Project Task`**: Tied to a project container with automatic channel/thread routing\n"
+            "• **`📌 Standalone Task`**: Ad-hoc, one-off task in this channel (default `TASK-#` prefix)\n\n"
+            "**Live Board Controls**:\n"
+            "• **`📁 Project Scope`**: Focus board on a specific project or global server scope\n"
+            "• **`📊 Status Filter`**: Filter by progress status (In Progress, Not Started, Completed)\n"
+            "• **`👤 Assignee Filter`**: Filter to tasks assigned to a specific team member\n"
+            "• **`🔄 Reset Filters`**: Clear all active filters and return to global board view"
         ),
         color=discord.Color.blurple(),
     )

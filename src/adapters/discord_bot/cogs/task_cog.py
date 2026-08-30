@@ -157,26 +157,19 @@ class TaskCog(commands.Cog):
                     target_channel = chan
 
             embed = build_task_embed(task, project_name=project.name)
-            view = TaskActionView(
-                task_id=task.id,
-                current_status=task.status,
-                current_priority=task.priority,
-                task_service=self.task_service,
-            )
 
-            # Send root message embed
-            msg = await target_channel.send(embed=embed, view=view)
-
-            # Spawn discussion thread attached to the message
             thread = None
-            try:
-                if isinstance(target_channel, discord.TextChannel):
+            msg = None
+            if isinstance(target_channel, discord.TextChannel):
+                # Send clean root message embed without button rows (avoids grayed-out buttons in thread origin header)
+                msg = await target_channel.send(embed=embed)
+                try:
                     thread_name = f"[{task.short_id}] {task.title}"
                     if len(thread_name) > 100:
                         thread_name = thread_name[:97] + "..."
                     thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
 
-                    # Post initial thread message with active TaskActionView
+                    # Post active TaskActionView card inside the thread workspace
                     thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
                     if task.assignee_discord_id:
                         thread_intro += f"Assignee: <@{task.assignee_discord_id}> "
@@ -189,14 +182,25 @@ class TaskCog(commands.Cog):
                         current_priority=task.priority,
                         task_service=self.task_service,
                     )
-                    await thread.send(content=thread_intro.strip(), embed=embed, view=thread_view)
-            except Exception:
-                # Thread creation might fail if bot lacks thread permissions
-                pass
+                    await thread.send(content=thread_intro.strip(), view=thread_view)
+                except Exception:
+                    pass
+            elif isinstance(target_channel, discord.Thread):
+                thread = target_channel
+                view = TaskActionView(
+                    task_id=task.id,
+                    current_status=task.status,
+                    current_priority=task.priority,
+                    task_service=self.task_service,
+                )
+                msg = await target_channel.send(embed=embed, view=view)
+            else:
+                msg = await target_channel.send(embed=embed)
 
             # Update DB with Discord IDs
             thread_id = thread.id if thread else None
-            await self.task_service.update_discord_message_ids(task.id, msg.id, thread_id)
+            msg_id = msg.id if msg else 0
+            await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
 
             if target_channel.id != interaction.channel_id:
                 await interaction.followup.send(
@@ -243,6 +247,8 @@ class TaskCog(commands.Cog):
                 else f"👤 Unassigned **[{updated_task.short_id}]**."
             )
             embed = build_task_embed(updated_task)
+            if hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
             await interaction.followup.send(f"✅ {msg}", embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update task assignee: {e}", ephemeral=True)
@@ -296,6 +302,8 @@ class TaskCog(commands.Cog):
             )
 
             embed = build_task_embed(updated_task)
+            if hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
             await interaction.followup.send(f"✅ Updated watchers for **[{updated_task.short_id}]**!", embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to update watchers: {e}", ephemeral=True)
@@ -360,7 +368,8 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(f"❌ Failed to refresh task card: {e}", ephemeral=True)
 
     @app_commands.command(
-        name="task-standalone", description="Instantiate an ad-hoc task independent of project containers."
+        name="task-standalone",
+        description="Create an ad-hoc, one-off task in this channel (not tied to any project container).",
     )
     @app_commands.describe(
         title="Summary of the task",
@@ -462,6 +471,8 @@ class TaskCog(commands.Cog):
             )
 
             embed = build_task_embed(updated_task)
+            if hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
             await interaction.followup.send(
                 f"✅ Updated **[{updated_task.short_id}]** status to **{new_status.value}**!",
                 embed=embed,
@@ -578,5 +589,10 @@ class TaskCog(commands.Cog):
         from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_menu_embed
 
         embed = build_task_menu_embed()
-        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
+        projects = (
+            await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            if interaction.guild
+            else []
+        )
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service, projects=projects)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

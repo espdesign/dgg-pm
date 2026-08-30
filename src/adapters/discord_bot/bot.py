@@ -13,6 +13,7 @@ from src.adapters.discord_bot.views.task_embed import build_task_embed
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
 from src.domain.enums import PriorityLevel, TaskStatus
+from src.domain.models import Task
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
 from src.services.team_service import TeamService
@@ -94,6 +95,75 @@ class DggPmBot(commands.Bot):
                     except ValueError:
                         pass
 
+    async def sync_root_task_message(self, task: Task) -> None:
+        """Syncs the latest task embed to the original root starter message in the parent channel."""
+        if not task.discord_thread_id or not task.discord_message_id:
+            return
+        try:
+            thread = self.get_channel(task.discord_thread_id) or await self.fetch_channel(task.discord_thread_id)
+            if isinstance(thread, discord.Thread) and thread.parent:
+                root_msg = await thread.parent.fetch_message(task.discord_message_id)
+                if root_msg:
+                    project_name = None
+                    if task.project_id:
+                        p = await self.project_service.get_by_id(task.project_id)
+                        if p:
+                            project_name = p.name
+                    fresh_embed = build_task_embed(task, project_name=project_name)
+                    await root_msg.edit(embed=fresh_embed)
+        except Exception as e:
+            logger.debug("Failed to sync root starter message for task %s: %s", task.short_id, e)
+
+    async def _handle_dynamic_task_button(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        task_id: UUID,
+    ) -> None:
+        if interaction.response.is_done():
+            return
+
+        task = await self.task_service.get_by_id(task_id)
+        if not task:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Task not found in database.", ephemeral=True)
+            return
+
+        if action == "note":
+            modal = TaskNoteModal(task_id=task_id, short_id=task.short_id, task_service=self.task_service)
+            await interaction.response.send_modal(modal)
+            return
+
+    async def _update_interaction_view(
+        self,
+        interaction: discord.Interaction,
+        updated_task: Task,
+    ) -> None:
+        """Updates the component view on interaction message without attaching a duplicate embed in threads."""
+        new_view = TaskActionView(
+            task_id=updated_task.id,
+            current_status=updated_task.status,
+            current_priority=updated_task.priority,
+            task_service=self.task_service,
+        )
+
+        # If inside a discussion thread, keep the toolbar clean without attaching duplicate embed
+        if isinstance(interaction.channel, discord.Thread):
+            assignee_str = (
+                f"<@{updated_task.assignee_discord_id}>" if updated_task.assignee_discord_id else "Unassigned"
+            )
+            content = (
+                f"📌 **Task Workspace & Controls** (Assignee: {assignee_str} • "
+                f"Priority: `{updated_task.priority.value.upper()}`)"
+            )
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content=content, embed=None, view=new_view)
+        else:
+            # Standalone task card in channel
+            new_embed = build_task_embed(updated_task)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=new_embed, view=new_view)
+
     async def _handle_dynamic_task_button(
         self,
         interaction: discord.Interaction,
@@ -126,15 +196,8 @@ class DggPmBot(commands.Bot):
                     new_assignee_id=None,
                     actor_discord_id=interaction.user.id,
                 )
-                new_embed = build_task_embed(updated_task)
-                new_view = TaskActionView(
-                    task_id=task_id,
-                    current_status=updated_task.status,
-                    current_priority=updated_task.priority,
-                    task_service=self.task_service,
-                )
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                await self._update_interaction_view(interaction, updated_task)
+                await self.sync_root_task_message(updated_task)
                 return
             except Exception as e:
                 logger.exception("Error handling dynamic unassign: %s", e)
@@ -154,15 +217,8 @@ class DggPmBot(commands.Bot):
                         new_priority=new_priority,
                         actor_discord_id=interaction.user.id,
                     )
-                    new_embed = build_task_embed(updated_task)
-                    new_view = TaskActionView(
-                        task_id=task_id,
-                        current_status=updated_task.status,
-                        current_priority=updated_task.priority,
-                        task_service=self.task_service,
-                    )
-                    if not interaction.response.is_done():
-                        await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    await self._update_interaction_view(interaction, updated_task)
+                    await self.sync_root_task_message(updated_task)
                     return
                 except Exception as e:
                     logger.exception("Error handling dynamic priority change: %s", e)
@@ -182,15 +238,8 @@ class DggPmBot(commands.Bot):
                         new_assignee_id=new_assignee_id,
                         actor_discord_id=interaction.user.id,
                     )
-                    new_embed = build_task_embed(updated_task)
-                    new_view = TaskActionView(
-                        task_id=task_id,
-                        current_status=updated_task.status,
-                        current_priority=updated_task.priority,
-                        task_service=self.task_service,
-                    )
-                    if not interaction.response.is_done():
-                        await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    await self._update_interaction_view(interaction, updated_task)
+                    await self.sync_root_task_message(updated_task)
                     return
                 except Exception as e:
                     logger.exception("Error handling dynamic assignee change: %s", e)
@@ -211,15 +260,8 @@ class DggPmBot(commands.Bot):
                         due_at=due_at,
                         clear_due_at=is_clear,
                     )
-                    new_embed = build_task_embed(updated_task)
-                    new_view = TaskActionView(
-                        task_id=task_id,
-                        current_status=updated_task.status,
-                        current_priority=updated_task.priority,
-                        task_service=self.task_service,
-                    )
-                    if not interaction.response.is_done():
-                        await interaction.response.edit_message(embed=new_embed, view=new_view)
+                    await self._update_interaction_view(interaction, updated_task)
+                    await self.sync_root_task_message(updated_task)
                     return
                 except Exception as e:
                     logger.exception("Error handling dynamic due date change: %s", e)
@@ -238,15 +280,8 @@ class DggPmBot(commands.Bot):
                     actor_discord_id=interaction.user.id,
                     watchers=watchers,
                 )
-                new_embed = build_task_embed(updated_task)
-                new_view = TaskActionView(
-                    task_id=task_id,
-                    current_status=updated_task.status,
-                    current_priority=updated_task.priority,
-                    task_service=self.task_service,
-                )
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                await self._update_interaction_view(interaction, updated_task)
+                await self.sync_root_task_message(updated_task)
                 return
             except Exception as e:
                 logger.exception("Error handling dynamic watchers change: %s", e)
@@ -265,28 +300,14 @@ class DggPmBot(commands.Bot):
                 actor_discord_id=interaction.user.id,
                 notes=f"Status updated to {target_status.value} via button",
             )
-            new_embed = build_task_embed(updated_task)
-            new_view = TaskActionView(
-                task_id=task_id,
-                current_status=updated_task.status,
-                current_priority=updated_task.priority,
-                task_service=self.task_service,
-            )
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(embed=new_embed, view=new_view)
+            await self._update_interaction_view(interaction, updated_task)
+            await self.sync_root_task_message(updated_task)
 
         except StaleVersionError:
             latest_task = await self.task_service.get_by_id(task_id)
             if latest_task:
-                new_embed = build_task_embed(latest_task)
-                new_view = TaskActionView(
-                    task_id=task_id,
-                    current_status=latest_task.status,
-                    current_priority=latest_task.priority,
-                    task_service=self.task_service,
-                )
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+                await self._update_interaction_view(interaction, latest_task)
+                await self.sync_root_task_message(latest_task)
                 await interaction.followup.send(
                     "⚠️ This task was already updated by another team member. The card has been refreshed.",
                     ephemeral=True,

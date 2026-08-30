@@ -77,11 +77,14 @@ class HelpCog(commands.Cog):
         embed.add_field(
             name="⚡ Task Operations *(All Team Members)*",
             value=(
-                "`/task-create` - Create project task with thread and action buttons\n"
-                "`/task-standalone` - Create ad-hoc unanchored task\n"
+                "`/task-create` - Create project task (routed to project channel & thread)\n"
+                "`/task-standalone` - Create ad-hoc, one-off task in current channel\n"
+                "`/task-refresh` - Post/refresh live interactive task card in thread/channel\n"
                 "`/task-status` - Update execution progress (with autocomplete)\n"
+                "`/task-assign` - Assign or unassign task member\n"
+                "`/task-watchers` - Add, remove, or clear watchers (CC)\n"
                 "`/task-history` - View complete audit trail of status changes\n"
-                "`/task-list` - Browse active tasks with interactive pagination\n"
+                "`/task-list` - Browse active tasks with interactive pagination & filters\n"
                 "`/task-archive` / `/task-unarchive` - Soft-delete or restore tasks"
             ),
             inline=False,
@@ -92,10 +95,12 @@ class HelpCog(commands.Cog):
             value=(
                 "• **`🟡 In Progress`** / **`🟢 Complete`**: Instantly update execution state\n"
                 "• **`📝 Add Note`**: Log progress updates and blockers to the task thread\n"
-                "• **`✏️ Edit Details`**: Edit title, description, due date (natural language), and watchers\n"
+                "• **`✏️ Edit Details`**: Edit title, description, and due date\n"
+                "• **`🚫 Unassign`**: 1-click unassign from task\n"
                 "• **`⚡ Priority Menu`**: 1-click priority adjustments (`High`, `Normal`, `Low`)\n"
                 "• **`👤 Assignee Menu`**: Reassign team members directly from the card\n"
-                "• **`📅 Due Date Menu`**: 1-click presets (`Today`, `Tomorrow`, `3 Days`, `1 Week`, etc.)"
+                "• **`📅 Due Date Menu`**: 1-click presets (`Today`, `Tomorrow`, `3 Days`, `1 Week`, etc.)\n"
+                "• **`👀 Watchers Menu`**: Multi-select picker to manage watchers (CC)"
             ),
             inline=False,
         )

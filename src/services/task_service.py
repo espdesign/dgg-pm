@@ -174,6 +174,7 @@ class TaskService:
                 "watchers": updated_task.watchers,
                 "notes": notes,
                 "discord_thread_id": updated_task.discord_thread_id,
+                "discord_message_id": updated_task.discord_message_id,
             },
         )
 

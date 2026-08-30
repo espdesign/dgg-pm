@@ -20,7 +20,7 @@ from src.adapters.discord_bot.views.team_menu import (
     TeamMenuView,
     build_team_menu_embed,
 )
-from src.domain.enums import PriorityLevel
+from src.domain.enums import PriorityLevel, TaskStatus
 
 
 @pytest.mark.asyncio
@@ -188,10 +188,45 @@ async def test_task_menu_and_modal(services):
     project = await proj_srv.create_project(guild_id=guild_id, name="Security Ops", prefix="SEC")
 
     # 1. Test TaskMenuView and embed
-    view = TaskMenuView(task_srv, proj_srv, team_service=services["team"])
+    view = TaskMenuView(task_srv, proj_srv, team_service=services["team"], projects=[project])
     embed = build_task_menu_embed()
     assert "Task Operations Control Center" in embed.title
-    assert len(view.children) == 5  # New Project Task, Standalone, Refresh, PM Main Menu, Status Filter
+    assert len(view.children) == 8  # New, Standalone, Reset, PM Main Menu, Project, Status, Assignee, Clear Member
+
+    # Test project filter callback
+    project_interaction = MagicMock(spec=discord.Interaction)
+    project_interaction.guild = MagicMock()
+    project_interaction.guild.id = guild_id
+    project_interaction.response = MagicMock()
+    project_interaction.response.edit_message = AsyncMock()
+    view.project_select._values = [str(project.id)]
+    await view._on_project_filter_changed(project_interaction)
+    project_interaction.response.edit_message.assert_awaited_once()
+    assert view.selected_project_id == project.id
+
+    # Test status filter callback
+    status_interaction = MagicMock(spec=discord.Interaction)
+    status_interaction.guild = MagicMock()
+    status_interaction.guild.id = guild_id
+    status_interaction.response = MagicMock()
+    status_interaction.response.edit_message = AsyncMock()
+    view.status_select._values = ["inProgress"]
+    await view._on_status_filter_changed(status_interaction)
+    status_interaction.response.edit_message.assert_awaited_once()
+    assert view.selected_status == TaskStatus.IN_PROGRESS
+
+    # Test assignee filter callback
+    mock_filter_user = MagicMock(spec=discord.Member)
+    mock_filter_user.id = 1002
+    assignee_interaction = MagicMock(spec=discord.Interaction)
+    assignee_interaction.guild = MagicMock()
+    assignee_interaction.guild.id = guild_id
+    assignee_interaction.response = MagicMock()
+    assignee_interaction.response.edit_message = AsyncMock()
+    view.assignee_select._values = [mock_filter_user]
+    await view._on_assignee_filter_changed(assignee_interaction)
+    assignee_interaction.response.edit_message.assert_awaited_once()
+    assert view.selected_assignee_id == 1002
 
     # Test clicking PM Main Menu
     main_menu_interaction = MagicMock(spec=discord.Interaction)
@@ -251,6 +286,8 @@ async def test_pm_hub_navigation(services):
     assert len(hub_view.children) == 4  # Projects, Teams, Tasks, Guides
 
     mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock()
+    mock_interaction.guild.id = 9999999999
     mock_interaction.response = MagicMock()
     mock_interaction.response.edit_message = AsyncMock()
 

@@ -41,7 +41,12 @@ class PmHubView(discord.ui.View):
     @discord.ui.button(label="Tasks Hub", emoji="⚡", style=discord.ButtonStyle.primary, row=0)
     async def tasks_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed = build_task_menu_embed()
-        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
+        projects = (
+            await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            if interaction.guild
+            else []
+        )
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service, projects=projects)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Guides", emoji="📖", style=discord.ButtonStyle.secondary, row=0)

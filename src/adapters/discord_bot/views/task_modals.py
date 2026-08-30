@@ -139,11 +139,24 @@ class TaskEditModal(discord.ui.Modal):
             )
 
             if interaction.message:
-                await interaction.response.edit_message(embed=new_embed, view=new_view)
+                if isinstance(interaction.channel, discord.Thread):
+                    assignee_str = (
+                        f"<@{updated_task.assignee_discord_id}>" if updated_task.assignee_discord_id else "Unassigned"
+                    )
+                    content = (
+                        f"📌 **Task Workspace & Controls** (Assignee: {assignee_str} • "
+                        f"Priority: `{updated_task.priority.value.upper()}`)"
+                    )
+                    await interaction.response.edit_message(content=content, embed=None, view=new_view)
+                else:
+                    await interaction.response.edit_message(embed=new_embed, view=new_view)
             else:
                 await interaction.response.send_message(
                     f"✅ Updated **[{updated_task.short_id}] {updated_task.title}**.",
                     ephemeral=True,
                 )
+
+            if hasattr(interaction.client, "sync_root_task_message"):
+                await interaction.client.sync_root_task_message(updated_task)
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to update task details: {e}", ephemeral=True)

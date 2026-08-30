@@ -77,7 +77,8 @@ class DiscordNotifier(INotificationDispatcher):
         watchers: list[int] = payload.get("watchers", [])
         assignee_id = payload.get("assignee_discord_id")
 
-        # Post update in Discord thread if available
+        # Post update in Discord thread if available and update root starter message
+        message_id = payload.get("discord_message_id")
         if thread_id:
             try:
                 thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
@@ -86,6 +87,32 @@ class DiscordNotifier(INotificationDispatcher):
                     if notes:
                         msg += f"\n> {notes}"
                     await thread.send(msg)
+
+                    # Keep the root starter message in the parent channel up-to-date
+                    if message_id and thread.parent:
+                        try:
+                            root_msg = await thread.parent.fetch_message(message_id)
+                            if root_msg and root_msg.embeds:
+                                embed = root_msg.embeds[0]
+                                for i, field in enumerate(embed.fields):
+                                    if field.name and "Status" in field.name:
+                                        embed.set_field_at(
+                                            i,
+                                            name=field.name,
+                                            value=f"`{new_status.upper()}`",
+                                            inline=field.inline,
+                                        )
+                                        break
+                                embed.color = (
+                                    discord.Color.green()
+                                    if new_status == "completed"
+                                    else discord.Color.gold()
+                                    if new_status == "inProgress"
+                                    else discord.Color.blue()
+                                )
+                                await root_msg.edit(embed=embed)
+                        except Exception as edit_err:
+                            logger.debug("Could not edit root starter message: %s", edit_err)
             except Exception as e:
                 logger.warning("Failed to post status update into thread %s: %s", thread_id, e)
 
