@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scripts.seed_tech_tree_forum import (
     TECH_TREE_NODES,
@@ -27,14 +28,20 @@ def test_seed_tech_tree_safety_guards(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seed_tech_tree_db_creation():
+async def test_seed_tech_tree_db_creation(async_engine):
     guild_id = 998877880
+    session_factory = async_sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
     project, tasks_by_index, task_service = await seed_tech_tree_db(
         guild_id=guild_id,
         project_name="Autonomous Swarm Platform",
         project_prefix="TREE",
         reset_existing=True,
+        session_factory=session_factory,
     )
 
     assert project is not None

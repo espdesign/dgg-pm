@@ -65,6 +65,13 @@ async def clear_database(guild_id: int | None = None) -> None:
         async with async_session_factory() as session:
             async with session.begin():
                 await session.execute(
+                    text(
+                        "DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE guild_id = :gid) "
+                        "OR depends_on_task_id IN (SELECT id FROM tasks WHERE guild_id = :gid)"
+                    ),
+                    {"gid": guild_id},
+                )
+                await session.execute(
                     text("DELETE FROM task_watchers WHERE task_id IN (SELECT id FROM tasks WHERE guild_id = :gid)"),
                     {"gid": guild_id},
                 )

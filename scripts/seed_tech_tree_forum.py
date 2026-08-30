@@ -214,14 +214,19 @@ async def seed_tech_tree_db(
     project_desc: str = "Decentralized autonomous swarm intelligence project with comprehensive DAG tech-tree",
     reset_existing: bool = False,
     actor_discord_id: int | None = None,
+    session_factory: Any | None = None,
 ) -> tuple[Project, dict[int, Task], TaskService]:
     """Seeds the tech tree project, tasks, and dependency edges in PostgreSQL."""
-    await init_db()
+    if session_factory is None:
+        await init_db()
+        sess_factory = async_session_factory
+    else:
+        sess_factory = session_factory
 
-    task_repo = PostgresTaskRepo(async_session_factory)
-    project_repo = PostgresProjectRepo(async_session_factory)
-    outbox_repo = PostgresOutboxRepo(async_session_factory)
-    uow = SqlAlchemyUnitOfWork(async_session_factory)
+    task_repo = PostgresTaskRepo(sess_factory)
+    project_repo = PostgresProjectRepo(sess_factory)
+    outbox_repo = PostgresOutboxRepo(sess_factory)
+    uow = SqlAlchemyUnitOfWork(sess_factory)
     project_service = ProjectService(project_repo)
     outbox_service = OutboxService(outbox_repo)
     task_service = TaskService(task_repo, project_service, outbox_service, uow=uow)
@@ -232,7 +237,7 @@ async def seed_tech_tree_db(
     existing_project = await project_repo.get_by_prefix(guild_id, project_prefix)
     if existing_project and reset_existing:
         logger.info(f"Purging existing project [{project_prefix}] '{existing_project.name}' for fresh reseed...")
-        async with async_session_factory() as session:
+        async with sess_factory() as session:
             # Delete dependencies and tasks for this project
             task_ids_stmt = select(TaskTable.id).where(TaskTable.project_id == existing_project.id)
             res = await session.execute(task_ids_stmt)
