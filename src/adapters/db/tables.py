@@ -163,3 +163,18 @@ class OutboxEventTable(Base):
     processed_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("ix_outbox_pending_scheduled", "status", "scheduled_for"),)
+
+
+class UserPreferenceTable(Base):
+    __tablename__ = "user_preferences"
+
+    guild_id = Column(BigInteger, primary_key=True)
+    user_discord_id = Column(BigInteger, primary_key=True)
+    notify_preference = Column(String(20), nullable=False, default="dm")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )

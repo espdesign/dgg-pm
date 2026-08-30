@@ -5,7 +5,7 @@ import discord
 
 from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
 from src.domain.enums import TaskStatus
-from src.domain.models import Project
+from src.domain.models import Project, Team
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -385,6 +385,214 @@ class ProjectRestoreSelectView(discord.ui.View):
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
+class ProjectAssignTimelineModal(discord.ui.Modal):
+    """Modal to specify timeline when assigning a team to a project."""
+
+    def __init__(
+        self,
+        project_service: ProjectService,
+        project: Project,
+        team: Team,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
+        super().__init__(title=f"Assign Team to [{project.prefix}]"[:45])
+        self.project_service = project_service
+        self.project = project
+        self.team = team
+        self.team_service = team_service
+        self.task_service = task_service
+
+        self.timeline_input = discord.ui.TextInput(
+            label="Target Timeline (Optional)",
+            placeholder="e.g. Q3 2026, 6 weeks, Sprint 1-4",
+            required=False,
+            max_length=100,
+        )
+        self.add_item(self.timeline_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        timeline = self.timeline_input.value.strip() or None
+        try:
+            await self.project_service.assign_team_to_project(
+                project_id=self.project.id,
+                team_id=self.team.id,
+                timeline=timeline,
+            )
+            embed = discord.Embed(
+                title="✅ Team Mapped to Project",
+                description=(
+                    f"Successfully mapped team **{self.team.name}** (<@&{self.team.discord_role_id}>) "
+                    f"to project **{self.project.name}** (`{self.project.prefix}`)."
+                    + (f"\n\n• **Target Timeline:** `{timeline}`" if timeline else "")
+                ),
+                color=discord.Color.green(),
+            )
+            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            logger.exception("Error assigning team to project via modal: %s", e)
+            await interaction.response.send_message(f"❌ Failed to assign team: {e}", ephemeral=True)
+
+
+class ProjectAssignTeamView(discord.ui.View):
+    """Interactive view to map a team to a project with optional timeline."""
+
+    def __init__(
+        self,
+        projects: list[Project],
+        teams: list[Team],
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
+        super().__init__(timeout=120)
+        self.projects = projects
+        self.teams = teams
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+
+        self.selected_project_id: UUID = projects[0].id
+        self.selected_team_id: UUID = teams[0].id
+
+        # Row 0: Select Project
+        proj_options = [
+            discord.SelectOption(
+                label=f"{p.name} ({p.prefix})"[:100],
+                value=str(p.id),
+                description=(p.description[:50] if p.description else "Active Project"),
+                emoji="📁",
+                default=(i == 0),
+            )
+            for i, p in enumerate(projects[:25])
+        ]
+        self.proj_select = discord.ui.Select(
+            placeholder="📁 Select Project...",
+            options=proj_options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+        self.proj_select.callback = self._on_project_changed
+        self.add_item(self.proj_select)
+
+        # Row 1: Select Team
+        team_options = [
+            discord.SelectOption(
+                label=t.name[:100],
+                value=str(t.id),
+                description=f"Discord Role: @{t.discord_role_id}"[:50],
+                emoji="👥",
+                default=(i == 0),
+            )
+            for i, t in enumerate(teams[:25])
+        ]
+        self.team_select = discord.ui.Select(
+            placeholder="👥 Select Team...",
+            options=team_options,
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+        self.team_select.callback = self._on_team_changed
+        self.add_item(self.team_select)
+
+        # Row 2: Action Buttons
+        self.assign_btn = discord.ui.Button(
+            label="Map Team (Quick)",
+            emoji="🤝",
+            style=discord.ButtonStyle.primary,
+            row=2,
+        )
+        self.assign_btn.callback = self._on_assign_quick_clicked
+        self.add_item(self.assign_btn)
+
+        self.timeline_btn = discord.ui.Button(
+            label="Set Timeline & Map...",
+            emoji="⏱️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.timeline_btn.callback = self._on_timeline_clicked
+        self.add_item(self.timeline_btn)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
+    def _get_selected_project(self) -> Project | None:
+        return next((p for p in self.projects if p.id == self.selected_project_id), None)
+
+    def _get_selected_team(self) -> Team | None:
+        return next((t for t in self.teams if t.id == self.selected_team_id), None)
+
+    async def _on_project_changed(self, interaction: discord.Interaction) -> None:
+        self.selected_project_id = UUID(self.proj_select.values[0])
+        for opt in self.proj_select.options:
+            opt.default = opt.value == str(self.selected_project_id)
+        await interaction.response.edit_message(view=self)
+
+    async def _on_team_changed(self, interaction: discord.Interaction) -> None:
+        self.selected_team_id = UUID(self.team_select.values[0])
+        for opt in self.team_select.options:
+            opt.default = opt.value == str(self.selected_team_id)
+        await interaction.response.edit_message(view=self)
+
+    async def _on_assign_quick_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        team = self._get_selected_team()
+        if not proj or not team:
+            await interaction.response.send_message("❌ Selection error.", ephemeral=True)
+            return
+
+        try:
+            await self.project_service.assign_team_to_project(
+                project_id=proj.id,
+                team_id=team.id,
+                timeline=None,
+            )
+            embed = discord.Embed(
+                title="✅ Team Mapped to Project",
+                description=(
+                    f"Successfully mapped team **{team.name}** (<@&{team.discord_role_id}>) "
+                    f"to project **{proj.name}** (`{proj.prefix}`)."
+                ),
+                color=discord.Color.green(),
+            )
+            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            logger.exception("Error assigning team to project: %s", e)
+            await interaction.response.send_message(f"❌ Failed to assign team: {e}", ephemeral=True)
+
+    async def _on_timeline_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        team = self._get_selected_team()
+        if not proj or not team:
+            await interaction.response.send_message("❌ Selection error.", ephemeral=True)
+            return
+
+        modal = ProjectAssignTimelineModal(
+            project_service=self.project_service,
+            project=proj,
+            team=team,
+            team_service=self.team_service,
+            task_service=self.task_service,
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
 class ProjectMenuView(discord.ui.View):
     """Control Center View for Project Operations."""
 
@@ -458,7 +666,31 @@ class ProjectMenuView(discord.ui.View):
         view = ProjectActiveListView(self.project_service, self.team_service, self.task_service)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Archive Project", emoji="📦", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Assign Team", emoji="🤝", style=discord.ButtonStyle.secondary, row=0)
+    async def assign_team_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        if not projects:
+            await interaction.response.send_message(
+                "📁 No active projects found. Create a project first!", ephemeral=True
+            )
+            return
+        teams = await self.team_service.list_teams(interaction.guild.id)
+        if not teams:
+            await interaction.response.send_message(
+                "👥 No teams found. Create a team in `/team-menu` first!", ephemeral=True
+            )
+            return
+        view = ProjectAssignTeamView(projects, teams, self.project_service, self.team_service, self.task_service)
+        embed = discord.Embed(
+            title="🤝 Map Team to Project",
+            description="Select a project and a functional team container to map together:",
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Archive Project", emoji="📦", style=discord.ButtonStyle.secondary, row=1)
     async def archive_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             return
@@ -474,7 +706,7 @@ class ProjectMenuView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Restore Project", emoji="♻️", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Restore Project", emoji="♻️", style=discord.ButtonStyle.secondary, row=1)
     async def restore_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             return
@@ -496,9 +728,10 @@ def build_project_menu_embed() -> discord.Embed:
     embed = discord.Embed(
         title="📁 Project Management Control Center",
         description=(
-            "Manage project containers, channel bindings, and project lifecycles without typing commands.\n\n"
+            "Manage project containers, channel bindings, and team assignments without typing commands.\n\n"
             "• **`➕ New Project`**: Create a project container bound to any Forum or Text channel\n"
             "• **`📋 Active Projects`**: View all running projects and key prefixes\n"
+            "• **`🤝 Assign Team`**: Map a functional team to a project container (with optional timeline)\n"
             "• **`📦 Archive Project`**: Soft-delete a completed project\n"
             "• **`♻️ Restore Project`**: Bring back an archived project"
         ),

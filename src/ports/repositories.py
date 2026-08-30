@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
-from src.domain.enums import PriorityLevel, TaskStatus
+from src.domain.enums import NotificationPreference, PriorityLevel, TaskStatus
 from src.domain.models import (
     OutboxEvent,
     Project,
@@ -11,6 +11,7 @@ from src.domain.models import (
     TaskHistory,
     Team,
     TeamMember,
+    UserPreference,
 )
 
 
@@ -192,3 +193,26 @@ class IOutboxRepo(ABC):
     @abstractmethod
     async def cancel_task_reminders(self, task_id: UUID) -> int:
         """Cancels all pending reminder events for a task."""
+
+
+class IUserPreferenceRepo(ABC):
+    @abstractmethod
+    async def get_preference(self, guild_id: int, user_discord_id: int) -> UserPreference | None:
+        """Fetches user notification preference."""
+
+    @abstractmethod
+    async def set_preference(
+        self,
+        guild_id: int,
+        user_discord_id: int,
+        notify_preference: NotificationPreference,
+    ) -> UserPreference:
+        """Sets or updates user notification preference."""
+
+    @abstractmethod
+    async def get_preferences_bulk(
+        self,
+        guild_id: int,
+        user_ids: list[int],
+    ) -> dict[int, NotificationPreference]:
+        """Fetches preferences for multiple users in a guild."""

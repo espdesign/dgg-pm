@@ -5,10 +5,15 @@ import pytest
 
 from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
 from src.adapters.discord_bot.views.project_menu import (
+    ProjectAssignTeamView,
+    ProjectAssignTimelineModal,
     ProjectChannelSelectView,
     ProjectCreateModal,
     ProjectMenuView,
     build_project_menu_embed,
+)
+from src.adapters.discord_bot.views.settings_menu import (
+    UserSettingsView,
 )
 from src.adapters.discord_bot.views.task_menu import (
     TaskCreateModal,
@@ -34,7 +39,7 @@ async def test_project_menu_and_modal(services):
     view = ProjectMenuView(proj_srv, team_srv, task_service=services["task"])
     embed = build_project_menu_embed()
     assert "Project Management Control Center" in embed.title
-    assert len(view.children) == 5  # New Project, Active Projects, Archive, Restore, PM Main Menu
+    assert len(view.children) == 6  # New Project, Active Projects, Assign Team, Archive, Restore, PM Main Menu
 
     # Test clicking New Project opens ProjectChannelSelectView
     new_proj_interaction = MagicMock(spec=discord.Interaction)
@@ -87,6 +92,37 @@ async def test_project_menu_and_modal(services):
     assert created_proj is not None
     assert created_proj.prefix == "CLD"
     assert created_proj.discord_channel_id == 123456789
+
+    # 4. Test Assign Team Flow (ProjectAssignTeamView & ProjectAssignTimelineModal)
+    team = await team_srv.create_team(guild_id=guild_id, name="DevOps Squad", discord_role_id=987654)
+    projects = [created_proj]
+    teams = [team]
+
+    assign_view = ProjectAssignTeamView(projects, teams, proj_srv, team_srv, services["task"])
+    assert len(assign_view.proj_select.options) == 1
+    assert len(assign_view.team_select.options) == 1
+
+    # Test quick assign
+    quick_interaction = MagicMock(spec=discord.Interaction)
+    quick_interaction.response = MagicMock()
+    quick_interaction.response.edit_message = AsyncMock()
+    await assign_view._on_assign_quick_clicked(quick_interaction)
+    quick_interaction.response.edit_message.assert_awaited_once()
+
+    # Test timeline modal assign
+    timeline_modal = ProjectAssignTimelineModal(
+        project_service=proj_srv,
+        project=created_proj,
+        team=team,
+        team_service=team_srv,
+        task_service=services["task"],
+    )
+    timeline_modal.timeline_input._value = "Q3 2026 (4 sprints)"
+    modal_interaction = MagicMock(spec=discord.Interaction)
+    modal_interaction.response = MagicMock()
+    modal_interaction.response.edit_message = AsyncMock()
+    await timeline_modal.on_submit(modal_interaction)
+    modal_interaction.response.edit_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -301,15 +337,19 @@ async def test_pm_hub_navigation(services):
     proj_srv = services["project"]
     team_srv = services["team"]
     task_srv = services["task"]
+    user_srv = services["user"]
 
-    hub_view = PmHubView(proj_srv, team_srv, task_srv)
+    hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
     welcome_embed = build_hub_welcome_embed()
     assert "Control Hub" in welcome_embed.title
-    assert len(hub_view.children) == 4  # Projects, Teams, Tasks, Guides
+    assert len(hub_view.children) == 5  # Projects, Teams, Tasks, My Settings, Guides
 
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock()
     mock_interaction.guild.id = 9999999999
+    mock_interaction.user = MagicMock()
+    mock_interaction.user.id = 123456789
+    mock_interaction.user.display_name = "testuser"
     mock_interaction.response = MagicMock()
     mock_interaction.response.edit_message = AsyncMock()
 
@@ -320,6 +360,49 @@ async def test_pm_hub_navigation(services):
     # Switch to tasks tab
     await hub_view.tasks_tab.callback(mock_interaction)
     assert mock_interaction.response.edit_message.await_count == 2
+
+    # Switch to settings tab
+    await hub_view.settings_tab.callback(mock_interaction)
+    assert mock_interaction.response.edit_message.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_user_settings_menu_and_toggle(services):
+    user_srv = services["user"]
+    guild_id = 9999999999
+    from src.domain.enums import NotificationPreference
+
+    view = UserSettingsView(
+        user_service=user_srv,
+        current_pref=NotificationPreference.DM,
+        project_service=services["project"],
+        team_service=services["team"],
+        task_service=services["task"],
+    )
+    assert len(view.children) == 6  # 4 prefs + 1 test + 1 back
+
+    mock_interaction = MagicMock(spec=discord.Interaction)
+    mock_interaction.guild = MagicMock()
+    mock_interaction.guild.id = guild_id
+    mock_interaction.guild.name = "Test Guild"
+    mock_interaction.user = MagicMock()
+    mock_interaction.user.id = 777888
+    mock_interaction.user.display_name = "Alice"
+    mock_interaction.user.send = AsyncMock()
+    mock_interaction.response = MagicMock()
+    mock_interaction.response.edit_message = AsyncMock()
+    mock_interaction.response.send_message = AsyncMock()
+
+    # 1. Click Channel Ping preference
+    await view._on_pref_clicked(mock_interaction, NotificationPreference.CHANNEL)
+    mock_interaction.response.edit_message.assert_awaited_once()
+
+    pref = await user_srv.get_preference(guild_id, 777888)
+    assert pref == NotificationPreference.CHANNEL
+
+    # 2. Click Test Notification button
+    await view._on_test_clicked(mock_interaction)
+    mock_interaction.response.send_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio

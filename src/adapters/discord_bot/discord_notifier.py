@@ -1,18 +1,34 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import discord
 
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
-from src.domain.enums import EventType, PriorityLevel, TaskStatus
+from src.domain.enums import EventType, NotificationPreference, PriorityLevel, TaskStatus
 from src.domain.models import OutboxEvent
 from src.ports.notifier import INotificationDispatcher
+
+if TYPE_CHECKING:
+    from src.services.user_service import UserService
 
 logger = logging.getLogger("dgg_pm.discord_notifier")
 
 
 class DiscordNotifier(INotificationDispatcher):
-    def __init__(self, bot: discord.Client):
+    def __init__(self, bot: discord.Client, user_service: UserService | None = None):
         self.bot = bot
+        self.user_service = user_service
+
+    async def _get_pref(self, guild_id: int | None, user_id: int) -> NotificationPreference:
+        if not self.user_service or not guild_id:
+            return NotificationPreference.DM
+        try:
+            return await self.user_service.get_preference(guild_id, user_id)
+        except Exception as e:
+            logger.debug("Could not fetch user pref for %s: %s", user_id, e)
+            return NotificationPreference.DM
 
     async def _send_dm(self, user_id: int, embed: discord.Embed) -> bool:
         """Helper to send a Direct Message to a Discord user."""
@@ -26,6 +42,34 @@ class DiscordNotifier(INotificationDispatcher):
         except Exception as e:
             logger.exception("Failed to send DM to user %s: %s", user_id, e)
         return False
+
+    async def _notify_user(
+        self,
+        *,
+        guild_id: int | None,
+        user_id: int,
+        embed: discord.Embed,
+        thread: discord.Thread | None = None,
+        mention_text: str | None = None,
+    ) -> None:
+        pref = await self._get_pref(guild_id, user_id)
+        if pref == NotificationPreference.NONE:
+            return
+
+        dm_success = False
+        if pref in (NotificationPreference.DM, NotificationPreference.BOTH):
+            dm_success = await self._send_dm(user_id, embed)
+
+        # If user wants channel mentions, OR if DM failed (e.g. DMs closed) and thread exists
+        if pref in (NotificationPreference.CHANNEL, NotificationPreference.BOTH) or (
+            pref == NotificationPreference.DM and not dm_success
+        ):
+            if thread:
+                try:
+                    text = mention_text or f"🔔 <@{user_id}>"
+                    await thread.send(content=text, embed=embed)
+                except Exception as e:
+                    logger.warning("Failed to send in-thread notification to %s: %s", user_id, e)
 
     async def dispatch_event(self, event: OutboxEvent) -> None:
         p = event.payload
@@ -45,6 +89,8 @@ class DiscordNotifier(INotificationDispatcher):
         if not assignee_id:
             return
 
+        guild_id = payload.get("guild_id")
+        thread_id = payload.get("discord_thread_id")
         reminder_type = payload.get("reminder_type", "due")
         short_id = payload.get("short_id", "")
         title = payload.get("title", "")
@@ -65,11 +111,27 @@ class DiscordNotifier(INotificationDispatcher):
         if payload.get("due_at"):
             embed.add_field(name="Due Timestamp", value=payload["due_at"], inline=True)
 
-        await self._send_dm(assignee_id, embed)
+        thread = None
+        if thread_id:
+            try:
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
+            except Exception:
+                pass
+
+        await self._notify_user(
+            guild_id=guild_id,
+            user_id=assignee_id,
+            embed=embed,
+            thread=thread,
+            mention_text=f"⏰ <@{assignee_id}> **Task Deadline Reminder:** [{short_id}] {title} is **{label}**!",
+        )
 
     async def _handle_status_changed(self, payload: dict) -> None:
         short_id = payload.get("short_id", "")
         title = payload.get("title", "")
+        guild_id = payload.get("guild_id")
         old_status = payload.get("old_status", "")
         new_status = payload.get("new_status", "")
         actor_id = payload.get("actor_discord_id")
@@ -78,12 +140,14 @@ class DiscordNotifier(INotificationDispatcher):
         watchers: list[int] = payload.get("watchers", [])
         assignee_id = payload.get("assignee_discord_id")
 
+        thread: discord.Thread | None = None
         # Post update in Discord thread if available and update root starter message
         message_id = payload.get("discord_message_id")
         if thread_id:
             try:
-                thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-                if isinstance(thread, discord.Thread):
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
                     msg = f"🔄 **Status Updated:** `{old_status}` ➔ **`{new_status}`** by <@{actor_id}>"
                     if notes:
                         msg += f"\n> {notes}"
@@ -99,34 +163,45 @@ class DiscordNotifier(INotificationDispatcher):
                                 root_msg = await thread.parent.fetch_message(message_id)
 
                             if root_msg and root_msg.embeds:
-                                embed = root_msg.embeds[0]
-                                for i, field in enumerate(embed.fields):
-                                    if field.name and "Status" in field.name:
-                                        embed.set_field_at(
-                                            i,
-                                            name=field.name,
-                                            value=f"`{new_status.upper()}`",
-                                            inline=field.inline,
-                                        )
-                                        break
-                                embed.color = (
-                                    discord.Color.green()
-                                    if new_status == "completed"
-                                    else discord.Color.gold()
-                                    if new_status == "inProgress"
-                                    else discord.Color.blue()
+                                old_embed = root_msg.embeds[0]
+                                updated_embed = discord.Embed(
+                                    title=old_embed.title,
+                                    description=old_embed.description,
+                                    color=discord.Color.green() if new_status == "completed" else discord.Color.blue(),
                                 )
-                                await root_msg.edit(embed=embed)
-                        except Exception as edit_err:
-                            logger.debug("Could not edit root starter message: %s", edit_err)
+                                for f in old_embed.fields:
+                                    if f.name == "Status":
+                                        status_val = (
+                                            "🟢 Completed"
+                                            if new_status == "completed"
+                                            else ("🟡 In Progress" if new_status == "inProgress" else "⚪ Not Started")
+                                        )
+                                        updated_embed.add_field(name="Status", value=status_val, inline=f.inline)
+                                    else:
+                                        updated_embed.add_field(name=f.name, value=f.value, inline=f.inline)
 
-                    # Update forum tags & thread lifecycle
-                    edit_kwargs = {}
+                                if old_embed.footer and old_embed.footer.text:
+                                    updated_embed.set_footer(text=old_embed.footer.text)
+
+                                await root_msg.edit(embed=updated_embed)
+                        except Exception as edit_err:
+                            logger.warning(
+                                "Could not update root task embed in thread parent %s: %s", thread.id, edit_err
+                            )
+
+                    # Forum Tag and Archive Lifecycle Synchronization
+                    edit_kwargs: dict[str, object] = {}
                     if isinstance(thread.parent, discord.ForumChannel):
+                        prio_val = None
+                        if payload.get("priority"):
+                            try:
+                                prio_val = PriorityLevel(payload["priority"])
+                            except ValueError:
+                                pass
                         edit_kwargs["applied_tags"] = resolve_forum_tags(
                             thread.parent,
                             status=TaskStatus(new_status),
-                            priority=PriorityLevel(payload.get("priority", "normal")),
+                            priority=prio_val,
                             existing_tags=getattr(thread, "applied_tags", None),
                         )
 
@@ -145,7 +220,7 @@ class DiscordNotifier(INotificationDispatcher):
             except Exception as e:
                 logger.warning("Failed to post status update into thread %s: %s", thread_id, e)
 
-        # Notify watchers and assignee via DM
+        # Notify watchers and assignee
         recipients = set(watchers)
         if assignee_id and assignee_id != actor_id:
             recipients.add(assignee_id)
@@ -161,22 +236,31 @@ class DiscordNotifier(INotificationDispatcher):
                 embed.add_field(name="Notes", value=notes, inline=False)
 
             for uid in recipients:
-                await self._send_dm(uid, embed)
+                await self._notify_user(
+                    guild_id=guild_id,
+                    user_id=uid,
+                    embed=embed,
+                    thread=thread,
+                    mention_text=f"🔔 <@{uid}> Task **[{short_id}] {title}** status updated to **`{new_status}`**",
+                )
 
     async def _handle_note_added(self, payload: dict) -> None:
         short_id = payload.get("short_id", "")
         title = payload.get("title", "")
+        guild_id = payload.get("guild_id")
         actor_id = payload.get("actor_discord_id")
         note = payload.get("note", "")
         thread_id = payload.get("discord_thread_id")
         watchers: list[int] = payload.get("watchers", [])
         assignee_id = payload.get("assignee_discord_id")
 
+        thread: discord.Thread | None = None
         # Post into thread
         if thread_id:
             try:
-                thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-                if isinstance(thread, discord.Thread):
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
                     was_archived = thread.archived
                     await thread.send(f"📝 **Note added by <@{actor_id}>:**\n> {note}")
                     if was_archived:
@@ -187,7 +271,7 @@ class DiscordNotifier(INotificationDispatcher):
             except Exception as e:
                 logger.warning("Failed to post note to thread %s: %s", thread_id, e)
 
-        # Notify assignee & watchers via DM
+        # Notify assignee & watchers
         recipients = set(watchers)
         if assignee_id and assignee_id != actor_id:
             recipients.add(assignee_id)
@@ -200,11 +284,20 @@ class DiscordNotifier(INotificationDispatcher):
                 color=discord.Color.blue(),
             )
             for uid in recipients:
-                await self._send_dm(uid, embed)
+                await self._notify_user(
+                    guild_id=guild_id,
+                    user_id=uid,
+                    embed=embed,
+                    thread=thread,
+                    mention_text=f"💬 <@{uid}> New note on **[{short_id}] {title}**",
+                )
 
     async def _handle_task_created(self, payload: dict) -> None:
         assignee_id = payload.get("assignee_discord_id")
         creator_id = payload.get("creator_discord_id")
+        guild_id = payload.get("guild_id")
+        thread_id = payload.get("discord_thread_id")
+
         if assignee_id and assignee_id != creator_id:
             short_id = payload.get("short_id", "")
             title = payload.get("title", "")
@@ -213,4 +306,20 @@ class DiscordNotifier(INotificationDispatcher):
                 description=f"<@{creator_id}> assigned you a new task: **{title}**",
                 color=discord.Color.blue(),
             )
-            await self._send_dm(assignee_id, embed)
+
+            thread: discord.Thread | None = None
+            if thread_id:
+                try:
+                    chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                    if isinstance(chan, discord.Thread):
+                        thread = chan
+                except Exception:
+                    pass
+
+            await self._notify_user(
+                guild_id=guild_id,
+                user_id=assignee_id,
+                embed=embed,
+                thread=thread,
+                mention_text=f"📥 <@{assignee_id}> You have been assigned to task **[{short_id}] {title}**!",
+            )

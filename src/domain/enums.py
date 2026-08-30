@@ -80,3 +80,10 @@ class TaskHistoryAction(StrEnum):
     UPDATED = "UPDATED"
     ARCHIVED = "ARCHIVED"
     UNARCHIVED = "UNARCHIVED"
+
+
+class NotificationPreference(StrEnum):
+    DM = "dm"
+    CHANNEL = "channel"
+    BOTH = "both"
+    NONE = "none"

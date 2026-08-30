@@ -218,3 +218,28 @@ async def test_task_update_assignee_priority_and_details(services):
     assert TaskHistoryAction.PRIORITY_CHANGED in actions
     assert TaskHistoryAction.ASSIGNED in actions
     assert TaskHistoryAction.UPDATED in actions
+
+
+@pytest.mark.asyncio
+async def test_user_service_preferences(services):
+    user_srv = services["user"]
+    guild_id = 999111222
+    user_id = 123456789
+
+    # Default preference is DM
+    pref = await user_srv.get_preference(guild_id, user_id)
+    from src.domain.enums import NotificationPreference
+
+    assert pref == NotificationPreference.DM
+
+    # Update to CHANNEL
+    updated = await user_srv.set_preference(guild_id, user_id, NotificationPreference.CHANNEL)
+    assert updated.notify_preference == NotificationPreference.CHANNEL
+
+    pref2 = await user_srv.get_preference(guild_id, user_id)
+    assert pref2 == NotificationPreference.CHANNEL
+
+    # Bulk fetch
+    bulk = await user_srv.get_preferences_bulk(guild_id, [user_id, 999999])
+    assert bulk[user_id] == NotificationPreference.CHANNEL
+    assert bulk[999999] == NotificationPreference.DM

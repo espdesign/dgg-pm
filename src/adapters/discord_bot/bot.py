@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from src.adapters.discord_bot.cogs.help_cog import HelpCog
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
+from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
 from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
@@ -18,6 +19,7 @@ from src.domain.models import Task
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
 from src.services.team_service import TeamService
+from src.services.user_service import UserService
 from src.utils.date_parser import get_due_date_from_preset
 
 logger = logging.getLogger("dgg_pm.bot")
@@ -29,6 +31,7 @@ class DggPmBot(commands.Bot):
         task_service: TaskService,
         project_service: ProjectService,
         team_service: TeamService,
+        user_service: UserService | None = None,
     ):
         intents = discord.Intents.default()
         intents.guilds = True
@@ -43,6 +46,7 @@ class DggPmBot(commands.Bot):
         self.task_service = task_service
         self.project_service = project_service
         self.team_service = team_service
+        self.user_service = user_service
 
     async def setup_hook(self) -> None:
         """Invoked when bot is starting up before login."""
@@ -51,7 +55,19 @@ class DggPmBot(commands.Bot):
         await self.add_cog(TeamCog(self, self.team_service, self.project_service, self.task_service))
         await self.add_cog(TaskCog(self, self.task_service, self.project_service, self.team_service))
         await self.add_cog(HelpCog(self, self.project_service, self.team_service, self.task_service))
-        logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog")
+        if self.user_service:
+            await self.add_cog(
+                SettingsCog(
+                    self,
+                    self.user_service,
+                    self.project_service,
+                    self.team_service,
+                    self.task_service,
+                )
+            )
+            logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog, SettingsCog")
+        else:
+            logger.info("Loaded Discord cogs: ProjectCog, TeamCog, TaskCog, HelpCog")
 
         # Sync application slash commands
         if settings.DISCORD_GUILD_ID:

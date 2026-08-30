@@ -4,6 +4,8 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
+from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
+from src.domain.enums import NotificationPreference
 
 
 def test_project_create_command_parameters():
@@ -254,3 +256,38 @@ async def test_task_action_view_and_modals(services):
     assert updated.body == "Comprehensive review of all WAF rules"
     assert updated.due_at is not None
     assert set(updated.watchers) == {1001, 1003}
+
+
+@pytest.mark.asyncio
+async def test_settings_cog_my_settings(services):
+    user_srv = services["user"]
+    bot = MagicMock()
+    cog = SettingsCog(
+        bot=bot,
+        user_service=user_srv,
+        project_service=services["project"],
+        team_service=services["team"],
+        task_service=services["task"],
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = 123456789
+    interaction.user = MagicMock()
+    interaction.user.id = 987654321
+    interaction.user.display_name = "Charlie"
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    # 1. Run /my-settings without argument
+    await cog.my_settings.callback(cog, interaction=interaction, notify=None)
+    interaction.response.send_message.assert_awaited_once()
+
+    # 2. Run /my-settings with notify choice
+    choice = MagicMock()
+    choice.value = "both"
+    await cog.my_settings.callback(cog, interaction=interaction, notify=choice)
+    assert interaction.response.send_message.await_count == 2
+
+    pref = await user_srv.get_preference(123456789, 987654321)
+    assert pref == NotificationPreference.BOTH

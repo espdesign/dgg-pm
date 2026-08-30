@@ -17,6 +17,7 @@ from src.adapters.db.postgres_repo import (  # noqa: E402
     PostgresProjectRepo,
     PostgresTaskRepo,
     PostgresTeamRepo,
+    PostgresUserPreferenceRepo,
 )
 from src.adapters.db.session import async_session_factory, close_db, init_db  # noqa: E402
 from src.adapters.discord_bot.bot import DggPmBot  # noqa: E402
@@ -27,6 +28,7 @@ from src.services.outbox_service import OutboxService  # noqa: E402
 from src.services.project_service import ProjectService  # noqa: E402
 from src.services.task_service import TaskService  # noqa: E402
 from src.services.team_service import TeamService  # noqa: E402
+from src.services.user_service import UserService  # noqa: E402
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -48,19 +50,22 @@ async def run_app() -> None:
     project_repo = PostgresProjectRepo(async_session_factory)
     team_repo = PostgresTeamRepo(async_session_factory)
     outbox_repo = PostgresOutboxRepo(async_session_factory)
+    user_pref_repo = PostgresUserPreferenceRepo(async_session_factory)
 
     project_service = ProjectService(project_repo)
     team_service = TeamService(team_repo)
     outbox_service = OutboxService(outbox_repo)
     task_service = TaskService(task_repo, project_service, outbox_service)
+    user_service = UserService(user_pref_repo)
 
     # 3. Wire Discord Bot & Notifier
     bot = DggPmBot(
         task_service=task_service,
         project_service=project_service,
         team_service=team_service,
+        user_service=user_service,
     )
-    notifier = DiscordNotifier(bot)
+    notifier = DiscordNotifier(bot, user_service=user_service)
 
     # 4. Wire Outbox Worker
     worker = OutboxWorker(

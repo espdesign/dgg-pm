@@ -15,12 +15,14 @@ from src.adapters.db.postgres_repo import (
     PostgresProjectRepo,
     PostgresTaskRepo,
     PostgresTeamRepo,
+    PostgresUserPreferenceRepo,
 )
 from src.adapters.db.tables import Base
 from src.services.outbox_service import OutboxService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
+from src.services.user_service import UserService
 
 # In-memory SQLite async engine for lightning-fast testing
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -61,11 +63,13 @@ async def repos(db_session: AsyncSession):
     project_repo = PostgresProjectRepo(db_session)
     team_repo = PostgresTeamRepo(db_session)
     outbox_repo = PostgresOutboxRepo(db_session)
+    user_repo = PostgresUserPreferenceRepo(db_session)
     return {
         "task": task_repo,
         "project": project_repo,
         "team": team_repo,
         "outbox": outbox_repo,
+        "user": user_repo,
     }
 
 
@@ -75,9 +79,11 @@ async def services(repos):
     team_service = TeamService(repos["team"])
     outbox_service = OutboxService(repos["outbox"])
     task_service = TaskService(repos["task"], project_service, outbox_service)
+    user_service = UserService(repos["user"])
     return {
         "project": project_service,
         "team": team_service,
         "outbox": outbox_service,
         "task": task_service,
+        "user": user_service,
     }

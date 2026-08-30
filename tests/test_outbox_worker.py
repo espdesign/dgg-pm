@@ -116,3 +116,80 @@ async def test_outbox_worker_429_rate_limit_backoff(services, repos):
     await worker.process_batch()
 
     assert evt is not None
+
+
+@pytest.mark.asyncio
+async def test_discord_notifier_user_preferences_routing(services):
+    """Verify DiscordNotifier respects user notification preferences (DM, Channel, Both, Silent, Closed DMs)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import discord
+
+    from src.adapters.discord_bot.discord_notifier import DiscordNotifier
+    from src.domain.enums import NotificationPreference
+    from src.domain.models import OutboxEvent
+
+    user_srv = services["user"]
+    guild_id = 999111888
+
+    # Set user 1001 -> CHANNEL
+    await user_srv.set_preference(guild_id, 1001, NotificationPreference.CHANNEL)
+    # Set user 1002 -> NONE (Silent)
+    await user_srv.set_preference(guild_id, 1002, NotificationPreference.NONE)
+    # User 1003 has default (DM) but DMs closed -> triggers fallback in thread
+
+    bot = MagicMock()
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.send = AsyncMock()
+    mock_thread.parent = None
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    mock_user_1003 = MagicMock(spec=discord.User)
+    mock_user_1003.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "DMs closed"))
+    bot.get_user = MagicMock(return_value=mock_user_1003)
+    bot.fetch_user = AsyncMock(return_value=mock_user_1003)
+
+    notifier = DiscordNotifier(bot, user_service=user_srv)
+
+    # 1. Test status change for user 1001 (CHANNEL)
+    evt_channel = OutboxEvent(
+        event_type=EventType.TASK_STATUS_CHANGED,
+        idempotency_key="status_channel_test",
+        payload={
+            "task_id": "test-task-1",
+            "short_id": "T-1",
+            "title": "Build UI",
+            "guild_id": guild_id,
+            "old_status": "notStarted",
+            "new_status": "inProgress",
+            "actor_discord_id": 9999,
+            "assignee_discord_id": 1001,
+            "watchers": [],
+            "discord_thread_id": 555666,
+        },
+    )
+    await notifier.dispatch_event(evt_channel)
+    # Thread received status message + in-thread ping for 1001
+    assert mock_thread.send.await_count >= 2
+
+    # 2. Test status change for user 1002 (NONE / Silent)
+    mock_thread.send.reset_mock()
+    evt_silent = OutboxEvent(
+        event_type=EventType.TASK_STATUS_CHANGED,
+        idempotency_key="status_silent_test",
+        payload={
+            "task_id": "test-task-2",
+            "short_id": "T-2",
+            "title": "Build UI 2",
+            "guild_id": guild_id,
+            "old_status": "notStarted",
+            "new_status": "inProgress",
+            "actor_discord_id": 9999,
+            "assignee_discord_id": 1002,
+            "watchers": [],
+            "discord_thread_id": 555666,
+        },
+    )
+    await notifier.dispatch_event(evt_silent)
+    # Only thread update message, NO extra user ping
+    assert mock_thread.send.await_count == 1

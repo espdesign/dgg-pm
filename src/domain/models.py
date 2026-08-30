@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.domain.enums import (
     EventType,
+    NotificationPreference,
     OutboxStatus,
     PriorityLevel,
     TaskHistoryAction,
@@ -111,3 +112,11 @@ class OutboxEvent(DomainModel):
     scheduled_for: datetime = Field(default_factory=lambda: datetime.now(UTC))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     processed_at: datetime | None = None
+
+
+class UserPreference(DomainModel):
+    guild_id: int
+    user_discord_id: int
+    notify_preference: NotificationPreference = NotificationPreference.DM
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

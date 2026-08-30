@@ -47,7 +47,8 @@ class HelpCog(commands.Cog):
                 "`/pm-menu` - Master PM Hub with tabbed navigation\n"
                 "`/project-menu` - Project Management Control Center\n"
                 "`/team-menu` - Team & Roster Control Center\n"
-                "`/task-menu` - Task Operations & Filter Board"
+                "`/task-menu` - Task Operations & Filter Board\n"
+                "`/my-settings` - Configure personal notifications (DM vs Channel Ping)"
             ),
             inline=False,
         )
