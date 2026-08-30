@@ -276,3 +276,80 @@ async def test_discord_notifier_rearchives_thread_on_completion():
     mock_thread.send.assert_awaited_once()
     # Verify thread was re-archived after sending the message
     mock_thread.edit.assert_awaited_once_with(archived=True)
+
+
+def test_get_task_jump_url():
+    """Verify get_task_jump_url generates accurate universal Discord links."""
+    from src.adapters.discord_bot.views.task_embed import get_task_jump_url
+    from src.domain.models import Task
+
+    t1 = Task(
+        guild_id=12345,
+        title="Test Task",
+        creator_discord_id=100,
+        short_id="TST-1",
+        discord_thread_id=67890,
+        discord_message_id=112233,
+    )
+    assert get_task_jump_url(t1) == "https://discord.com/channels/12345/67890/112233"
+
+    t2 = Task(
+        guild_id=12345,
+        title="Thread only",
+        creator_discord_id=100,
+        short_id="TST-2",
+        discord_thread_id=67890,
+        discord_message_id=None,
+    )
+    assert get_task_jump_url(t2) == "https://discord.com/channels/12345/67890"
+
+    t3 = Task(
+        guild_id=0,
+        title="No guild",
+        creator_discord_id=100,
+        short_id="TST-3",
+    )
+    assert get_task_jump_url(t3) is None
+
+
+def test_task_list_embed_formats_hyperlinks():
+    """Verify build_page_embed in task_list_view includes clickable markdown hyperlinks."""
+    from src.adapters.discord_bot.views.task_list_view import build_page_embed
+    from src.domain.models import Task
+
+    task = Task(
+        guild_id=999,
+        title="Build Frontend",
+        creator_discord_id=101,
+        short_id="UI-1",
+        discord_thread_id=888,
+        discord_message_id=777,
+    )
+    embed = build_page_embed([task], page=0, total_count=1)
+    assert "https://discord.com/channels/999/888/777" in embed.description
+    assert "**[[UI-1] Build Frontend](https://discord.com/channels/999/888/777)**" in embed.description
+
+
+def test_task_board_embed_formats_jump_links():
+    """Verify build_task_board_embed in task_menu includes clickable jump links."""
+    from src.adapters.discord_bot.views.task_menu import build_task_board_embed
+    from src.domain.models import Task
+
+    task = Task(
+        guild_id=999,
+        title="API Integration",
+        creator_discord_id=101,
+        short_id="API-1",
+        discord_thread_id=888,
+        discord_message_id=777,
+    )
+    embed = build_task_board_embed(
+        tasks=[task],
+        total_count=1,
+        project_label="Global",
+        status_label="Active",
+        assignee_label="All",
+    )
+    field = embed.fields[0]
+    assert "https://discord.com/channels/999/888/777" in field.value
+    assert "[🔗 **Open Task Workspace**]" in field.value

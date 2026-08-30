@@ -464,13 +464,17 @@ def build_task_board_embed(
             inline=False,
         )
     else:
+        from src.adapters.discord_bot.views.task_embed import get_task_jump_url
+
         for t in tasks:
             icon = "🟢" if t.is_completed else ("🟡" if t.status == TaskStatus.IN_PROGRESS else "⚪")
             assignee_str = f"<@{t.assignee_discord_id}>" if t.assignee_discord_id else "Unassigned"
             due_str = f" | Due: {t.due_at.strftime('%b %d')}" if t.due_at else ""
+            jump_url = get_task_jump_url(t)
+            link_bullet = f"• [🔗 **Open Task Workspace**]({jump_url})\n" if jump_url else ""
             embed.add_field(
                 name=f"{icon} [{t.short_id}] {t.title}",
-                value=f"• Assignee: {assignee_str}{due_str}\n• Priority: `{t.priority.value.upper()}`",
+                value=f"{link_bullet}• Assignee: {assignee_str}{due_str}\n• Priority: `{t.priority.value.upper()}`",
                 inline=False,
             )
 

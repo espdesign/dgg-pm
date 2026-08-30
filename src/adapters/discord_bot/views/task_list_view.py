@@ -35,6 +35,8 @@ def build_page_embed(
         embed.set_footer(text=f"Page {page + 1} of {total_pages}")
         return embed
 
+    from src.adapters.discord_bot.views.task_embed import get_task_jump_url
+
     lines = []
     for t in page_tasks:
         emoji = STATUS_EMOJIS.get(t.status, "⚪")
@@ -45,7 +47,13 @@ def build_page_embed(
             due_ts = int(t.due_at.astimezone(UTC).timestamp())
             due_str = f" • Due <t:{due_ts}:R>"
 
-        lines.append(f"{emoji} **[{t.short_id}]** {t.title}\n   ↳ Assignee: {assignee_str}{due_str}")
+        jump_url = get_task_jump_url(t)
+        if jump_url:
+            title_part = f"**[[{t.short_id}] {t.title}]({jump_url})**"
+        else:
+            title_part = f"**[{t.short_id}]** {t.title}"
+
+        lines.append(f"{emoji} {title_part}\n   ↳ Assignee: {assignee_str}{due_str}")
 
     embed.description = "\n\n".join(lines)
     embed.set_footer(text=f"Page {page + 1} of {total_pages}")

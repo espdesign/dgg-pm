@@ -24,6 +24,17 @@ PRIORITY_EMOJIS = {
 }
 
 
+def get_task_jump_url(task: Task) -> str | None:
+    """Generates direct Discord message or thread jump URL for a task."""
+    if not task.guild_id:
+        return None
+    if task.discord_thread_id and task.discord_message_id:
+        return f"https://discord.com/channels/{task.guild_id}/{task.discord_thread_id}/{task.discord_message_id}"
+    if task.discord_thread_id:
+        return f"https://discord.com/channels/{task.guild_id}/{task.discord_thread_id}"
+    return None
+
+
 def build_task_embed(task: Task, project_name: str | None = None) -> discord.Embed:
     """Builds a rich, beautifully styled Discord Embed representing a task."""
     color = discord.Color.light_grey() if task.is_archived else STATUS_COLORS.get(task.status, discord.Color.blue())
@@ -32,8 +43,11 @@ def build_task_embed(task: Task, project_name: str | None = None) -> discord.Emb
     if task.is_archived:
         prefix_title = f"📁 [ARCHIVED] {prefix_title}"
 
+    jump_url = get_task_jump_url(task)
+
     embed = discord.Embed(
         title=prefix_title,
+        url=jump_url,
         description=task.body or "*No additional description provided.*",
         color=color,
         timestamp=task.created_at,
@@ -88,8 +102,10 @@ def build_thread_workspace_content(task: Task) -> str:
 
 def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.Embed:
     """Builds an embed listing the chronological audit history of a task."""
+    jump_url = get_task_jump_url(task)
     embed = discord.Embed(
         title=f"📜 Audit Trail: [{task.short_id}] {task.title}",
+        url=jump_url,
         color=discord.Color.dark_grey(),
     )
     if not history:
