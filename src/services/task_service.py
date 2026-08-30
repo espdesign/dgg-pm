@@ -294,7 +294,11 @@ class TaskService:
                     "actor_discord_id": actor_discord_id,
                     "old_assignee_id": old_assignee,
                     "new_assignee_id": new_assignee_id,
+                    "assignee_discord_id": new_assignee_id,
+                    "watchers": updated_task.watchers,
+                    "update_type": "assignee",
                     "discord_thread_id": updated_task.discord_thread_id,
+                    "discord_message_id": updated_task.discord_message_id,
                 },
                 session=session,
             )
@@ -343,7 +347,12 @@ class TaskService:
                     "actor_discord_id": actor_discord_id,
                     "old_priority": old_priority.value,
                     "new_priority": new_priority.value,
+                    "priority": new_priority.value,
+                    "assignee_discord_id": updated_task.assignee_discord_id,
+                    "watchers": updated_task.watchers,
+                    "update_type": "priority",
                     "discord_thread_id": updated_task.discord_thread_id,
+                    "discord_message_id": updated_task.discord_message_id,
                 },
                 session=session,
             )
@@ -363,6 +372,23 @@ class TaskService:
         current_task = await self.task_repo.get_by_id(task_id)
         if not current_task:
             raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
+
+        changes: list[str] = []
+        if title is not None and title.strip() != current_task.title:
+            changes.append(f"Title: `{current_task.title}` ➔ **`{title.strip()}`**")
+        if body is not None and body.strip() != (current_task.body or ""):
+            changes.append("Description updated")
+        if clear_due_at and current_task.due_at:
+            changes.append("Due date removed")
+        elif due_at is not None and due_at != current_task.due_at:
+            changes.append(f"Due date set to `{due_at.strftime('%Y-%m-%d %H:%M UTC')}`")
+        if watchers is not None and set(watchers) != set(current_task.watchers):
+            added = set(watchers) - set(current_task.watchers)
+            removed = set(current_task.watchers) - set(watchers)
+            if added:
+                changes.append(f"Added watchers: {', '.join(f'<@{u}>' for u in sorted(added))}")
+            if removed:
+                changes.append(f"Removed watchers: {', '.join(f'<@{u}>' for u in sorted(removed))}")
 
         async with self._transaction() as session:
             updated_task = await self.task_repo.update_task(
@@ -392,6 +418,27 @@ class TaskService:
                 notes="Task details updated",
             )
             await self.task_repo.add_history(history, session=session)
+
+            if changes:
+                await self.outbox_service.enqueue_event(
+                    event_type=EventType.TASK_UPDATED,
+                    idempotency_key=f"task_details:{task_id}:v{updated_task.version}",
+                    payload={
+                        "task_id": str(task_id),
+                        "short_id": updated_task.short_id,
+                        "title": updated_task.title,
+                        "guild_id": updated_task.guild_id,
+                        "actor_discord_id": actor_discord_id,
+                        "assignee_discord_id": updated_task.assignee_discord_id,
+                        "watchers": updated_task.watchers,
+                        "old_watchers": current_task.watchers,
+                        "changes": changes,
+                        "update_type": "details",
+                        "discord_thread_id": updated_task.discord_thread_id,
+                        "discord_message_id": updated_task.discord_message_id,
+                    },
+                    session=session,
+                )
 
         return updated_task
 

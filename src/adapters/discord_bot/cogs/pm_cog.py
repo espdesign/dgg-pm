@@ -741,7 +741,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             elif action == "clear":
                 current_watchers = []
 
-            updated_task = await self.task_service.update_task_details(
+            updated_task = await self.task_service.update_details(
                 task_id=task_entity.id,
                 actor_discord_id=interaction.user.id,
                 watchers=current_watchers,

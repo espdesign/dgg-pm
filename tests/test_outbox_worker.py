@@ -293,3 +293,120 @@ async def test_discord_notifier_user_preferences_routing(services):
     await notifier.dispatch_event(evt_silent)
     # Only thread update message, NO extra user ping
     assert mock_thread.send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_discord_notifier_task_updated_events(services):
+    """Verify TASK_UPDATED events route DMs to assignees and watchers for reassignments, priority changes, and edits."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import discord
+
+    from src.adapters.discord_bot.discord_notifier import DiscordNotifier
+    from src.domain.models import OutboxEvent
+
+    user_srv = services["user"]
+    guild_id = 999111999
+
+    bot = MagicMock()
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.send = AsyncMock()
+    mock_thread.parent = None
+    mock_thread.archived = False
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    dmd_users: dict[int, MagicMock] = {}
+
+    def get_mock_user(uid: int):
+        if uid not in dmd_users:
+            u = MagicMock(spec=discord.User)
+            u.id = uid
+            u.send = AsyncMock()
+            dmd_users[uid] = u
+        return dmd_users[uid]
+
+    bot.get_user = MagicMock(side_effect=get_mock_user)
+    bot.fetch_user = AsyncMock(side_effect=get_mock_user)
+
+    notifier = DiscordNotifier(bot, user_service=user_srv)
+
+    # 1. Test Reassignment: new assignee (2001), old assignee (2002), watcher (3001), actor (9999)
+    evt_reassign = OutboxEvent(
+        event_type=EventType.TASK_UPDATED,
+        idempotency_key="reassign_test_1",
+        payload={
+            "task_id": "test-task-assignee",
+            "short_id": "TASK-101",
+            "title": "Migrate Database",
+            "guild_id": guild_id,
+            "actor_discord_id": 9999,
+            "old_assignee_id": 2002,
+            "new_assignee_id": 2001,
+            "assignee_discord_id": 2001,
+            "watchers": [3001],
+            "update_type": "assignee",
+            "discord_thread_id": 777888,
+        },
+    )
+    await notifier.dispatch_event(evt_reassign)
+
+    assert dmd_users[2001].send.await_count == 1
+    assert dmd_users[2002].send.await_count == 1
+    assert dmd_users[3001].send.await_count == 1
+    assert 9999 not in dmd_users  # Actor must not be notified
+
+    # 2. Test Priority Update: assignee (2001), watcher (3001), actor (9999)
+    for u in dmd_users.values():
+        u.send.reset_mock()
+
+    evt_prio = OutboxEvent(
+        event_type=EventType.TASK_UPDATED,
+        idempotency_key="prio_test_1",
+        payload={
+            "task_id": "test-task-prio",
+            "short_id": "TASK-102",
+            "title": "Deploy API",
+            "guild_id": guild_id,
+            "actor_discord_id": 9999,
+            "old_priority": "normal",
+            "new_priority": "high",
+            "priority": "high",
+            "assignee_discord_id": 2001,
+            "watchers": [3001],
+            "update_type": "priority",
+            "discord_thread_id": 777888,
+        },
+    )
+    await notifier.dispatch_event(evt_prio)
+
+    assert dmd_users[2001].send.await_count == 1
+    assert dmd_users[3001].send.await_count == 1
+    assert dmd_users[2002].send.await_count == 0
+
+    # 3. Test Details / Watchers Update: assignee (2001), old watcher (3001), new watcher (3002), actor (9999)
+    for u in dmd_users.values():
+        u.send.reset_mock()
+
+    evt_details = OutboxEvent(
+        event_type=EventType.TASK_UPDATED,
+        idempotency_key="details_test_1",
+        payload={
+            "task_id": "test-task-details",
+            "short_id": "TASK-103",
+            "title": "Refactor Code",
+            "guild_id": guild_id,
+            "actor_discord_id": 9999,
+            "assignee_discord_id": 2001,
+            "watchers": [3001, 3002],
+            "old_watchers": [3001],
+            "changes": ["Title: `Old` ➔ **`Refactor Code`**", "Added watchers: <@3002>"],
+            "update_type": "details",
+            "discord_thread_id": 777888,
+        },
+    )
+    await notifier.dispatch_event(evt_details)
+
+    assert dmd_users[2001].send.await_count == 1
+    assert dmd_users[3001].send.await_count == 1
+    assert dmd_users[3002].send.await_count == 1
+    assert 9999 not in dmd_users

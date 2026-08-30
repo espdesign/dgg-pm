@@ -331,3 +331,55 @@ async def test_team_service_leads_lifecycle(services):
     assert leads == [9002]
     assert await team_srv.is_team_lead(team.id, 9001) is False
     assert await team_srv.is_team_lead(team.id, 9002) is True
+
+
+@pytest.mark.asyncio
+async def test_task_service_update_outbox_events(services, db_session):
+    """Verify update_priority, update_assignee, and update_details enqueue TASK_UPDATED outbox events."""
+    from sqlalchemy import select
+
+    from src.adapters.db.tables import OutboxEventTable
+    from src.domain.enums import EventType
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 888777666555
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Outbox Test Proj", prefix="OTP")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Original Title",
+        creator_discord_id=1001,
+        project_id=project.id,
+        priority=PriorityLevel.LOW,
+        watchers=[5001],
+    )
+
+    # 1. Update priority
+    await task_srv.update_priority(task.id, PriorityLevel.HIGH, actor_discord_id=1001)
+
+    # 2. Update assignee
+    await task_srv.update_assignee(task.id, new_assignee_id=2001, actor_discord_id=1001)
+
+    # 3. Update details
+    await task_srv.update_details(
+        task_id=task.id,
+        actor_discord_id=1001,
+        title="Updated Title",
+        watchers=[5001, 5002],
+    )
+
+    stmt = select(OutboxEventTable).where(OutboxEventTable.idempotency_key.like(f"%{task.id}%"))
+    res = await db_session.execute(stmt)
+    events = res.scalars().all()
+
+    types = [e.event_type for e in events]
+    assert EventType.TASK_CREATED.value in types
+    assert types.count(EventType.TASK_UPDATED.value) == 3
+
+    # Check payload structure for details update
+    details_evt = next(e for e in events if e.idempotency_key.startswith(f"task_details:{task.id}"))
+    assert details_evt.payload["update_type"] == "details"
+    assert "Title: `Original Title` ➔ **`Updated Title`**" in details_evt.payload["changes"]
+    assert "Added watchers: <@5002>" in details_evt.payload["changes"]
+    assert set(details_evt.payload["watchers"]) == {5001, 5002}

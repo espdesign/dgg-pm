@@ -83,6 +83,8 @@ class DiscordNotifier(INotificationDispatcher):
             await self._handle_note_added(p)
         elif event.event_type == EventType.TASK_CREATED:
             await self._handle_task_created(p)
+        elif event.event_type == EventType.TASK_UPDATED:
+            await self._handle_task_updated(p)
 
     async def _handle_due_reminder(self, payload: dict) -> None:
         assignee_id = payload.get("assignee_discord_id")
@@ -323,3 +325,106 @@ class DiscordNotifier(INotificationDispatcher):
                 thread=thread,
                 mention_text=f"📥 <@{assignee_id}> You have been assigned to task **[{short_id}] {title}**!",
             )
+
+    async def _handle_task_updated(self, payload: dict) -> None:
+        short_id = payload.get("short_id", "")
+        title = payload.get("title", "")
+        guild_id = payload.get("guild_id")
+        actor_id = payload.get("actor_discord_id")
+        thread_id = payload.get("discord_thread_id")
+        update_type = payload.get("update_type", "details")
+        watchers: list[int] = payload.get("watchers", [])
+        assignee_id = payload.get("assignee_discord_id")
+
+        thread: discord.Thread | None = None
+        if thread_id:
+            try:
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
+            except Exception:
+                pass
+
+        if update_type == "assignee" or ("new_assignee_id" in payload or "old_assignee_id" in payload):
+            new_assignee = payload.get("new_assignee_id")
+            old_assignee = payload.get("old_assignee_id")
+            if new_assignee:
+                thread_msg = f"👤 **Assignee Updated:** Assigned to <@{new_assignee}> by <@{actor_id}>"
+                embed_desc = f"<@{actor_id}> assigned this task to <@{new_assignee}>."
+            else:
+                thread_msg = f"👤 **Assignee Updated:** Unassigned by <@{actor_id}>"
+                embed_desc = f"<@{actor_id}> removed the assignee from this task."
+
+            embed_title = f"👤 Task Assignment: [{short_id}] {title}"
+            embed_color = discord.Color.blue()
+            recipients = set(watchers)
+            if new_assignee:
+                recipients.add(new_assignee)
+            if old_assignee:
+                recipients.add(old_assignee)
+
+        elif update_type == "priority" or ("old_priority" in payload and "new_priority" in payload):
+            old_prio = payload.get("old_priority", "")
+            new_prio = payload.get("new_priority", "")
+            thread_msg = f"⚡ **Priority Updated:** `{old_prio}` ➔ **`{new_prio}`** by <@{actor_id}>"
+            embed_desc = f"Priority changed from `{old_prio}` to **`{new_prio}`** by <@{actor_id}>."
+            embed_title = f"⚡ Priority Changed: [{short_id}] {title}"
+            embed_color = discord.Color.gold()
+            recipients = set(watchers)
+            if assignee_id:
+                recipients.add(assignee_id)
+
+            if thread and isinstance(thread.parent, discord.ForumChannel):
+                try:
+                    prio_val = PriorityLevel(new_prio)
+                    edit_kwargs = {
+                        "applied_tags": resolve_forum_tags(
+                            thread.parent,
+                            priority=prio_val,
+                            existing_tags=getattr(thread, "applied_tags", None),
+                        )
+                    }
+                    await thread.edit(**edit_kwargs)
+                except Exception as err:
+                    logger.debug("Could not edit forum thread tags for priority update: %s", err)
+
+        else:
+            changes = payload.get("changes", [])
+            change_text = "\n".join(f"• {c}" for c in changes) if changes else "Task details were updated."
+            thread_msg = f"✏️ **Task Updated by <@{actor_id}>:**\n{change_text}"
+            embed_desc = f"<@{actor_id}> updated task details:\n{change_text}"
+            embed_title = f"✏️ Task Updated: [{short_id}] {title}"
+            embed_color = discord.Color.blue()
+            recipients = set(watchers) | set(payload.get("old_watchers", []))
+            if assignee_id:
+                recipients.add(assignee_id)
+
+        # Post to thread if available
+        if thread:
+            try:
+                was_archived = thread.archived
+                await thread.send(thread_msg)
+                if was_archived:
+                    try:
+                        await thread.edit(archived=True)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("Failed to post update to thread %s: %s", thread_id, e)
+
+        # Notify watchers & assignee via DM / thread
+        recipients.discard(actor_id)
+        if recipients:
+            embed = discord.Embed(
+                title=embed_title,
+                description=embed_desc,
+                color=embed_color,
+            )
+            for uid in recipients:
+                await self._notify_user(
+                    guild_id=guild_id,
+                    user_id=uid,
+                    embed=embed,
+                    thread=thread,
+                    mention_text=f"🔔 <@{uid}> **[{short_id}] {title}** was updated by <@{actor_id}>",
+                )
