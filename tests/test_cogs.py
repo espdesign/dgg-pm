@@ -167,6 +167,18 @@ async def test_task_action_view_and_modals(services):
     assert f"task:reopen:{task.id}" in completed_ids
     assert f"task:start:{task.id}" not in completed_ids
 
+    # In-progress view exposes a "Back to Not Started" button instead of "In Progress"
+    in_progress_view = TaskActionView(
+        task_id=task.id,
+        current_status=TaskStatus.IN_PROGRESS,
+        current_priority=task.priority,
+        task_service=task_srv,
+    )
+    in_progress_ids = [item.custom_id for item in in_progress_view.children if hasattr(item, "custom_id")]
+    assert f"task:notstarted:{task.id}" in in_progress_ids
+    assert f"task:start:{task.id}" not in in_progress_ids
+    assert f"task:complete:{task.id}" in in_progress_ids
+
     # 2. Test unassign button via dynamic dispatcher
     from src.adapters.discord_bot.bot import DggPmBot
 
@@ -238,6 +250,27 @@ async def test_task_action_view_and_modals(services):
     watchers_refreshed = await task_srv.get_by_id(task.id)
     assert 2001 in watchers_refreshed.watchers
     assert 2002 in watchers_refreshed.watchers
+
+    # 6. Test "Back to Not Started" status button via dynamic dispatcher
+    await task_srv.update_status(
+        task_id=task.id,
+        new_status=TaskStatus.IN_PROGRESS,
+        expected_version=watchers_refreshed.version,
+        actor_discord_id=1002,
+    )
+    notstarted_interaction = MagicMock(spec=discord.Interaction)
+    notstarted_interaction.guild_id = guild_id
+    notstarted_interaction.user = MagicMock()
+    notstarted_interaction.user.id = 1002
+    notstarted_interaction.response = MagicMock()
+    notstarted_interaction.response.is_done.return_value = False
+    notstarted_interaction.response.edit_message = AsyncMock()
+
+    await bot._handle_dynamic_task_button(notstarted_interaction, "notstarted", task.id)
+    notstarted_interaction.response.edit_message.assert_awaited_once()
+
+    reverted = await task_srv.get_by_id(task.id)
+    assert reverted.status == TaskStatus.NOT_STARTED
 
     # 4. Test TaskEditModal with natural language date
     edit_modal = TaskEditModal(task=due_refreshed, task_service=task_srv)

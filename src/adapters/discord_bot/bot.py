@@ -404,6 +404,8 @@ class DggPmBot(commands.Bot):
                 return
 
         target_status = TaskStatus.IN_PROGRESS if action in ("start", "reopen") else TaskStatus.COMPLETED
+        if action == "notstarted":
+            target_status = TaskStatus.NOT_STARTED
         try:
             note_action = "reopened" if action == "reopen" else f"updated to {target_status.value}"
             updated_task = await self.task_service.update_status(
