@@ -373,9 +373,6 @@ async def test_task_menu_and_modal(services):
     modal = TaskCreateModal(task_service=task_srv, project=project, target_channel=mock_channel)
     modal.title_input._value = "Zero-Trust Network Setup"
     modal.desc_input._value = "Configure Tailscale mesh and ACLs"
-    modal.due_input._value = "tomorrow 5pm"
-    modal.assignee_input._value = "<@1002>"
-    modal.priority_input._value = "high"
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -387,6 +384,43 @@ async def test_task_menu_and_modal(services):
 
     await modal.on_submit(interaction)
     interaction.response.send_message.assert_awaited_once()
+    draft_view = interaction.response.send_message.call_args.kwargs.get("view")
+    assert draft_view is not None
+
+    # Test interactive assignee selection
+    mock_assignee = MagicMock(spec=discord.Member)
+    mock_assignee.id = 1002
+    draft_view.assignee_select._values = [mock_assignee]
+    assignee_int = MagicMock(spec=discord.Interaction)
+    assignee_int.response = MagicMock()
+    assignee_int.response.edit_message = AsyncMock()
+    await draft_view._on_assignee_selected(assignee_int)
+    assert draft_view.assignee_id == 1002
+
+    # Test interactive due date preset
+    draft_view.due_select._values = ["tomorrow"]
+    due_int = MagicMock(spec=discord.Interaction)
+    due_int.response = MagicMock()
+    due_int.response.edit_message = AsyncMock()
+    await draft_view._on_due_selected(due_int)
+    assert draft_view.due_at is not None
+
+    # Test interactive priority selection
+    draft_view.priority_select._values = ["high"]
+    prio_int = MagicMock(spec=discord.Interaction)
+    prio_int.response = MagicMock()
+    prio_int.response.edit_message = AsyncMock()
+    await draft_view._on_priority_selected(prio_int)
+    assert draft_view.priority == PriorityLevel.HIGH
+
+    # Confirm and create
+    confirm_int = MagicMock(spec=discord.Interaction)
+    confirm_int.guild = interaction.guild
+    confirm_int.user = interaction.user
+    confirm_int.response = MagicMock()
+    confirm_int.response.edit_message = AsyncMock()
+    await draft_view._on_confirm_clicked(confirm_int)
+    confirm_int.response.edit_message.assert_awaited_once()
 
     tasks, total = await task_srv.list_tasks(guild_id=guild_id, project_id=project.id)
     assert total == 1
@@ -514,10 +548,26 @@ async def test_pm_hub_multi_project_flows(services):
     assert isinstance(modal2, TaskCreateModal)
     assert modal2.project is None
 
-    # 4. Clicking Task Board in multi-project forum should send ephemeral HubBoardProjectSelectView
+    # Test clicking Select & Open Modal button directly
+    btn_interaction = MagicMock(spec=discord.Interaction)
+    btn_interaction.response = MagicMock()
+    btn_interaction.response.send_modal = AsyncMock()
+    await picker_view._on_select_button_clicked(btn_interaction)
+    btn_interaction.response.send_modal.assert_awaited_once()
+
+    # Test Cancel button
+    cancel_inter = MagicMock(spec=discord.Interaction)
+    cancel_inter.response = MagicMock()
+    cancel_inter.response.edit_message = AsyncMock()
+    await picker_view._on_cancel_clicked(cancel_inter)
+    cancel_inter.response.edit_message.assert_awaited_once()
+
+    # 4. Clicking My Tasks in multi-project forum should send ephemeral HubBoardProjectSelectView
     board_interaction = MagicMock(spec=discord.Interaction)
     board_interaction.guild = MagicMock()
     board_interaction.guild.id = guild_id
+    board_interaction.user = MagicMock()
+    board_interaction.user.id = 9999
     board_interaction.channel = mock_channel
     board_interaction.response = MagicMock()
     board_interaction.response.send_message = AsyncMock()
@@ -535,6 +585,8 @@ async def test_pm_hub_multi_project_flows(services):
     board_select_interaction = MagicMock(spec=discord.Interaction)
     board_select_interaction.guild = MagicMock()
     board_select_interaction.guild.id = guild_id
+    board_select_interaction.user = MagicMock()
+    board_select_interaction.user.id = 9999
     board_select_interaction.response = MagicMock()
     board_select_interaction.response.edit_message = AsyncMock()
     await board_picker_view._on_select(board_select_interaction)

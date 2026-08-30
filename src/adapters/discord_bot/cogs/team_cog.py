@@ -69,7 +69,7 @@ class TeamCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating team '{name}'", logger, ephemeral=True)
 
@@ -160,7 +160,7 @@ class TeamCog(commands.Cog):
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"managing team lead for team '{team_name}'", logger, ephemeral=True
@@ -234,7 +234,7 @@ class TeamCog(commands.Cog):
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"assigning member to team '{team_name}'", logger, ephemeral=True
@@ -251,7 +251,7 @@ class TeamCog(commands.Cog):
                 await interaction.followup.send("👥 No teams created yet. Use `/team-create` to set one up.")
                 from src.adapters.discord_bot.menu_manager import menu_manager
 
-                menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+                menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
                 return
 
             embed = discord.Embed(title="👥 Server Teams & Rosters", color=discord.Color.teal())
@@ -295,7 +295,7 @@ class TeamCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "listing teams", logger, ephemeral=True)
 

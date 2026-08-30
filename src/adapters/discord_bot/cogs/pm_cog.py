@@ -156,7 +156,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.response.send_message(embed=embed, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "opening help guide", logger, ephemeral=True)
 
@@ -208,7 +208,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
 
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "updating settings", logger, ephemeral=True)
 
@@ -246,7 +246,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "posting pinned PM hub", logger, ephemeral=True)
 
@@ -417,7 +417,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"creating task in project '{project_name}'", logger, ephemeral=True
@@ -519,7 +519,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"retrieving history for task '{task}'", logger, ephemeral=True
@@ -577,7 +577,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg, embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"assigning task '{task}'", logger, ephemeral=True)
 
@@ -635,7 +635,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg, embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating status for task '{task}'", logger, ephemeral=True)
 
@@ -664,7 +664,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(f"📦 Archived task **[{updated.short_id}]** (`{updated.title}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"archiving task '{task}'", logger, ephemeral=True)
 
@@ -692,7 +692,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(f"📂 Restored task **[{updated.short_id}]** (`{updated.title}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring task '{task}'", logger, ephemeral=True)
 
@@ -751,7 +751,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating watchers for task '{task}'", logger, ephemeral=True)
 
@@ -826,7 +826,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating project '{name}'", logger, ephemeral=True)
 
@@ -852,7 +852,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "listing projects", logger, ephemeral=True)
 
@@ -874,7 +874,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(f"📦 Archived project **{project.name}** (`{project.prefix}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"archiving project '{project_name}'", logger, ephemeral=True)
 
@@ -896,7 +896,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(f"📂 Restored project **{project.name}** (`{project.prefix}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring project '{project_name}'", logger, ephemeral=True)
 
@@ -942,7 +942,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"managing project role for '{project_name}'", logger, ephemeral=True
@@ -1022,7 +1022,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"managing lead for project '{project_name}'", logger, ephemeral=True
@@ -1073,7 +1073,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"mapping team to project '{project_name}'", logger, ephemeral=True
@@ -1117,7 +1117,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"configuring forum tags for <#{forum.id}>", logger, ephemeral=True
@@ -1156,7 +1156,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"creating team for role '{role.name}'", logger, ephemeral=True
@@ -1216,7 +1216,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(msg)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"managing team lead for '{team_name}'", logger, ephemeral=True
@@ -1274,6 +1274,6 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "listing teams", logger, ephemeral=True)

@@ -36,11 +36,12 @@ class HubTaskProjectSelectView(discord.ui.View):
         target_channel: discord.ForumChannel | discord.TextChannel | discord.Thread | None,
         auth_service: AuthService | None = None,
     ):
-        super().__init__(timeout=120)
+        super().__init__(timeout=60)
         self.task_service = task_service
         self.channel_projects = channel_projects
         self.target_channel = target_channel
         self.auth_service = auth_service
+        self._initial_interaction: discord.Interaction | None = None
 
         options = []
         for p in channel_projects[:24]:
@@ -61,6 +62,8 @@ class HubTaskProjectSelectView(discord.ui.View):
             )
         )
 
+        self.selected_project_val: str | None = str(channel_projects[0].id) if channel_projects else "standalone"
+
         self.select = discord.ui.Select(
             placeholder="📁 Select Project for New Task...",
             options=options,
@@ -69,14 +72,33 @@ class HubTaskProjectSelectView(discord.ui.View):
         self.select.callback = self._on_select
         self.add_item(self.select)
 
-    async def _on_select(self, interaction: discord.Interaction) -> None:
-        val = self.select.values[0]
+        self.select_button = discord.ui.Button(
+            label="Select & Open Modal",
+            emoji="➕",
+            style=discord.ButtonStyle.primary,
+            row=1,
+        )
+        self.select_button.callback = self._on_select_button_clicked
+        self.add_item(self.select_button)
+
+        self.cancel_button = discord.ui.Button(
+            label="Cancel",
+            emoji="❌",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.cancel_button.callback = self._on_cancel_clicked
+        self.add_item(self.cancel_button)
+
+    async def _open_modal(self, interaction: discord.Interaction, val: str) -> None:
+        parent_inter = self._initial_interaction or interaction
         if val == "standalone":
             modal = TaskCreateModal(
                 task_service=self.task_service,
                 project=None,
                 target_channel=self.target_channel,
                 auth_service=self.auth_service,
+                parent_interaction=parent_inter,
             )
         else:
             selected_proj = next((p for p in self.channel_projects if str(p.id) == val), None)
@@ -85,12 +107,43 @@ class HubTaskProjectSelectView(discord.ui.View):
                 project=selected_proj,
                 target_channel=self.target_channel,
                 auth_service=self.auth_service,
+                parent_interaction=parent_inter,
             )
         await interaction.response.send_modal(modal)
 
+    async def _on_select_button_clicked(self, interaction: discord.Interaction) -> None:
+        val = self.selected_project_val or (str(self.channel_projects[0].id) if self.channel_projects else "standalone")
+        await self._open_modal(interaction, val)
+
+    async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
+        try:
+            embed = discord.Embed(
+                title="🚫 Task Creation Cancelled",
+                description="The project selector was closed.",
+                color=discord.Color.dark_grey(),
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
+        except Exception as e:
+            logger.debug("Error in cancel button: %s", e)
+
+    async def on_timeout(self) -> None:
+        try:
+            if self._initial_interaction and hasattr(self._initial_interaction, "delete_original_response"):
+                await self._initial_interaction.delete_original_response()
+        except Exception:
+            pass
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        val = self.select.values[0]
+        self.selected_project_val = val
+        await self._open_modal(interaction, val)
+
 
 class HubBoardProjectSelectView(discord.ui.View):
-    """Ephemeral project scope selector displayed when clicking 'Task Board' in a multi-project forum."""
+    """Ephemeral project scope selector displayed when clicking 'My Tasks' in a multi-project forum."""
 
     def __init__(
         self,
@@ -101,6 +154,7 @@ class HubBoardProjectSelectView(discord.ui.View):
         channel_projects: list[Project],
         current_channel_id: int | None = None,
         parent_channel_id: int | None = None,
+        assignee_id: int | None = None,
     ):
         super().__init__(timeout=120)
         self.task_service = task_service
@@ -110,6 +164,7 @@ class HubBoardProjectSelectView(discord.ui.View):
         self.channel_projects = channel_projects
         self.current_channel_id = current_channel_id
         self.parent_channel_id = parent_channel_id
+        self.assignee_id = assignee_id
 
         options = [
             discord.SelectOption(
@@ -130,7 +185,7 @@ class HubBoardProjectSelectView(discord.ui.View):
             )
 
         self.select = discord.ui.Select(
-            placeholder="📁 Select Project Scope for Task Board...",
+            placeholder="📁 Select Project Scope for Tasks...",
             options=options,
             row=0,
         )
@@ -146,6 +201,7 @@ class HubBoardProjectSelectView(discord.ui.View):
         tasks, total = await self.task_service.list_tasks(
             guild_id=interaction.guild.id,
             project_id=selected_id,
+            assignee_discord_id=self.assignee_id,
             exclude_completed=True,
             limit=15,
         )
@@ -164,13 +220,15 @@ class HubBoardProjectSelectView(discord.ui.View):
             current_channel_id=self.current_channel_id,
             parent_channel_id=self.parent_channel_id,
             initial_project_id=selected_id,
+            initial_assignee_id=self.assignee_id,
         )
+        assignee_label = f"<@{self.assignee_id}> (My Tasks)" if self.assignee_id else "All Members"
         embed = build_task_board_embed(
             tasks=tasks,
             total_count=total,
             project_label=project_label,
             status_label="Active Tasks (In Progress & Not Started)",
-            assignee_label="All Members",
+            assignee_label=assignee_label,
         )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
@@ -241,6 +299,7 @@ class PmHubView(discord.ui.View):
                 target_channel=target_channel,
                 auth_service=auth_srv,
             )
+            picker_view._initial_interaction = interaction
             embed = discord.Embed(
                 title="➕ New Task: Select Project",
                 description="Choose which active project in this channel to create the task under:",
@@ -291,15 +350,19 @@ class PmHubView(discord.ui.View):
                 await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
-        label="Task Board",
-        emoji="⚡",
+        label="My Tasks",
+        emoji="👤",
         style=discord.ButtonStyle.primary,
         row=0,
-        custom_id="pm_hub:task_board",
+        custom_id="pm_hub:my_tasks",
     )
     async def tasks_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not interaction.guild:
             return
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        await menu_manager.register_menu(interaction)
+
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         channel_id = interaction.channel.id if interaction.channel else None
         parent_id = getattr(interaction.channel, "parent_id", None)
@@ -316,10 +379,11 @@ class PmHubView(discord.ui.View):
                 channel_projects=channel_projects,
                 current_channel_id=channel_id,
                 parent_channel_id=parent_id,
+                assignee_id=interaction.user.id,
             )
             embed = discord.Embed(
-                title="⚡ Task Board: Select Project Scope",
-                description="Choose which project board to view for this forum, or view all projects combined:",
+                title="👤 My Tasks: Select Project Scope",
+                description="Choose which project scope to view your assigned tasks for:",
                 color=discord.Color.blurple(),
             )
             await interaction.response.send_message(embed=embed, view=picker_view, ephemeral=True)
@@ -329,6 +393,7 @@ class PmHubView(discord.ui.View):
         tasks, total = await self.task_service.list_tasks(
             guild_id=interaction.guild.id,
             project_id=selected_project_id,
+            assignee_discord_id=interaction.user.id,
             exclude_completed=True,
             limit=15,
         )
@@ -346,13 +411,14 @@ class PmHubView(discord.ui.View):
             current_channel_id=channel_id,
             parent_channel_id=parent_id,
             initial_project_id=selected_project_id,
+            initial_assignee_id=interaction.user.id,
         )
         embed = build_task_board_embed(
             tasks=tasks,
             total_count=total,
             project_label=project_label,
             status_label="Active Tasks (In Progress & Not Started)",
-            assignee_label="All Members",
+            assignee_label=f"<@{interaction.user.id}> (My Tasks)",
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -460,8 +526,8 @@ def build_hub_welcome_embed(
         inline=False,
     )
     embed.add_field(
-        name="⚡ Task Board",
-        value="Launch private interactive task board with filters and pagination.",
+        name="👤 My Tasks",
+        value="View your personalized assigned tasks, active deadlines, and progress.",
         inline=False,
     )
     embed.add_field(

@@ -6,17 +6,15 @@ from uuid import UUID
 
 import discord
 
-from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
-from src.adapters.discord_bot.views.task_buttons import TaskActionView
-from src.adapters.discord_bot.views.task_embed import build_task_embed
-from src.domain.enums import PriorityLevel, TaskStatus
+from src.adapters.discord_bot.views.task_builder import TaskDetailsModal
+from src.domain.enums import TaskStatus
 from src.domain.models import Project, Task
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
-from src.utils.date_parser import parse_natural_date
+
+TaskCreateModal = TaskDetailsModal
 
 logger = logging.getLogger("dgg_pm.views.task_menu")
 
@@ -49,203 +47,6 @@ class TaskProjectSearchModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         query = self.query_input.value.strip()
         await self.on_search_callback(interaction, query)
-
-
-class TaskCreateModal(discord.ui.Modal):
-    """Modal to create a new task within a project or standalone."""
-
-    def __init__(
-        self,
-        task_service: TaskService,
-        project: Project | None = None,
-        target_channel: discord.ForumChannel | discord.TextChannel | discord.Thread | None = None,
-        auth_service: AuthService | None = None,
-    ):
-        if project:
-            title_str = f"New Task: [{project.prefix}] {project.name[:22]}"
-            title_placeholder = f"Task for {project.name} (e.g. Implement OAuth2 login)"
-        else:
-            title_str = "New Standalone Task (Ad-hoc)"
-            title_placeholder = "Ad-hoc chore (e.g. Renew SSL, Update server banner)"
-
-        super().__init__(title=title_str)
-        self.task_service = task_service
-        self.project = project
-        self.target_channel = target_channel
-        self.auth_service = auth_service
-
-        self.title_input = discord.ui.TextInput(
-            label="Task Title",
-            placeholder=title_placeholder,
-            required=True,
-            max_length=100,
-        )
-        self.add_item(self.title_input)
-
-        self.desc_input = discord.ui.TextInput(
-            label="Description (Optional)",
-            style=discord.TextStyle.paragraph,
-            placeholder="Requirements, acceptance criteria, or execution notes...",
-            required=False,
-            max_length=1500,
-        )
-        self.add_item(self.desc_input)
-
-        self.due_input = discord.ui.TextInput(
-            label="Due Date (e.g. 'tomorrow', 'in 3 days')",
-            placeholder="e.g. tomorrow, in 3 days, friday 5pm, 2026-04-15",
-            required=False,
-            max_length=60,
-        )
-        self.add_item(self.due_input)
-
-        self.assignee_input = discord.ui.TextInput(
-            label="Assignee (@mention or User ID)",
-            placeholder="e.g. @alice or leave empty",
-            required=False,
-            max_length=50,
-        )
-        self.add_item(self.assignee_input)
-
-        self.priority_input = discord.ui.TextInput(
-            label="Priority (high / normal / low)",
-            default="normal",
-            placeholder="normal, high, low",
-            required=False,
-            max_length=20,
-        )
-        self.add_item(self.priority_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not interaction.guild:
-            await interaction.response.send_message("❌ Must be run in a Discord server.", ephemeral=True)
-            return
-
-        title = self.title_input.value.strip()
-        body = self.desc_input.value.strip() or None
-        due_at = parse_natural_date(self.due_input.value.strip())
-
-        assignee_uids = _extract_user_ids(self.assignee_input.value.strip())
-        assignee_id = assignee_uids[0] if assignee_uids else None
-
-        p_str = self.priority_input.value.strip().lower()
-        priority = PriorityLevel.NORMAL
-        if p_str in ("high", "h", "urgent"):
-            priority = PriorityLevel.HIGH
-        elif p_str in ("low", "l"):
-            priority = PriorityLevel.LOW
-
-        try:
-            if self.auth_service:
-                await self.auth_service.require_task_creation(
-                    interaction.user, self.project.id if self.project else None
-                )
-                if assignee_id:
-                    await self.auth_service.require_task_assignee_eligibility(
-                        interaction.guild, assignee_id, self.project.id if self.project else None
-                    )
-
-            task = await self.task_service.create_task(
-                guild_id=interaction.guild.id,
-                title=title,
-                creator_discord_id=interaction.user.id,
-                project_id=self.project.id if self.project else None,
-                assignee_discord_id=assignee_id,
-                due_at=due_at,
-                priority=priority,
-                body=body,
-            )
-
-            target_chan = self.target_channel or interaction.channel
-
-            # If target_chan is a Thread (e.g. clicked inside Pinned Control Hub), route to parent ForumChannel
-            if isinstance(target_chan, discord.Thread):
-                parent = getattr(target_chan, "parent", None)
-                if not parent and getattr(target_chan, "parent_id", None) and hasattr(interaction.guild, "get_channel"):
-                    parent = interaction.guild.get_channel(target_chan.parent_id)
-                if isinstance(parent, discord.ForumChannel):
-                    target_chan = parent
-
-            # If not already a ForumChannel, check if project is bound to a Forum/Text channel
-            if not isinstance(target_chan, discord.ForumChannel) and self.project and self.project.discord_channel_id:
-                if hasattr(interaction.guild, "get_channel"):
-                    proj_chan = interaction.guild.get_channel(self.project.discord_channel_id)
-                    if isinstance(proj_chan, (discord.ForumChannel, discord.TextChannel)):
-                        target_chan = proj_chan
-
-            embed = build_task_embed(task, project_name=self.project.name if self.project else None)
-
-            msg = None
-            if isinstance(target_chan, discord.ForumChannel):
-                post_name = f"[{task.short_id}] {task.title[:90]}"
-                thread_view = TaskActionView(
-                    task_id=task.id,
-                    current_status=task.status,
-                    current_priority=task.priority,
-                    task_service=self.task_service,
-                )
-                applied_tags = resolve_forum_tags(
-                    target_chan, task, project_name=self.project.name if self.project else None
-                )
-                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                if task.assignee_discord_id:
-                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-
-                res = await target_chan.create_thread(
-                    name=post_name,
-                    content=thread_intro,
-                    embed=embed,
-                    view=thread_view,
-                    applied_tags=applied_tags,
-                    auto_archive_duration=10080,
-                )
-                thread = getattr(res, "thread", res)
-                msg = getattr(res, "message", None)
-                thread_id = getattr(thread, "id", None)
-                msg_id = getattr(msg, "id", 0) if msg else 0
-                await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
-            elif isinstance(target_chan, discord.TextChannel):
-                msg = await target_chan.send(embed=embed)
-                try:
-                    thread = await msg.create_thread(
-                        name=f"[{task.short_id}] {task.title[:90]}",
-                        auto_archive_duration=10080,
-                    )
-                    thread_view = TaskActionView(
-                        task_id=task.id,
-                        current_status=task.status,
-                        current_priority=task.priority,
-                        task_service=self.task_service,
-                    )
-                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                    if task.assignee_discord_id:
-                        thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                    await thread.send(content=thread_intro, view=thread_view)
-                    await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
-                except Exception:
-                    await self.task_service.update_discord_message_ids(task.id, msg.id, None)
-            elif isinstance(target_chan, discord.Thread):
-                view = TaskActionView(
-                    task_id=task.id,
-                    current_status=task.status,
-                    current_priority=task.priority,
-                    task_service=self.task_service,
-                )
-                msg = await target_chan.send(embed=embed, view=view)
-                await self.task_service.update_discord_message_ids(task.id, msg.id, target_chan.id)
-            elif target_chan:
-                msg = await target_chan.send(embed=embed)
-                await self.task_service.update_discord_message_ids(task.id, msg.id, None)
-
-            await interaction.response.send_message(
-                f"✅ Created task **[{task.short_id}] {task.title}**!",
-                ephemeral=True,
-            )
-            from src.adapters.discord_bot.menu_manager import menu_manager
-
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
-        except Exception as e:
-            await send_interaction_error(interaction, e, f"creating task '{title}'", logger, ephemeral=True)
 
 
 class TaskSelectProjectView(discord.ui.View):
@@ -455,6 +256,7 @@ class TaskSelectProjectView(discord.ui.View):
             project=project,
             target_channel=target_channel,
             auth_service=self.auth_service,
+            parent_interaction=interaction,
         )
         await interaction.response.send_modal(modal)
 
@@ -534,6 +336,7 @@ class TaskMenuView(discord.ui.View):
         current_channel_id: int | None = None,
         parent_channel_id: int | None = None,
         initial_project_id: UUID | None = None,
+        initial_assignee_id: int | None = None,
         search_query: str = "",
         auth_service: AuthService | None = None,
     ):
@@ -545,7 +348,7 @@ class TaskMenuView(discord.ui.View):
         self.current_channel_id = current_channel_id
         self.parent_channel_id = parent_channel_id
         self.search_query = search_query
-        self.selected_assignee_id: int | None = None
+        self.selected_assignee_id: int | None = initial_assignee_id
         self.status_filter_value: str = "active"
         self.auth_service = auth_service or (AuthService(project_service, team_service) if team_service else None)
 

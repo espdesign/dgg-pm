@@ -51,7 +51,7 @@ class TeamCreateModalWithName(discord.ui.Modal):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating team '{name}'", logger, ephemeral=True)
 

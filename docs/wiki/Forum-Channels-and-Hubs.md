@@ -24,8 +24,8 @@ In Discord Forum Channels, users cannot type slash commands at the forum root le
 To make forum channels completely self-sufficient:
 - When a project is created and linked to a forum channel, the bot automatically creates and **pins** a permanent thread post: **`📌 📊 [Project Name] • Control Hub`**.
 - The post contains persistent interactive buttons:
-  - **`➕ New Task`**: Opens the task creation popup modal directly.
-  - **`⚡ Task Board`**: Launches a private interactive board with filters and pagination.
+  - **`➕ New Task`**: Opens the interactive Task Creation Builder (Title & Description modal followed by a private Task Draft card with native Discord `UserSelect` member picker, quick due date presets, and priority selector).
+  - **`👤 My Tasks`**: Launches a private personal dashboard showing assigned tasks, deadlines, and status.
   - **`📁 Projects Hub`**: Launches a private project directory workspace.
   - **`👥 Teams Hub`**: Launches a private squad roster inspector.
   - **`⚙️ My Settings`**: Launches personal notification settings.
@@ -36,15 +36,21 @@ To make forum channels completely self-sufficient:
 │  📌 📊 Mobile App • Control Hub (Public / Pinned)        │
 │  Interactive management dashboard for Mobile App.        │
 │                                                          │
-│  [ ➕ New Task ] [ ⚡ Task Board ] [ 📁 Projects Hub ]   │
+│  [ ➕ New Task ] [ 👤 My Tasks ] [ 📁 Projects Hub ]     │
 │  [ 👥 Teams Hub ] [ ⚙️ My Settings ] [ 📖 Guides ]       │
 └──────────────────────────┬───────────────────────────────┘
-                           │ (Alice clicks [ ⚡ Task Board ])
+                           │ (Alice clicks [ ➕ New Task ])
                            ▼
 ┌──────────────────────────────────────────────────────────┐
-│  🔒 Task Board (Only visible to Alice • Ephemeral)       │
-│  Interactive filters, pagination, and actions.           │
-│  [ ◀ Prev ] [ Next ▶ ] [ 🔍 Filter ]                     │
+│  📝 Task Draft (Only visible to Alice • Ephemeral)       │
+│  • Scope: 📁 Mobile App  • Priority: 🔵 Normal           │
+│  • Assignee: 👤 Unassigned                               │
+│                                                          │
+│  [ 🚀 Create Task ] [ ✏️ Edit Details ] [ ❌ Cancel ]     │
+│  [ 👤 Select Assignee Member (UserSelect)              ] │
+│  [ 📅 Quick Due Date Preset Picker                     ] │
+│  [ ⚡ Priority Dropdown (High / Normal / Low)           ] │
+│  [ 👀 Watchers / CC Multi-Select                       ] │
 └──────────────────────────────────────────────────────────┘
 ```
 

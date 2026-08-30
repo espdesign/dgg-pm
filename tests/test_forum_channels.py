@@ -240,9 +240,6 @@ async def test_task_create_modal_in_forum_channel(services):
     modal = TaskCreateModal(task_service=task_srv, project=project, target_channel=mock_forum)
     modal.title_input._value = "Add Dark Mode Colors"
     modal.desc_input._value = "Tokens for dark mode"
-    modal.priority_input._value = "normal"
-    modal.assignee_input._value = ""
-    modal.due_input._value = ""
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -253,6 +250,17 @@ async def test_task_create_modal_in_forum_channel(services):
     interaction.response.send_message = AsyncMock()
 
     await modal.on_submit(interaction)
+    interaction.response.send_message.assert_awaited_once()
+    draft_view = interaction.response.send_message.call_args.kwargs.get("view")
+    assert draft_view is not None
+
+    confirm_interaction = MagicMock(spec=discord.Interaction)
+    confirm_interaction.guild = interaction.guild
+    confirm_interaction.user = interaction.user
+    confirm_interaction.response = MagicMock()
+    confirm_interaction.response.edit_message = AsyncMock()
+    await draft_view._on_confirm_clicked(confirm_interaction)
+
     mock_forum.create_thread.assert_awaited_once()
     kwargs = mock_forum.create_thread.call_args.kwargs
     assert "[DS-1] Add Dark Mode Colors" in kwargs.get("name")
@@ -699,9 +707,6 @@ async def test_task_create_modal_inside_forum_thread_creates_new_forum_post(serv
     )
     modal.title_input._value = "Fix crash on splash screen"
     modal.desc_input._value = "Stacktrace in sentry"
-    modal.due_input._value = "tomorrow"
-    modal.assignee_input._value = ""
-    modal.priority_input._value = "high"
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -714,6 +719,16 @@ async def test_task_create_modal_inside_forum_thread_creates_new_forum_post(serv
     interaction.response.send_message = AsyncMock()
 
     await modal.on_submit(interaction)
+    interaction.response.send_message.assert_awaited_once()
+    draft_view = interaction.response.send_message.call_args.kwargs.get("view")
+    assert draft_view is not None
+
+    confirm_interaction = MagicMock(spec=discord.Interaction)
+    confirm_interaction.guild = interaction.guild
+    confirm_interaction.user = interaction.user
+    confirm_interaction.response = MagicMock()
+    confirm_interaction.response.edit_message = AsyncMock()
+    await draft_view._on_confirm_clicked(confirm_interaction)
 
     # Must create thread in ForumChannel, NOT send message inside mock_hub_thread
     mock_forum.create_thread.assert_awaited_once()

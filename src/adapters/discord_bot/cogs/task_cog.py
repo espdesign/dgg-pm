@@ -268,7 +268,7 @@ class TaskCog(commands.Cog):
                 await interaction.followup.send(f"✅ Created task **[{task.short_id}]** successfully!", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
 
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating task '{title}'", logger, ephemeral=True)
@@ -325,7 +325,7 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(f"✅ {msg}", embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating assignee for task '{task}'", logger, ephemeral=True)
 
@@ -389,7 +389,7 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(f"✅ Updated watchers for **[{updated_task.short_id}]**!", embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating watchers for task '{task}'", logger, ephemeral=True)
 
@@ -451,7 +451,7 @@ class TaskCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"refreshing task '{task}'", logger, ephemeral=True)
 
@@ -582,7 +582,7 @@ class TaskCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating standalone task '{title}'", logger, ephemeral=True)
 
@@ -644,7 +644,7 @@ class TaskCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating status for task '{task}'", logger, ephemeral=True)
 
@@ -666,7 +666,7 @@ class TaskCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"retrieving history for task '{task}'", logger, ephemeral=True
@@ -698,7 +698,7 @@ class TaskCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"archiving task '{task}'", logger, ephemeral=True)
 
@@ -727,7 +727,7 @@ class TaskCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring task '{task}'", logger, ephemeral=True)
 

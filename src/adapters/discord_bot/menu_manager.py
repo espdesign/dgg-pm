@@ -40,13 +40,14 @@ class MenuSessionManager:
         if self._active_menus.get(key) == interaction:
             self._active_menus.pop(key, None)
 
-    def schedule_toast_dismissal(self, interaction: discord.Interaction, delay: float = 60.0) -> None:
-        """Schedules auto-dismissal of an ephemeral toast message after delay (default: 60s)."""
+    def schedule_toast_dismissal(self, interaction: discord.Interaction, delay: float = 8.0) -> None:
+        """Schedules auto-dismissal of an ephemeral toast message after delay (default: 8s)."""
 
         async def _dismiss() -> None:
             await asyncio.sleep(delay)
             try:
-                await interaction.delete_original_response()
+                if hasattr(interaction, "delete_original_response") and callable(interaction.delete_original_response):
+                    await interaction.delete_original_response()
             except Exception as e:
                 logger.debug("Could not auto-dismiss toast: %s", e)
 

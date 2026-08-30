@@ -51,6 +51,8 @@ async def send_interaction_error(
     target_logger: logging.Logger | None = None,
     *,
     ephemeral: bool = True,
+    auto_dismiss: bool = True,
+    dismiss_delay: float = 10.0,
 ) -> str:
     """Logs the exception appropriately and sends a safe, user-friendly message to Discord.
 
@@ -90,6 +92,11 @@ async def send_interaction_error(
             res = interaction.response.send_message(message, ephemeral=ephemeral)
             if hasattr(res, "__await__"):
                 await res
+
+        if ephemeral and auto_dismiss:
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=dismiss_delay)
     except Exception as send_err:
         log.exception("Failed to send error response to Discord interaction: %s", send_err)
 

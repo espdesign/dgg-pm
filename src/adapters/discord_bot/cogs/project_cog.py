@@ -128,7 +128,7 @@ class ProjectCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"creating project '{name}'", logger, ephemeral=True)
 
@@ -170,7 +170,7 @@ class ProjectCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"configuring forum tags for <#{forum.id}>", logger, ephemeral=True
@@ -280,7 +280,7 @@ class ProjectCog(commands.Cog):
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"assigning team '{team_name}' to project '{project_name}'", logger, ephemeral=True
@@ -297,7 +297,7 @@ class ProjectCog(commands.Cog):
                 await interaction.followup.send("📁 No active projects found. Use `/project-create` to start one.")
                 from src.adapters.discord_bot.menu_manager import menu_manager
 
-                menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+                menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
                 return
 
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -343,7 +343,7 @@ class ProjectCog(commands.Cog):
             await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"archiving project '{project_name}'", logger, ephemeral=True)
 
@@ -377,7 +377,7 @@ class ProjectCog(commands.Cog):
             await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring project '{project_name}'", logger, ephemeral=True)
 
