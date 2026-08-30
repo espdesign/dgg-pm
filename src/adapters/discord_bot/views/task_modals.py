@@ -128,7 +128,7 @@ class TaskEditModal(discord.ui.Modal):
 
             # Lazy import to prevent circular dependency
             from src.adapters.discord_bot.views.task_buttons import TaskActionView
-            from src.adapters.discord_bot.views.task_embed import build_task_embed
+            from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 
             new_embed = build_task_embed(updated_task)
             new_view = TaskActionView(
@@ -140,13 +140,7 @@ class TaskEditModal(discord.ui.Modal):
 
             if interaction.message:
                 if isinstance(interaction.channel, discord.Thread):
-                    assignee_str = (
-                        f"<@{updated_task.assignee_discord_id}>" if updated_task.assignee_discord_id else "Unassigned"
-                    )
-                    content = (
-                        f"📌 **Task Workspace & Controls** (Assignee: {assignee_str} • "
-                        f"Priority: `{updated_task.priority.value.upper()}`)"
-                    )
+                    content = build_thread_workspace_content(updated_task)
                     await interaction.response.edit_message(content=content, embed=None, view=new_view)
                 else:
                     await interaction.response.edit_message(embed=new_embed, view=new_view)

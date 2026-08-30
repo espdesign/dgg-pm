@@ -72,6 +72,20 @@ def build_task_embed(task: Task, project_name: str | None = None) -> discord.Emb
     return embed
 
 
+def build_thread_workspace_content(task: Task) -> str:
+    """Builds the message content for the task workspace inside a discussion thread.
+
+    The task description (body) leads the message for clarity, followed by a
+    compact assignee/priority summary. Truncated to stay within Discord's 2000-char
+    message limit.
+    """
+    description = task.body or "*No additional description provided.*"
+    if len(description) > 900:
+        description = description[:897] + "..."
+    assignee_str = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "Unassigned"
+    return f"{description}\n\n*(Assignee: {assignee_str} • Priority: `{task.priority.value.upper()}`)*"
+
+
 def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.Embed:
     """Builds an embed listing the chronological audit history of a task."""
     embed = discord.Embed(

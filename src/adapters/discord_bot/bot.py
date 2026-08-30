@@ -11,7 +11,7 @@ from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
-from src.adapters.discord_bot.views.task_embed import build_task_embed
+from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
 from src.domain.enums import PriorityLevel, TaskStatus
@@ -202,15 +202,10 @@ class DggPmBot(commands.Bot):
             task_service=self.task_service,
         )
 
-        # If inside a discussion thread, keep the toolbar clean without attaching duplicate embed
+        # If inside a discussion thread, keep the toolbar clean without attaching duplicate embed,
+        # leading with the task description so the workspace stays readable.
         if isinstance(interaction.channel, discord.Thread):
-            assignee_str = (
-                f"<@{updated_task.assignee_discord_id}>" if updated_task.assignee_discord_id else "Unassigned"
-            )
-            content = (
-                f"📌 **Task Workspace & Controls** (Assignee: {assignee_str} • "
-                f"Priority: `{updated_task.priority.value.upper()}`)"
-            )
+            content = build_thread_workspace_content(updated_task)
             if not interaction.response.is_done():
                 await interaction.response.edit_message(content=content, embed=None, view=new_view)
         else:
