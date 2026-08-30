@@ -40,13 +40,29 @@ class TaskActionView(discord.ui.View):
                 row=0,
             )
             self.add_item(self.reopen_btn)
+        elif current_status == TaskStatus.IN_PROGRESS:
+            self.notstarted_btn = discord.ui.Button(
+                label="Back to Not Started",
+                emoji="⏳",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"task:notstarted:{task_id}",
+                row=0,
+            )
+            self.add_item(self.notstarted_btn)
+            self.complete_btn = discord.ui.Button(
+                label="Complete",
+                emoji="🟢",
+                style=discord.ButtonStyle.success,
+                custom_id=f"task:complete:{task_id}",
+                row=0,
+            )
+            self.add_item(self.complete_btn)
         else:
             self.start_btn = discord.ui.Button(
                 label="In Progress",
                 emoji="🟡",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"task:start:{task_id}",
-                disabled=(current_status == TaskStatus.IN_PROGRESS),
                 row=0,
             )
             self.add_item(self.start_btn)
