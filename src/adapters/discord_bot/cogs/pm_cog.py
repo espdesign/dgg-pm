@@ -350,7 +350,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                     current_priority=task.priority,
                     task_service=self.task_service,
                 )
-                applied_tags = resolve_forum_tags(target_channel, task)
+                applied_tags = resolve_forum_tags(target_channel, task, project_name=project.name)
                 thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
                 if task.assignee_discord_id:
                     thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
@@ -1110,7 +1110,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                     "**Standard Tags Managed:**\n"
                     "• **Status:** `⏳ Not Started`, `🟡 In Progress`, `✅ Completed`\n"
                     "• **Priority:** `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority`\n"
-                    "• **Type:** `🐛 Bug`, `✨ Feature`, `🔧 Task`"
+                    "• **Project:** One `📁 <Project Name>` tag per project bound to this forum"
                 ),
                 color=discord.Color.green(),
             )

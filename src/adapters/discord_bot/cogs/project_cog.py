@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, setup_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, ensure_project_tag, setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -92,6 +92,9 @@ class ProjectCog(commands.Cog):
                     tag_note = f" • Setup {tags_added} PM tags"
                 elif tag_err:
                     tag_note = f" • ⚠️ {tag_err}"
+                proj_tag_err = await ensure_project_tag(channel, project.name)
+                if proj_tag_err:
+                    tag_note += f" • ⚠️ {proj_tag_err}"
 
             # Auto-create and pin the PM Control Hub in the linked channel
             hub_ok, _hub_status = await ensure_pinned_hub_post(
@@ -160,7 +163,7 @@ class ProjectCog(commands.Cog):
                     "**Standard Tags Managed:**\n"
                     "• **Status:** `⏳ Not Started`, `🟡 In Progress`, `✅ Completed`\n"
                     "• **Priority:** `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority`\n"
-                    "• **Type:** `🐛 Bug`, `✨ Feature`, `🔧 Task`"
+                    "• **Project:** One `📁 <Project Name>` tag per project bound to this forum"
                 ),
                 color=discord.Color.green(),
             )

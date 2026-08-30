@@ -11,6 +11,7 @@ from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.discord_notifier import DiscordNotifier
 from src.adapters.discord_bot.views.forum_helpers import (
     ensure_pinned_hub_post,
+    ensure_project_tag,
     resolve_forum_tags,
     setup_forum_tags,
 )
@@ -27,7 +28,7 @@ def _create_mock_tag(tag_id: int, name: str) -> MagicMock:
 
 
 def test_resolve_forum_tags_matching():
-    """Verify resolve_forum_tags correctly matches status, priority, and unassigned tags."""
+    """Verify resolve_forum_tags correctly matches status, priority, unassigned, and project tags."""
     mock_forum = MagicMock(spec=discord.ForumChannel)
     tag_todo = _create_mock_tag(1, "To Do")
     tag_wip = _create_mock_tag(2, "In Progress")
@@ -36,8 +37,18 @@ def test_resolve_forum_tags_matching():
     tag_norm = _create_mock_tag(5, "🟡 Normal")
     tag_unassigned = _create_mock_tag(6, "👤 Unassigned")
     tag_custom = _create_mock_tag(7, "Backend")
+    tag_project = _create_mock_tag(8, "📁 Auth")
 
-    mock_forum.available_tags = [tag_todo, tag_wip, tag_done, tag_high, tag_norm, tag_unassigned, tag_custom]
+    mock_forum.available_tags = [
+        tag_todo,
+        tag_wip,
+        tag_done,
+        tag_high,
+        tag_norm,
+        tag_unassigned,
+        tag_custom,
+        tag_project,
+    ]
 
     # 1. Unassigned task (assignee_discord_id is None)
     task_unassigned = Task(
@@ -51,11 +62,12 @@ def test_resolve_forum_tags_matching():
         assignee_discord_id=None,
     )
 
-    tags = resolve_forum_tags(mock_forum, task_unassigned, existing_tags=[tag_custom, tag_todo])
+    tags = resolve_forum_tags(mock_forum, task_unassigned, project_name="Auth", existing_tags=[tag_custom, tag_todo])
     assert tag_wip in tags
     assert tag_high in tags
     assert tag_unassigned in tags
     assert tag_custom in tags
+    assert tag_project in tags
     assert tag_todo not in tags  # Old status tag replaced
 
     # 2. Assigned task (assignee_discord_id is set) -> Unassigned tag is removed
@@ -69,11 +81,14 @@ def test_resolve_forum_tags_matching():
         priority=PriorityLevel.HIGH,
         assignee_discord_id=9999,
     )
-    tags_assigned = resolve_forum_tags(mock_forum, task_assigned, existing_tags=[tag_unassigned, tag_custom])
+    tags_assigned = resolve_forum_tags(
+        mock_forum, task_assigned, project_name="Auth", existing_tags=[tag_unassigned, tag_custom]
+    )
     assert tag_unassigned not in tags_assigned
     assert tag_wip in tags_assigned
     assert tag_high in tags_assigned
     assert tag_custom in tags_assigned
+    assert tag_project in tags_assigned
 
 
 @pytest.mark.asyncio
@@ -94,6 +109,8 @@ async def test_project_create_with_forum_channel(services):
 
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 555444333
+    mock_forum.available_tags = []
+    mock_forum.edit = AsyncMock()
 
     await cog.project_create.callback(
         cog,
@@ -116,6 +133,11 @@ async def test_project_create_with_forum_channel(services):
     project = await proj_srv.get_by_name(7777777777, "Security Audit")
     assert project is not None
     assert project.discord_channel_id == 555444333
+
+    project_tag_saved = [
+        c.kwargs.get("available_tags", []) for c in mock_forum.edit.await_args_list if "available_tags" in c.kwargs
+    ]
+    assert any("📁 Security Audit" == t.name for tags in project_tag_saved for t in tags)
 
 
 @pytest.mark.asyncio
@@ -379,6 +401,44 @@ async def test_setup_forum_tags_forbidden():
 
     added, _total, err = await setup_forum_tags(mock_forum)
     assert added == 0
+    assert err is not None
+    assert "Manage Channels" in err
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_tag():
+    """Verify ensure_project_tag adds a per-project tag and is idempotent."""
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 1230001
+    mock_forum.name = "eng-backlog"
+    mock_forum.available_tags = []
+    mock_forum.edit = AsyncMock()
+
+    # First call adds the project tag
+    err = await ensure_project_tag(mock_forum, "Mobile App")
+    assert err is None
+    saved = mock_forum.edit.call_args.kwargs.get("available_tags")
+    assert any(t.name == "📁 Mobile App" for t in saved)
+
+    # Existing tag present -> idempotent, no further edit
+    tag_project = _create_mock_tag(50, "📁 Mobile App")
+    mock_forum.available_tags = [tag_project]
+    mock_forum.edit.reset_mock()
+    err = await ensure_project_tag(mock_forum, "Mobile App")
+    assert err is None
+    mock_forum.edit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_tag_forbidden():
+    """Verify ensure_project_tag handles missing permissions gracefully."""
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.name = "restricted-forum"
+    mock_forum.id = 999111
+    mock_forum.available_tags = []
+    mock_forum.edit = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "Missing Permissions"))
+
+    err = await ensure_project_tag(mock_forum, "Mobile App")
     assert err is not None
     assert "Manage Channels" in err
 

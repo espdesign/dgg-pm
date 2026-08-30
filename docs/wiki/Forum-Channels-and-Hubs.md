@@ -13,7 +13,7 @@ When a project is bound to a `discord.ForumChannel` (or via `/pm project setup-f
 | **Status** | `⏳ Not Started`, `🟡 In Progress`, `✅ Completed` | Matches and syncs with the task's execution state. |
 | **Priority** | `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority` | Visual urgency indicator. |
 | **Assignment** | `👤 Unassigned` | Automatically applied when a task has no assignee; automatically removed when assigned. |
-| **Issue Type** | `🐛 Bug`, `✨ Feature`, `🔧 Task` | Classification tags for team organization. |
+| **Project** | `📁 <Project Name>` | One tag per project bound to the forum, enabling easy filtering of tasks by project. |
 
 ---
 
