@@ -29,19 +29,19 @@ class PmHubView(discord.ui.View):
     @discord.ui.button(label="Projects Hub", emoji="📁", style=discord.ButtonStyle.primary, row=0)
     async def projects_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed = build_project_menu_embed()
-        view = ProjectMenuView(self.project_service, self.team_service)
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Teams Hub", emoji="👥", style=discord.ButtonStyle.primary, row=0)
     async def teams_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed = build_team_menu_embed()
-        view = TeamMenuView(self.team_service)
+        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Tasks Hub", emoji="⚡", style=discord.ButtonStyle.primary, row=0)
     async def tasks_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         embed = build_task_menu_embed()
-        view = TaskMenuView(self.task_service, self.project_service)
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Guides", emoji="📖", style=discord.ButtonStyle.secondary, row=0)

@@ -28,6 +28,10 @@ class ITaskRepo(ABC):
         """Fetches a task by its short ID (e.g. INF-1) in a guild."""
 
     @abstractmethod
+    async def get_by_thread_id(self, guild_id: int, thread_id: int) -> Task | None:
+        """Fetches a task associated with a Discord discussion thread ID."""
+
+    @abstractmethod
     async def update_status_cas(
         self,
         task_id: UUID,

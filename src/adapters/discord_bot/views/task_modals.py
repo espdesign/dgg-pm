@@ -83,7 +83,7 @@ class TaskEditModal(discord.ui.Modal):
             due_default = task.due_at.strftime("%Y-%m-%d %H:%M")
 
         self.due_input = discord.ui.TextInput(
-            label="Due Date (e.g. 'tomorrow', 'in 3 days', 'clear')",
+            label="Due Date (e.g. 'tomorrow', 'clear')",
             default=due_default,
             placeholder="e.g. tomorrow, in 3 days, friday 5pm, 2026-04-15",
             required=False,

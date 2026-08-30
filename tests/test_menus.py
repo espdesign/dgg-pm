@@ -30,10 +30,17 @@ async def test_project_menu_and_modal(services):
     guild_id = 9999999999
 
     # 1. Test ProjectMenuView and embed
-    view = ProjectMenuView(proj_srv, team_srv)
+    view = ProjectMenuView(proj_srv, team_srv, task_service=services["task"])
     embed = build_project_menu_embed()
     assert "Project Management Control Center" in embed.title
-    assert len(view.children) == 4  # New Project, Active Projects, Archive, Restore
+    assert len(view.children) == 5  # New Project, Active Projects, Archive, Restore, PM Main Menu
+
+    # Test clicking PM Main Menu
+    main_menu_interaction = MagicMock(spec=discord.Interaction)
+    main_menu_interaction.response = MagicMock()
+    main_menu_interaction.response.edit_message = AsyncMock()
+    await view._on_hub_clicked(main_menu_interaction)
+    main_menu_interaction.response.edit_message.assert_awaited_once()
 
     # 2. Test ProjectCreateModal submission
     mock_channel = MagicMock(spec=discord.TextChannel)
@@ -66,14 +73,21 @@ async def test_team_menu_and_modal(services):
     guild_id = 8888888888
 
     # 1. Test TeamMenuView and embed
-    view = TeamMenuView(team_srv)
+    view = TeamMenuView(team_srv, project_service=services["project"], task_service=services["task"])
     embed = build_team_menu_embed()
     assert "Team Management Control Center" in embed.title
-    assert len(view.children) == 3  # Create Team, Assign Member, Team Roster
+    assert len(view.children) == 4  # Create Team, Assign Member, Team Roster, PM Main Menu
+
+    # Test clicking PM Main Menu
+    main_menu_interaction = MagicMock(spec=discord.Interaction)
+    main_menu_interaction.response = MagicMock()
+    main_menu_interaction.response.edit_message = AsyncMock()
+    await view._on_hub_clicked(main_menu_interaction)
+    main_menu_interaction.response.edit_message.assert_awaited_once()
 
     # 2. Test TeamCreateRoleSelectView
     role_view = TeamCreateRoleSelectView(team_srv)
-    assert len(role_view.children) == 1
+    assert len(role_view.children) == 2  # Role Select + Back Button
 
     mock_role = MagicMock(spec=discord.Role)
     mock_role.id = 555666777
@@ -108,7 +122,7 @@ async def test_team_menu_and_modal(services):
     from src.adapters.discord_bot.views.team_menu import TeamAssignMemberSelectView
 
     assign_view = TeamAssignMemberSelectView(teams=[created_team], team_service=team_srv)
-    assert len(assign_view.children) == 4  # Team, User, Role, Confirm Button
+    assert len(assign_view.children) == 5  # Team, User, Role, Confirm, Back
 
     mock_member_no_role = MagicMock(spec=discord.Member)
     mock_member_no_role.id = 3001
@@ -122,6 +136,7 @@ async def test_team_menu_and_modal(services):
     assign_interaction.response = MagicMock()
     assign_interaction.response.defer = AsyncMock()
     assign_interaction.response.send_message = AsyncMock()
+    assign_interaction.response.edit_message = AsyncMock()
 
     await assign_view._on_user_selected(assign_interaction)
     await assign_view.confirm_btn.callback(assign_interaction)
@@ -139,28 +154,28 @@ async def test_team_menu_and_modal(services):
     assign_view.user_select._values = [mock_member_with_role]
     assign_view.role_select._values = ["lead"]
     assign_interaction.guild.get_member.return_value = mock_member_with_role
-    assign_interaction.response.send_message.reset_mock()
 
     await assign_view._on_user_selected(assign_interaction)
     await assign_view._on_role_selected(assign_interaction)
     await assign_view.confirm_btn.callback(assign_interaction)
-    assign_interaction.response.send_message.assert_awaited_once()
-    success_msg = assign_interaction.response.send_message.call_args[0][0]
-    assert "Assigned <@3002> as **Team Lead ⭐**" in success_msg
+    assign_interaction.response.edit_message.assert_awaited_once()
+    success_embed = assign_interaction.response.edit_message.call_args[1]["embed"]
+    assert "Assignment Successful!" in success_embed.description
 
     # 5. Test TeamRosterDetailView
     from src.adapters.discord_bot.views.team_menu import TeamRosterDetailView
 
     roster_view = TeamRosterDetailView(teams=[created_team], team_service=team_srv)
+    assert len(roster_view.children) == 2  # Team Select + Back Button
     roster_view.select._values = [str(created_team.id)]
 
     roster_interaction = MagicMock(spec=discord.Interaction)
     roster_interaction.response = MagicMock()
-    roster_interaction.response.send_message = AsyncMock()
+    roster_interaction.response.edit_message = AsyncMock()
 
     await roster_view._on_select_team(roster_interaction)
-    roster_interaction.response.send_message.assert_awaited_once()
-    roster_embed = roster_interaction.response.send_message.call_args[1]["embed"]
+    roster_interaction.response.edit_message.assert_awaited_once()
+    roster_embed = roster_interaction.response.edit_message.call_args[1]["embed"]
     assert "Site Reliability Engineering" in roster_embed.title
 
 
@@ -173,10 +188,17 @@ async def test_task_menu_and_modal(services):
     project = await proj_srv.create_project(guild_id=guild_id, name="Security Ops", prefix="SEC")
 
     # 1. Test TaskMenuView and embed
-    view = TaskMenuView(task_srv, proj_srv)
+    view = TaskMenuView(task_srv, proj_srv, team_service=services["team"])
     embed = build_task_menu_embed()
     assert "Task Operations Control Center" in embed.title
-    assert len(view.children) == 4  # New Project Task, Standalone, Refresh, Status Filter
+    assert len(view.children) == 5  # New Project Task, Standalone, Refresh, PM Main Menu, Status Filter
+
+    # Test clicking PM Main Menu
+    main_menu_interaction = MagicMock(spec=discord.Interaction)
+    main_menu_interaction.response = MagicMock()
+    main_menu_interaction.response.edit_message = AsyncMock()
+    await view._on_hub_clicked(main_menu_interaction)
+    main_menu_interaction.response.edit_message.assert_awaited_once()
 
     # 2. Test TaskCreateModal submission
     mock_channel = MagicMock(spec=discord.TextChannel)

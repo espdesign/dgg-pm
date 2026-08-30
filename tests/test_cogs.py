@@ -139,43 +139,85 @@ async def test_task_action_view_and_modals(services):
         task_service=task_srv,
     )
 
-    # Check children: start_btn, complete_btn, note_btn, edit_btn, priority_select, assignee_select, due_select
+    # Check children: action buttons, priority, assignee, due select, watchers select
     custom_ids = [item.custom_id for item in view.children if hasattr(item, "custom_id")]
     assert f"task:start:{task.id}" in custom_ids
     assert f"task:complete:{task.id}" in custom_ids
     assert f"task:note:{task.id}" in custom_ids
     assert f"task:edit:{task.id}" in custom_ids
+    assert f"task:unassign:{task.id}" in custom_ids
     assert f"task:priority:{task.id}" in custom_ids
     assert f"task:assignee:{task.id}" in custom_ids
     assert f"task:due:{task.id}" in custom_ids
+    assert f"task:watchers:{task.id}" in custom_ids
 
-    # 2. Test priority select callback
+    # 2. Test unassign button via dynamic dispatcher
+    from src.adapters.discord_bot.bot import DggPmBot
+
+    bot = DggPmBot(
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=services["team"],
+    )
+
+    unassign_interaction = MagicMock(spec=discord.Interaction)
+    unassign_interaction.user = MagicMock()
+    unassign_interaction.user.id = 1002
+    unassign_interaction.response = MagicMock()
+    unassign_interaction.response.is_done.return_value = False
+    unassign_interaction.response.edit_message = AsyncMock()
+
+    await bot._handle_dynamic_task_button(unassign_interaction, "unassign", task.id)
+    unassign_interaction.response.edit_message.assert_awaited_once()
+
+    unassigned_task = await task_srv.get_by_id(task.id)
+    assert unassigned_task.assignee_discord_id is None
+
+    # 3. Test priority select via dynamic dispatcher
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.user = MagicMock()
     mock_interaction.user.id = 1002
+    mock_interaction.data = {"values": ["high"]}
     mock_interaction.response = MagicMock()
+    mock_interaction.response.is_done.return_value = False
     mock_interaction.response.edit_message = AsyncMock()
 
-    view.priority_select._values = ["high"]
-    await view._on_priority_selected(mock_interaction)
+    await bot._handle_dynamic_task_button(mock_interaction, "priority", task.id)
     mock_interaction.response.edit_message.assert_awaited_once()
 
     refreshed = await task_srv.get_by_id(task.id)
     assert refreshed.priority == PriorityLevel.HIGH
 
-    # 3. Test due date preset select callback
+    # 4. Test due date preset select via dynamic dispatcher
     due_interaction = MagicMock(spec=discord.Interaction)
     due_interaction.user = MagicMock()
     due_interaction.user.id = 1002
+    due_interaction.data = {"values": ["3days"]}
     due_interaction.response = MagicMock()
+    due_interaction.response.is_done.return_value = False
     due_interaction.response.edit_message = AsyncMock()
 
-    view.due_select._values = ["3days"]
-    await view._on_due_selected(due_interaction)
+    await bot._handle_dynamic_task_button(due_interaction, "due", task.id)
     due_interaction.response.edit_message.assert_awaited_once()
 
     due_refreshed = await task_srv.get_by_id(task.id)
     assert due_refreshed.due_at is not None
+
+    # 5. Test watchers multi-select via dynamic dispatcher
+    watchers_interaction = MagicMock(spec=discord.Interaction)
+    watchers_interaction.user = MagicMock()
+    watchers_interaction.user.id = 1002
+    watchers_interaction.data = {"values": ["2001", "2002"]}
+    watchers_interaction.response = MagicMock()
+    watchers_interaction.response.is_done.return_value = False
+    watchers_interaction.response.edit_message = AsyncMock()
+
+    await bot._handle_dynamic_task_button(watchers_interaction, "watchers", task.id)
+    watchers_interaction.response.edit_message.assert_awaited_once()
+
+    watchers_refreshed = await task_srv.get_by_id(task.id)
+    assert 2001 in watchers_refreshed.watchers
+    assert 2002 in watchers_refreshed.watchers
 
     # 4. Test TaskEditModal with natural language date
     edit_modal = TaskEditModal(task=due_refreshed, task_service=task_srv)

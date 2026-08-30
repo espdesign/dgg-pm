@@ -9,6 +9,7 @@ from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Project
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
+from src.services.team_service import TeamService
 from src.utils.date_parser import parse_natural_date
 
 logger = logging.getLogger("dgg_pm.views.task_menu")
@@ -128,6 +129,16 @@ class TaskCreateModal(discord.ui.Modal):
                         name=f"[{task.short_id}] {task.title[:90]}",
                         auto_archive_duration=1440,
                     )
+                    thread_view = TaskActionView(
+                        task_id=task.id,
+                        current_status=task.status,
+                        current_priority=task.priority,
+                        task_service=self.task_service,
+                    )
+                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
+                    if task.assignee_discord_id:
+                        thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+                    await thread.send(content=thread_intro, embed=embed, view=thread_view)
                     await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
                 else:
                     await self.task_service.update_discord_message_ids(task.id, msg.id, None)
@@ -144,9 +155,17 @@ class TaskCreateModal(discord.ui.Modal):
 class TaskSelectProjectView(discord.ui.View):
     """View to select which project container to create a task in."""
 
-    def __init__(self, projects: list[Project], task_service: TaskService):
+    def __init__(
+        self,
+        projects: list[Project],
+        task_service: TaskService,
+        project_service: ProjectService,
+        team_service: TeamService | None = None,
+    ):
         super().__init__(timeout=120)
         self.task_service = task_service
+        self.project_service = project_service
+        self.team_service = team_service
         self.projects = {str(p.id): p for p in projects}
 
         options = [
@@ -161,9 +180,19 @@ class TaskSelectProjectView(discord.ui.View):
         self.select = discord.ui.Select(
             placeholder="📁 Select Project for Task...",
             options=options,
+            row=0,
         )
         self.select.callback = self._on_select
         self.add_item(self.select)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Task Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         project_id_str = self.select.values[0]
@@ -179,6 +208,11 @@ class TaskSelectProjectView(discord.ui.View):
         modal = TaskCreateModal(self.task_service, project=project, target_channel=target_channel)
         await interaction.response.send_modal(modal)
 
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
+        embed = build_task_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
 
 class TaskMenuView(discord.ui.View):
     """Control Center View for Task Operations and Live Interactive Filtering."""
@@ -187,11 +221,13 @@ class TaskMenuView(discord.ui.View):
         self,
         task_service: TaskService,
         project_service: ProjectService,
+        team_service: TeamService | None = None,
         projects: list[Project] | None = None,
     ):
         super().__init__(timeout=None)
         self.task_service = task_service
         self.project_service = project_service
+        self.team_service = team_service
         self.selected_project_id: UUID | None = None
         self.selected_status: TaskStatus | None = None
 
@@ -223,6 +259,16 @@ class TaskMenuView(discord.ui.View):
         self.refresh_btn.callback = self._on_refresh_clicked
         self.add_item(self.refresh_btn)
 
+        if self.team_service:
+            self.hub_btn = discord.ui.Button(
+                label="PM Main Menu",
+                emoji="🏠",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            self.hub_btn.callback = self._on_hub_clicked
+            self.add_item(self.hub_btn)
+
         # Row 1: Status Filter Select
         status_options = [
             discord.SelectOption(label="All Statuses", value="all", emoji="📊", default=True),
@@ -238,6 +284,14 @@ class TaskMenuView(discord.ui.View):
         self.status_select.callback = self._on_status_filter_changed
         self.add_item(self.status_select)
 
+    async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+        if self.team_service:
+            view = PmHubView(self.project_service, self.team_service, self.task_service)
+            embed = build_hub_welcome_embed()
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+
     async def _on_new_task_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
@@ -248,8 +302,13 @@ class TaskMenuView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        view = TaskSelectProjectView(projects, self.task_service)
-        await interaction.response.send_message("Select the project for this task:", view=view, ephemeral=True)
+        view = TaskSelectProjectView(projects, self.task_service, self.project_service, self.team_service)
+        embed = discord.Embed(
+            title="📁 Select Project Container",
+            description="Choose which active project to create the task inside:",
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def _on_standalone_clicked(self, interaction: discord.Interaction) -> None:
         modal = TaskCreateModal(self.task_service, project=None, target_channel=interaction.channel)

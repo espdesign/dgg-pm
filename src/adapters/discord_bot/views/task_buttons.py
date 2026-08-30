@@ -3,23 +3,25 @@ from uuid import UUID
 
 import discord
 
-from src.adapters.discord_bot.views.task_embed import build_task_embed
-from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.domain.enums import PriorityLevel, TaskStatus
-from src.services.task_service import StaleVersionError, TaskService
-from src.utils.date_parser import get_due_date_from_preset
+from src.services.task_service import TaskService
 
 logger = logging.getLogger("dgg_pm.views.task_buttons")
 
 
 class TaskActionView(discord.ui.View):
-    """Persistent interactive view for task embed action buttons and select menus."""
+    """Persistent interactive view for task embed action buttons and select menus.
+
+    All interactions are centrally handled by DggPmBot._handle_dynamic_task_button
+    via on_interaction to prevent double-acknowledgment race conditions and ensure
+    persistent functionality across bot restarts.
+    """
 
     def __init__(
         self,
         task_id: UUID,
         current_status: TaskStatus,
-        task_service: TaskService,
+        task_service: TaskService | None = None,
         current_priority: PriorityLevel = PriorityLevel.NORMAL,
     ):
         super().__init__(timeout=None)
@@ -37,7 +39,6 @@ class TaskActionView(discord.ui.View):
             disabled=(current_status == TaskStatus.IN_PROGRESS or current_status == TaskStatus.COMPLETED),
             row=0,
         )
-        self.start_btn.callback = self._on_start_clicked
         self.add_item(self.start_btn)
 
         self.complete_btn = discord.ui.Button(
@@ -48,7 +49,6 @@ class TaskActionView(discord.ui.View):
             disabled=(current_status == TaskStatus.COMPLETED),
             row=0,
         )
-        self.complete_btn.callback = self._on_complete_clicked
         self.add_item(self.complete_btn)
 
         self.note_btn = discord.ui.Button(
@@ -58,7 +58,6 @@ class TaskActionView(discord.ui.View):
             custom_id=f"task:note:{task_id}",
             row=0,
         )
-        self.note_btn.callback = self._on_note_clicked
         self.add_item(self.note_btn)
 
         self.edit_btn = discord.ui.Button(
@@ -68,8 +67,16 @@ class TaskActionView(discord.ui.View):
             custom_id=f"task:edit:{task_id}",
             row=0,
         )
-        self.edit_btn.callback = self._on_edit_clicked
         self.add_item(self.edit_btn)
+
+        self.unassign_btn = discord.ui.Button(
+            label="Unassign",
+            emoji="🚫",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"task:unassign:{task_id}",
+            row=0,
+        )
+        self.add_item(self.unassign_btn)
 
         # Row 1: Priority Dropdown
         priority_options = [
@@ -98,7 +105,6 @@ class TaskActionView(discord.ui.View):
             custom_id=f"task:priority:{task_id}",
             row=1,
         )
-        self.priority_select.callback = self._on_priority_selected
         self.add_item(self.priority_select)
 
         # Row 2: Assignee User Select Picker
@@ -109,7 +115,6 @@ class TaskActionView(discord.ui.View):
             min_values=1,
             max_values=1,
         )
-        self.assignee_select.callback = self._on_assignee_selected
         self.add_item(self.assignee_select)
 
         # Row 3: Due Date Quick Presets Dropdown
@@ -129,142 +134,14 @@ class TaskActionView(discord.ui.View):
             custom_id=f"task:due:{task_id}",
             row=3,
         )
-        self.due_select.callback = self._on_due_selected
         self.add_item(self.due_select)
 
-    async def _on_start_clicked(self, interaction: discord.Interaction) -> None:
-        await self._handle_status_transition(interaction, TaskStatus.IN_PROGRESS)
-
-    async def _on_complete_clicked(self, interaction: discord.Interaction) -> None:
-        await self._handle_status_transition(interaction, TaskStatus.COMPLETED)
-
-    async def _on_note_clicked(self, interaction: discord.Interaction) -> None:
-        task = await self.task_service.get_by_id(self.task_id)
-        if not task:
-            await interaction.response.send_message("❌ Task not found.", ephemeral=True)
-            return
-        modal = TaskNoteModal(task_id=self.task_id, short_id=task.short_id, task_service=self.task_service)
-        await interaction.response.send_modal(modal)
-
-    async def _on_edit_clicked(self, interaction: discord.Interaction) -> None:
-        task = await self.task_service.get_by_id(self.task_id)
-        if not task:
-            await interaction.response.send_message("❌ Task not found.", ephemeral=True)
-            return
-        modal = TaskEditModal(task=task, task_service=self.task_service)
-        await interaction.response.send_modal(modal)
-
-    async def _on_priority_selected(self, interaction: discord.Interaction) -> None:
-        selected_val = self.priority_select.values[0]
-        new_priority = PriorityLevel(selected_val)
-        try:
-            updated_task = await self.task_service.update_priority(
-                task_id=self.task_id,
-                new_priority=new_priority,
-                actor_discord_id=interaction.user.id,
-            )
-            new_embed = build_task_embed(updated_task)
-            new_view = TaskActionView(
-                task_id=self.task_id,
-                current_status=updated_task.status,
-                current_priority=updated_task.priority,
-                task_service=self.task_service,
-            )
-            await interaction.response.edit_message(embed=new_embed, view=new_view)
-        except Exception as e:
-            logger.exception("Error changing task priority: %s", e)
-            await interaction.response.send_message(f"❌ Failed to update priority: {e}", ephemeral=True)
-
-    async def _on_assignee_selected(self, interaction: discord.Interaction) -> None:
-        selected_user = self.assignee_select.values[0]
-        new_assignee_id = selected_user.id
-        try:
-            updated_task = await self.task_service.update_assignee(
-                task_id=self.task_id,
-                new_assignee_id=new_assignee_id,
-                actor_discord_id=interaction.user.id,
-            )
-            new_embed = build_task_embed(updated_task)
-            new_view = TaskActionView(
-                task_id=self.task_id,
-                current_status=updated_task.status,
-                current_priority=updated_task.priority,
-                task_service=self.task_service,
-            )
-            await interaction.response.edit_message(embed=new_embed, view=new_view)
-        except Exception as e:
-            logger.exception("Error changing task assignee: %s", e)
-            await interaction.response.send_message(f"❌ Failed to reassign task: {e}", ephemeral=True)
-
-    async def _on_due_selected(self, interaction: discord.Interaction) -> None:
-        selected_val = self.due_select.values[0]
-        due_at, is_clear = get_due_date_from_preset(selected_val)
-        try:
-            updated_task = await self.task_service.update_details(
-                task_id=self.task_id,
-                actor_discord_id=interaction.user.id,
-                due_at=due_at,
-                clear_due_at=is_clear,
-            )
-            new_embed = build_task_embed(updated_task)
-            new_view = TaskActionView(
-                task_id=self.task_id,
-                current_status=updated_task.status,
-                current_priority=updated_task.priority,
-                task_service=self.task_service,
-            )
-            await interaction.response.edit_message(embed=new_embed, view=new_view)
-        except Exception as e:
-            logger.exception("Error changing task due date: %s", e)
-            await interaction.response.send_message(f"❌ Failed to update due date: {e}", ephemeral=True)
-
-    async def _handle_status_transition(
-        self,
-        interaction: discord.Interaction,
-        new_status: TaskStatus,
-    ) -> None:
-        task = await self.task_service.get_by_id(self.task_id)
-        if not task:
-            await interaction.response.send_message("❌ Task not found.", ephemeral=True)
-            return
-
-        try:
-            updated_task = await self.task_service.update_status(
-                task_id=self.task_id,
-                new_status=new_status,
-                expected_version=task.version,
-                actor_discord_id=interaction.user.id,
-                notes=f"Status set to {new_status.value} via Discord button",
-            )
-
-            # Re-render message embed and buttons
-            new_embed = build_task_embed(updated_task)
-            new_view = TaskActionView(
-                task_id=self.task_id,
-                current_status=updated_task.status,
-                current_priority=updated_task.priority,
-                task_service=self.task_service,
-            )
-            await interaction.response.edit_message(embed=new_embed, view=new_view)
-
-        except StaleVersionError:
-            # Graceful CAS Conflict UX: Inform user and re-render card with current state
-            latest_task = await self.task_service.get_by_id(self.task_id)
-            if latest_task:
-                new_embed = build_task_embed(latest_task)
-                new_view = TaskActionView(
-                    task_id=self.task_id,
-                    current_status=latest_task.status,
-                    current_priority=latest_task.priority,
-                    task_service=self.task_service,
-                )
-                await interaction.response.edit_message(embed=new_embed, view=new_view)
-                await interaction.followup.send(
-                    "⚠️ This task was already updated by another team member. The card has been refreshed.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.response.send_message("❌ Task no longer exists.", ephemeral=True)
-        except Exception as e:
-            logger.exception("Error handling button status transition: %s", e)
-            await interaction.response.send_message(f"❌ Failed to update status: {e}", ephemeral=True)
+        # Row 4: Watchers User Select Picker (Multi-Select)
+        self.watchers_select = discord.ui.UserSelect(
+            placeholder="👀 Manage Watchers / CC (Pick up to 10)...",
+            custom_id=f"task:watchers:{task_id}",
+            row=4,
+            min_values=1,
+            max_values=10,
+        )
+        self.add_item(self.watchers_select)

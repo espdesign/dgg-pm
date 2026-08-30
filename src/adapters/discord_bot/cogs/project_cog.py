@@ -3,16 +3,24 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.services.project_service import ProjectService
+from src.services.task_service import TaskService
 from src.services.team_service import TeamService
 
 
 class ProjectCog(commands.Cog):
     """Slash commands for managing projects and containers."""
 
-    def __init__(self, bot: commands.Bot, project_service: ProjectService, team_service: TeamService):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
         self.bot = bot
         self.project_service = project_service
         self.team_service = team_service
+        self.task_service = task_service
 
     @app_commands.command(name="project-create", description="Instantiate a top-level project container.")
     @app_commands.describe(
@@ -210,5 +218,5 @@ class ProjectCog(commands.Cog):
         from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
 
         embed = build_project_menu_embed()
-        view = ProjectMenuView(self.project_service, self.team_service)
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

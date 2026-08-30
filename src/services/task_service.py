@@ -369,6 +369,9 @@ class TaskService:
     async def get_by_short_id(self, guild_id: int, short_id: str) -> Task | None:
         return await self.task_repo.get_by_short_id(guild_id, short_id)
 
+    async def get_by_thread_id(self, guild_id: int, thread_id: int) -> Task | None:
+        return await self.task_repo.get_by_thread_id(guild_id, thread_id)
+
     async def list_tasks(
         self,
         guild_id: int,

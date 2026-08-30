@@ -5,6 +5,8 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -190,6 +192,20 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 .where(
                     TaskTable.guild_id == guild_id,
                     func.upper(TaskTable.short_id) == short_id.upper().strip(),
+                )
+            )
+            res = await session.execute(stmt)
+            row = res.scalar_one_or_none()
+            return _to_domain_task(row) if row else None
+
+    async def get_by_thread_id(self, guild_id: int, thread_id: int) -> Task | None:
+        async with self._get_session() as session:
+            stmt = (
+                select(TaskTable)
+                .options(selectinload(TaskTable.watchers))
+                .where(
+                    TaskTable.guild_id == guild_id,
+                    TaskTable.discord_thread_id == thread_id,
                 )
             )
             res = await session.execute(stmt)
@@ -613,6 +629,70 @@ class PostgresTeamRepo(BasePostgresRepo, ITeamRepo):
 class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
     async def enqueue(self, event: OutboxEvent) -> OutboxEvent:
         async with self._get_session() as session:
+            bind = session.bind
+            dialect_name = bind.dialect.name if bind else ""
+
+            if dialect_name == "postgresql":
+                stmt = (
+                    pg_insert(OutboxEventTable)
+                    .values(
+                        id=event.id,
+                        idempotency_key=event.idempotency_key,
+                        event_type=event.event_type.value,
+                        payload=event.payload,
+                        status=event.status.value,
+                        retry_count=event.retry_count,
+                        scheduled_for=event.scheduled_for,
+                        created_at=event.created_at,
+                        processed_at=event.processed_at,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[OutboxEventTable.idempotency_key],
+                        set_={
+                            "event_type": event.event_type.value,
+                            "payload": event.payload,
+                            "status": event.status.value,
+                            "retry_count": event.retry_count,
+                            "scheduled_for": event.scheduled_for,
+                            "processed_at": event.processed_at,
+                        },
+                    )
+                )
+                await session.execute(stmt)
+                await session.commit()
+                return event
+
+            if dialect_name == "sqlite":
+                stmt = (
+                    sqlite_insert(OutboxEventTable)
+                    .values(
+                        id=event.id,
+                        idempotency_key=event.idempotency_key,
+                        event_type=event.event_type.value,
+                        payload=event.payload,
+                        status=event.status.value,
+                        retry_count=event.retry_count,
+                        scheduled_for=event.scheduled_for,
+                        created_at=event.created_at,
+                        processed_at=event.processed_at,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[OutboxEventTable.idempotency_key],
+                        set_={
+                            "event_type": event.event_type.value,
+                            "payload": event.payload,
+                            "status": event.status.value,
+                            "retry_count": event.retry_count,
+                            "scheduled_for": event.scheduled_for,
+                            "processed_at": event.processed_at,
+                        },
+                    )
+                )
+                await session.execute(stmt)
+                await session.commit()
+                return event
+
+            # Fallback
             stmt = select(OutboxEventTable).where(OutboxEventTable.idempotency_key == event.idempotency_key)
             res = await session.execute(stmt)
             existing = res.scalar_one_or_none()
@@ -621,6 +701,7 @@ class PostgresOutboxRepo(BasePostgresRepo, IOutboxRepo):
                 existing.status = event.status.value
                 existing.scheduled_for = event.scheduled_for
                 existing.retry_count = event.retry_count
+                existing.processed_at = event.processed_at
             else:
                 row = OutboxEventTable(
                     id=event.id,

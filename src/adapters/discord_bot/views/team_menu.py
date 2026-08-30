@@ -5,6 +5,8 @@ import discord
 
 from src.domain.enums import TeamRoleType
 from src.domain.models import Team
+from src.services.project_service import ProjectService
+from src.services.task_service import TaskService
 from src.services.team_service import TeamService
 
 logger = logging.getLogger("dgg_pm.views.team_menu")
@@ -53,9 +55,16 @@ class TeamCreateModalWithName(discord.ui.Modal):
 class TeamCreateRoleSelectView(discord.ui.View):
     """Native Discord RoleSelect picker for zero-typing team creation."""
 
-    def __init__(self, team_service: TeamService):
+    def __init__(
+        self,
+        team_service: TeamService,
+        project_service: ProjectService | None = None,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=120)
         self.team_service = team_service
+        self.project_service = project_service
+        self.task_service = task_service
 
         self.role_select = discord.ui.RoleSelect(
             placeholder="🎭 Select Discord Server Role for Team...",
@@ -66,18 +75,40 @@ class TeamCreateRoleSelectView(discord.ui.View):
         self.role_select.callback = self._on_role_selected
         self.add_item(self.role_select)
 
+        self.back_btn = discord.ui.Button(
+            label="Back to Team Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
         selected_role = self.role_select.values[0]
         modal = TeamCreateModalWithName(self.team_service, selected_role)
         await interaction.response.send_modal(modal)
 
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+        embed = build_team_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
 
 class TeamAssignMemberSelectView(discord.ui.View):
     """View to select a team, pick a user, choose a role type, and confirm assignment."""
 
-    def __init__(self, teams: list[Team], team_service: TeamService):
+    def __init__(
+        self,
+        teams: list[Team],
+        team_service: TeamService,
+        project_service: ProjectService | None = None,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=120)
         self.team_service = team_service
+        self.project_service = project_service
+        self.task_service = task_service
         self.teams = {t.id: t for t in teams}
         self.selected_team_id: UUID | None = UUID(str(teams[0].id)) if teams else None
         self.selected_user: discord.User | discord.Member | None = None
@@ -124,7 +155,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
         self.role_select.callback = self._on_role_selected
         self.add_item(self.role_select)
 
-        # Row 3: Confirm Button
+        # Row 3: Confirm Button & Back Button
         self.confirm_btn = discord.ui.Button(
             label="Confirm Team Assignment",
             emoji="✅",
@@ -133,6 +164,15 @@ class TeamAssignMemberSelectView(discord.ui.View):
         )
         self.confirm_btn.callback = self._on_confirm_clicked
         self.add_item(self.confirm_btn)
+
+        self.back_btn = discord.ui.Button(
+            label="Back",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
 
     async def _on_team_selected(self, interaction: discord.Interaction) -> None:
         self.selected_team_id = UUID(self.team_select.values[0])
@@ -145,6 +185,11 @@ class TeamAssignMemberSelectView(discord.ui.View):
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
         self.selected_role_type = TeamRoleType(self.role_select.values[0])
         await interaction.response.defer()
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+        embed = build_team_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_confirm_clicked(self, interaction: discord.Interaction) -> None:
         if not self.selected_team_id:
@@ -191,10 +236,15 @@ class TeamAssignMemberSelectView(discord.ui.View):
                 role_type=self.selected_role_type,
             )
             role_label = "Team Lead ⭐" if self.selected_role_type == TeamRoleType.LEAD else "Team Member 👤"
-            await interaction.response.send_message(
-                f"✅ Assigned <@{user.id}> as **{role_label}** to **{team.name}**!",
-                ephemeral=True,
+
+            # Return to main team menu with success notification
+            view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+            embed = build_team_menu_embed()
+            embed.description = (
+                f"✅ **Assignment Successful!**\n"
+                f"Assigned <@{user.id}> as **{role_label}** to **{team.name}**.\n\n" + (embed.description or "")
             )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             logger.exception("Error assigning team member: %s", e)
             await interaction.response.send_message(f"❌ Failed to assign team member: {e}", ephemeral=True)
@@ -203,9 +253,17 @@ class TeamAssignMemberSelectView(discord.ui.View):
 class TeamRosterDetailView(discord.ui.View):
     """Interactive view allowing inspection of squad members for any team."""
 
-    def __init__(self, teams: list[Team], team_service: TeamService):
+    def __init__(
+        self,
+        teams: list[Team],
+        team_service: TeamService,
+        project_service: ProjectService | None = None,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=120)
         self.team_service = team_service
+        self.project_service = project_service
+        self.task_service = task_service
         self.teams = {t.id: t for t in teams}
 
         options = [
@@ -220,9 +278,19 @@ class TeamRosterDetailView(discord.ui.View):
         self.select = discord.ui.Select(
             placeholder="👥 Show Members for Team...",
             options=options,
+            row=0,
         )
         self.select.callback = self._on_select_team
         self.add_item(self.select)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Team Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
 
     async def _on_select_team(self, interaction: discord.Interaction) -> None:
         team_id = UUID(self.select.values[0])
@@ -236,7 +304,7 @@ class TeamRosterDetailView(discord.ui.View):
         regular = [f"<@{m.user_discord_id}>" for m in members if m.role_type == TeamRoleType.MEMBER]
 
         embed = discord.Embed(
-            title=f"👥 Roster: {team.name}",
+            title=f"👥 Squad Roster: {team.name}",
             description=f"Mapped Discord Role: <@&{team.discord_role_id}>",
             color=discord.Color.teal(),
         )
@@ -251,24 +319,55 @@ class TeamRosterDetailView(discord.ui.View):
             inline=False,
         )
         embed.set_footer(text=f"Total: {len(members)} squad members • Team ID: {team.id}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.edit_message(content=None, embed=embed, view=self)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+        embed = build_team_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class TeamMenuView(discord.ui.View):
     """Control Center View for Team Operations."""
 
-    def __init__(self, team_service: TeamService):
+    def __init__(
+        self,
+        team_service: TeamService,
+        project_service: ProjectService | None = None,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=None)
         self.team_service = team_service
+        self.project_service = project_service
+        self.task_service = task_service
+
+        if self.project_service and self.task_service:
+            hub_btn = discord.ui.Button(
+                label="PM Main Menu",
+                emoji="🏠",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            hub_btn.callback = self._on_hub_clicked
+            self.add_item(hub_btn)
+
+    async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+        if self.project_service and self.task_service:
+            view = PmHubView(self.project_service, self.team_service, self.task_service)
+            embed = build_hub_welcome_embed()
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="Create Team", emoji="➕", style=discord.ButtonStyle.primary, row=0)
     async def create_team_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        view = TeamCreateRoleSelectView(self.team_service)
-        await interaction.response.send_message(
-            "Select the Discord Server Role to map to this team:",
-            view=view,
-            ephemeral=True,
+        view = TeamCreateRoleSelectView(self.team_service, self.project_service, self.task_service)
+        embed = discord.Embed(
+            title="➕ Create New Team",
+            description="Select the Discord Server Role below to map to this team container:",
+            color=discord.Color.blurple(),
         )
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Assign Member", emoji="👤", style=discord.ButtonStyle.secondary, row=0)
     async def assign_member_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -281,8 +380,13 @@ class TeamMenuView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        view = TeamAssignMemberSelectView(teams, self.team_service)
-        await interaction.response.send_message("Select a team and pick a member to assign:", view=view, ephemeral=True)
+        view = TeamAssignMemberSelectView(teams, self.team_service, self.project_service, self.task_service)
+        embed = discord.Embed(
+            title="👤 Assign Team Member",
+            description="Select a team, pick a Discord member, choose Member or Lead, and confirm:",
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Team Roster", emoji="📋", style=discord.ButtonStyle.secondary, row=0)
     async def list_teams_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -295,7 +399,7 @@ class TeamMenuView(discord.ui.View):
 
         embed = discord.Embed(
             title=f"👥 Server Teams ({len(teams)})",
-            description="Select a team below to view assigned leads and members:",
+            description="Select a team below to inspect assigned leads and members:",
             color=discord.Color.blurple(),
         )
         for t in teams:
@@ -308,8 +412,8 @@ class TeamMenuView(discord.ui.View):
                 inline=False,
             )
 
-        view = TeamRosterDetailView(teams, self.team_service)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        view = TeamRosterDetailView(teams, self.team_service, self.project_service, self.task_service)
+        await interaction.response.edit_message(embed=embed, view=view)
 
 
 def build_team_menu_embed() -> discord.Embed:

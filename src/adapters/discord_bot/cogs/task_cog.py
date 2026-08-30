@@ -14,6 +14,7 @@ from src.adapters.discord_bot.views.task_list_view import TaskListView, build_pa
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
+from src.services.team_service import TeamService
 from src.utils.date_parser import parse_natural_date
 
 
@@ -38,10 +39,12 @@ class TaskCog(commands.Cog):
         bot: commands.Bot,
         task_service: TaskService,
         project_service: ProjectService,
+        team_service: TeamService | None = None,
     ):
         self.bot = bot
         self.task_service = task_service
         self.project_service = project_service
+        self.team_service = team_service
 
     async def task_autocomplete(
         self,
@@ -173,13 +176,20 @@ class TaskCog(commands.Cog):
                         thread_name = thread_name[:97] + "..."
                     thread = await msg.create_thread(name=thread_name, auto_archive_duration=1440)
 
-                    # Post initial thread message
+                    # Post initial thread message with active TaskActionView
                     thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
                     if task.assignee_discord_id:
                         thread_intro += f"Assignee: <@{task.assignee_discord_id}> "
                     if watchers:
                         thread_intro += "Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
-                    await thread.send(thread_intro)
+
+                    thread_view = TaskActionView(
+                        task_id=task.id,
+                        current_status=task.status,
+                        current_priority=task.priority,
+                        task_service=self.task_service,
+                    )
+                    await thread.send(content=thread_intro.strip(), embed=embed, view=thread_view)
             except Exception:
                 # Thread creation might fail if bot lacks thread permissions
                 pass
@@ -198,6 +208,156 @@ class TaskCog(commands.Cog):
 
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to create task: {e}", ephemeral=True)
+
+    @app_commands.command(name="task-assign", description="Assign or unassign a member from a task.")
+    @app_commands.describe(
+        task="Task identifier (search by short ID or title)",
+        assignee="Discord member to assign (leave empty to unassign)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete)
+    async def task_assign(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        assignee: discord.Member | None = None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        try:
+            task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not task_entity:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            new_assignee_id = assignee.id if assignee else None
+            updated_task = await self.task_service.update_assignee(
+                task_id=task_entity.id,
+                new_assignee_id=new_assignee_id,
+                actor_discord_id=interaction.user.id,
+            )
+
+            msg = (
+                f"👤 Assigned **[{updated_task.short_id}]** to <@{new_assignee_id}>."
+                if new_assignee_id
+                else f"👤 Unassigned **[{updated_task.short_id}]**."
+            )
+            embed = build_task_embed(updated_task)
+            await interaction.followup.send(f"✅ {msg}", embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to update task assignee: {e}", ephemeral=True)
+
+    @app_commands.command(name="task-watchers", description="Manage watcher members (CC) for a task.")
+    @app_commands.describe(
+        task="Task identifier (search by short ID or title)",
+        action="Action to perform",
+        member="Discord member to add or remove (defaults to yourself)",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add Watcher", value="add"),
+            app_commands.Choice(name="Remove Watcher", value="remove"),
+            app_commands.Choice(name="Clear All Watchers", value="clear"),
+        ]
+    )
+    @app_commands.autocomplete(task=task_autocomplete)
+    async def task_watchers(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        action: str,
+        member: discord.Member | None = None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        try:
+            task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not task_entity:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            target_user_id = member.id if member else interaction.user.id
+            current_watchers = list(task_entity.watchers)
+
+            if action == "add":
+                if target_user_id not in current_watchers:
+                    current_watchers.append(target_user_id)
+            elif action == "remove":
+                if target_user_id in current_watchers:
+                    current_watchers.remove(target_user_id)
+            elif action == "clear":
+                current_watchers = []
+
+            updated_task = await self.task_service.update_details(
+                task_id=task_entity.id,
+                actor_discord_id=interaction.user.id,
+                watchers=current_watchers,
+            )
+
+            embed = build_task_embed(updated_task)
+            await interaction.followup.send(f"✅ Updated watchers for **[{updated_task.short_id}]**!", embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to update watchers: {e}", ephemeral=True)
+
+    @app_commands.command(
+        name="task-refresh",
+        description="Post or refresh the live interactive Task Action Card in this thread or channel.",
+    )
+    @app_commands.describe(
+        task="Task identifier (optional if run directly inside the task's thread)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete)
+    async def task_refresh(
+        self,
+        interaction: discord.Interaction,
+        task: str | None = None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer()
+        try:
+            task_entity = None
+            if task:
+                task_entity = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            elif isinstance(interaction.channel, discord.Thread):
+                task_entity = await self.task_service.get_by_thread_id(interaction.guild.id, interaction.channel.id)
+
+            if not task_entity:
+                await interaction.followup.send(
+                    "❌ Could not find task. Please specify the `task` parameter or run inside a task thread.",
+                    ephemeral=True,
+                )
+                return
+
+            project_name = None
+            if task_entity.project_id:
+                project = await self.project_service.get_by_id(task_entity.project_id)
+                if project:
+                    project_name = project.name
+
+            embed = build_task_embed(task_entity, project_name=project_name)
+            view = TaskActionView(
+                task_id=task_entity.id,
+                current_status=task_entity.status,
+                current_priority=task_entity.priority,
+                task_service=self.task_service,
+            )
+            msg = await interaction.channel.send(embed=embed, view=view)
+            # Link newest card to task
+            thread_id = (
+                interaction.channel.id
+                if isinstance(interaction.channel, discord.Thread)
+                else task_entity.discord_thread_id
+            )
+            await self.task_service.update_discord_message_ids(task_entity.id, msg.id, thread_id)
+
+            await interaction.followup.send(
+                f"✅ Posted updated Task Action Card for **[{task_entity.short_id}]**!",
+                ephemeral=True,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to refresh task card: {e}", ephemeral=True)
 
     @app_commands.command(
         name="task-standalone", description="Instantiate an ad-hoc task independent of project containers."
@@ -418,5 +578,5 @@ class TaskCog(commands.Cog):
         from src.adapters.discord_bot.views.task_menu import TaskMenuView, build_task_menu_embed
 
         embed = build_task_menu_embed()
-        view = TaskMenuView(self.task_service, self.project_service)
+        view = TaskMenuView(self.task_service, self.project_service, self.team_service)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

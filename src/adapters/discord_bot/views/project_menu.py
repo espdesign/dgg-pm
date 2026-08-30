@@ -5,6 +5,7 @@ import discord
 
 from src.domain.models import Project
 from src.services.project_service import ProjectService
+from src.services.task_service import TaskService
 from src.services.team_service import TeamService
 
 logger = logging.getLogger("dgg_pm.views.project_menu")
@@ -83,12 +84,49 @@ class ProjectCreateModal(discord.ui.Modal):
             await interaction.response.send_message(f"❌ Failed to create project: {e}", ephemeral=True)
 
 
+class ProjectActiveListView(discord.ui.View):
+    """View displaying active projects with a Back button."""
+
+    def __init__(
+        self,
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
+        super().__init__(timeout=120)
+        self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
+
 class ProjectArchiveSelectView(discord.ui.View):
     """Interactive select menu to archive an active project."""
 
-    def __init__(self, projects: list[Project], project_service: ProjectService):
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=120)
         self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
 
         options = [
             discord.SelectOption(
@@ -104,26 +142,55 @@ class ProjectArchiveSelectView(discord.ui.View):
             options=options,
             min_values=1,
             max_values=1,
+            row=0,
         )
         self.select.callback = self._on_select
         self.add_item(self.select)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         project_id = UUID(self.select.values[0])
         try:
             archived = await self.project_service.archive_project(project_id)
-            msg = f"📦 Project **{archived.name} (`{archived.prefix}`)** and its active tasks have been archived."
-            await interaction.response.edit_message(content=msg, view=None)
+            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            embed = build_project_menu_embed()
+            embed.description = (
+                f"📦 **Project Archived!**\n"
+                f"Project **{archived.name} (`{archived.prefix}`)** and its active tasks have been archived.\n\n"
+                + (embed.description or "")
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to archive project: {e}", ephemeral=True)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class ProjectRestoreSelectView(discord.ui.View):
     """Interactive select menu to restore an archived project."""
 
-    def __init__(self, projects: list[Project], project_service: ProjectService):
+    def __init__(
+        self,
+        projects: list[Project],
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=120)
         self.project_service = project_service
+        self.team_service = team_service
+        self.task_service = task_service
 
         options = [
             discord.SelectOption(
@@ -139,29 +206,72 @@ class ProjectRestoreSelectView(discord.ui.View):
             options=options,
             min_values=1,
             max_values=1,
+            row=0,
         )
         self.select.callback = self._on_select
         self.add_item(self.select)
+
+        self.back_btn = discord.ui.Button(
+            label="Back to Project Menu",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.back_btn.callback = self._on_back_clicked
+        self.add_item(self.back_btn)
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         project_id = UUID(self.select.values[0])
         try:
             restored = await self.project_service.unarchive_project(project_id)
-            await interaction.response.edit_message(
-                content=f"♻️ Project **{restored.name} (`{restored.prefix}`)** has been restored.",
-                view=None,
+            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            embed = build_project_menu_embed()
+            embed.description = (
+                f"♻️ **Project Restored!**\n"
+                f"Project **{restored.name} (`{restored.prefix}`)** has been reactivated.\n\n"
+                + (embed.description or "")
             )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to restore project: {e}", ephemeral=True)
+
+    async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
+        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+        embed = build_project_menu_embed()
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class ProjectMenuView(discord.ui.View):
     """Control Center View for Project Operations."""
 
-    def __init__(self, project_service: ProjectService, team_service: TeamService):
+    def __init__(
+        self,
+        project_service: ProjectService,
+        team_service: TeamService,
+        task_service: TaskService | None = None,
+    ):
         super().__init__(timeout=None)
         self.project_service = project_service
         self.team_service = team_service
+        self.task_service = task_service
+
+        if self.task_service:
+            hub_btn = discord.ui.Button(
+                label="PM Main Menu",
+                emoji="🏠",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+            )
+            hub_btn.callback = self._on_hub_clicked
+            self.add_item(hub_btn)
+
+    async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
+        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+        if self.task_service:
+            view = PmHubView(self.project_service, self.team_service, self.task_service)
+            embed = build_hub_welcome_embed()
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="New Project", emoji="➕", style=discord.ButtonStyle.primary, row=0)
     async def new_project_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -192,7 +302,8 @@ class ProjectMenuView(discord.ui.View):
                 value=f"• Channel: {chan_str}\n• Next Task: #{p.next_task_number}\n• {desc_str}",
                 inline=False,
             )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        view = ProjectActiveListView(self.project_service, self.team_service, self.task_service)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Archive Project", emoji="📦", style=discord.ButtonStyle.secondary, row=0)
     async def archive_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -202,8 +313,13 @@ class ProjectMenuView(discord.ui.View):
         if not projects:
             await interaction.response.send_message("📁 No active projects available to archive.", ephemeral=True)
             return
-        view = ProjectArchiveSelectView(projects, self.project_service)
-        await interaction.response.send_message("Select an active project to archive:", view=view, ephemeral=True)
+        view = ProjectArchiveSelectView(projects, self.project_service, self.team_service, self.task_service)
+        embed = discord.Embed(
+            title="📦 Archive Project",
+            description="Select an active project below to archive:",
+            color=discord.Color.orange(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="Restore Project", emoji="♻️", style=discord.ButtonStyle.secondary, row=0)
     async def restore_btn(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -214,8 +330,13 @@ class ProjectMenuView(discord.ui.View):
         if not archived:
             await interaction.response.send_message("📁 No archived projects to restore.", ephemeral=True)
             return
-        view = ProjectRestoreSelectView(archived, self.project_service)
-        await interaction.response.send_message("Select an archived project to restore:", view=view, ephemeral=True)
+        view = ProjectRestoreSelectView(archived, self.project_service, self.team_service, self.task_service)
+        embed = discord.Embed(
+            title="♻️ Restore Project",
+            description="Select an archived project below to restore:",
+            color=discord.Color.green(),
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
 
 
 def build_project_menu_embed() -> discord.Embed:
