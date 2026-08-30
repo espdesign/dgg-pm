@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.settings_menu import UserSettingsView, build_settings_embed
 from src.domain.enums import NotificationPreference
 
@@ -58,23 +59,26 @@ class SettingsCog(commands.Cog):
             await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
             return
 
-        current_pref = await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
+        try:
+            current_pref = await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
 
-        # If user passed a choice parameter directly, update it immediately
-        if notify:
-            new_pref = NotificationPreference(notify.value)
-            await self.user_service.set_preference(interaction.guild.id, interaction.user.id, new_pref)
-            current_pref = new_pref
+            # If user passed a choice parameter directly, update it immediately
+            if notify:
+                new_pref = NotificationPreference(notify.value)
+                await self.user_service.set_preference(interaction.guild.id, interaction.user.id, new_pref)
+                current_pref = new_pref
 
-        view = UserSettingsView(
-            user_service=self.user_service,
-            current_pref=current_pref,
-            project_service=self.project_service,
-            team_service=self.team_service,
-            task_service=self.task_service,
-        )
-        from src.adapters.discord_bot.menu_manager import menu_manager
+            view = UserSettingsView(
+                user_service=self.user_service,
+                current_pref=current_pref,
+                project_service=self.project_service,
+                team_service=self.team_service,
+                task_service=self.task_service,
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
 
-        embed = build_settings_embed(interaction.user, current_pref)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        await menu_manager.register_menu(interaction)
+            embed = build_settings_embed(interaction.user, current_pref)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await menu_manager.register_menu(interaction)
+        except Exception as e:
+            await send_interaction_error(interaction, e, "opening settings menu", logger, ephemeral=True)

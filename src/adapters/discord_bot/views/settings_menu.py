@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import discord
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.enums import NotificationPreference
 
 if TYPE_CHECKING:
@@ -167,7 +168,8 @@ class UserSettingsView(discord.ui.View):
                     "   *(Tip: Enable 'Allow direct messages' in Server Privacy Settings or switch to Channel Ping.)*"
                 )
             except Exception as e:
-                results.append(f"⚠️ **Direct Message (DM):** Unexpected error sending DM: {e}")
+                logger.exception("Unexpected error sending test DM: %s", e)
+                results.append("⚠️ **Direct Message (DM):** Delivery failed due to an unexpected error.")
 
         # Test Channel delivery
         if pref in (NotificationPreference.CHANNEL, NotificationPreference.BOTH):
@@ -194,8 +196,7 @@ class UserSettingsView(discord.ui.View):
             embed = build_settings_embed(interaction.user, self.current_pref)
             await interaction.response.edit_message(embed=embed, view=self)
         except Exception as e:
-            logger.exception("Failed to update user preference: %s", e)
-            await interaction.response.send_message(f"❌ Failed to save preference: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, "saving notification preference", logger, ephemeral=True)
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed

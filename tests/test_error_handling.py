@@ -1,0 +1,239 @@
+import logging
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+import discord
+import pytest
+
+from src.adapters.discord_bot.cogs.project_cog import ProjectCog
+from src.adapters.discord_bot.cogs.task_cog import TaskCog
+from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.error_handler import send_interaction_error, translate_error
+from src.domain.enums import PriorityLevel, TaskStatus
+from src.domain.exceptions import (
+    DggPmError,
+    DomainError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    ProjectAlreadyExistsError,
+    ProjectNotFoundError,
+    StaleVersionError,
+    TaskNotFoundError,
+    TeamAlreadyExistsError,
+    TeamNotFoundError,
+    ValidationError,
+)
+from src.services.project_service import ProjectService
+from src.services.task_service import TaskService
+from src.services.team_service import TeamService
+
+
+def test_exception_hierarchy():
+    """Verify inheritance relationships for typed domain exceptions."""
+    assert issubclass(DomainError, DggPmError)
+    assert issubclass(ValidationError, DomainError)
+    assert issubclass(ValidationError, ValueError)
+
+    assert issubclass(EntityNotFoundError, DomainError)
+    assert issubclass(TaskNotFoundError, EntityNotFoundError)
+    assert issubclass(ProjectNotFoundError, EntityNotFoundError)
+    assert issubclass(TeamNotFoundError, EntityNotFoundError)
+
+    assert issubclass(EntityAlreadyExistsError, DomainError)
+    assert issubclass(ProjectAlreadyExistsError, EntityAlreadyExistsError)
+    assert issubclass(ProjectAlreadyExistsError, ValueError)
+    assert issubclass(TeamAlreadyExistsError, EntityAlreadyExistsError)
+    assert issubclass(TeamAlreadyExistsError, ValueError)
+
+    assert issubclass(StaleVersionError, DomainError)
+
+
+def test_translate_error_known_exceptions():
+    """Verify known business exceptions translate to friendly text without unexpected error flags."""
+    # Stale version
+    msg, unexpected = translate_error(StaleVersionError("Version conflict"), "updating task status")
+    assert not unexpected
+    assert "already modified by another user" in msg
+
+    # Domain / Value errors
+    msg, unexpected = translate_error(
+        ProjectAlreadyExistsError("Project with name 'Core' already exists"), "creating project"
+    )
+    assert not unexpected
+    assert msg == "❌ Project with name 'Core' already exists"
+
+    msg, unexpected = translate_error(TaskNotFoundError("Task 'SEC-99' was not found."), "assigning task")
+    assert not unexpected
+    assert msg == "❌ Task 'SEC-99' was not found."
+
+    # Discord forbidden (permissions)
+    mock_resp = MagicMock()
+    mock_resp.status = 403
+    mock_resp.reason = "Forbidden"
+    forbidden_err = discord.Forbidden(mock_resp, "Missing Permissions")
+    msg, unexpected = translate_error(forbidden_err, "creating thread")
+    assert not unexpected
+    assert "lacks required Discord permissions" in msg
+
+
+def test_translate_error_unexpected_sanitization():
+    """Verify unknown/internal exceptions are sanitized to avoid leaking traces or SQL errors to UI."""
+    internal_err = RuntimeError("SELECT * FROM tasks WHERE secret_token='xyz' - connection timed out")
+    msg, unexpected = translate_error(internal_err, "creating task 'Deploy'")
+    assert unexpected is True
+    # Must NOT leak the SQL or secret or class name
+    assert "secret_token" not in msg
+    assert "RuntimeError" not in msg
+    assert msg == "❌ An unexpected error occurred while creating task 'Deploy'. Please try again later."
+
+
+@pytest.mark.asyncio
+async def test_send_interaction_error_not_deferred(caplog):
+    """Test send_interaction_error when interaction has not responded yet (uses response.send_message)."""
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.is_done.return_value = False
+    interaction.response.send_message = AsyncMock()
+
+    custom_logger = logging.getLogger("test_error_logger")
+
+    try:
+        raise KeyError("internal_state_missing")
+    except Exception as raw_err:
+        with caplog.at_level(logging.ERROR, logger="test_error_logger"):
+            msg = await send_interaction_error(
+                interaction, raw_err, "processing action", target_logger=custom_logger, ephemeral=True
+            )
+
+    interaction.response.send_message.assert_awaited_once_with(msg, ephemeral=True)
+    assert "Unexpected error while processing action" in caplog.text
+    assert "internal_state_missing" in caplog.text
+    assert "KeyError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_send_interaction_error_deferred():
+    """Test send_interaction_error when interaction is already deferred/done (uses followup.send)."""
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.is_done.return_value = True
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    stale_err = StaleVersionError("Conflict")
+    msg = await send_interaction_error(interaction, stale_err, "updating task", ephemeral=True)
+
+    interaction.followup.send.assert_awaited_once_with(msg, ephemeral=True)
+    assert "already modified" in msg
+
+
+@pytest.mark.asyncio
+async def test_service_raises_typed_exceptions(services):
+    """Verify services raise strongly typed domain exceptions."""
+    proj_srv: ProjectService = services["project"]
+    task_srv: TaskService = services["task"]
+    team_srv: TeamService = services["team"]
+    guild_id = 8888888888
+
+    # 1. Project Already Exists (name)
+    await proj_srv.create_project(guild_id=guild_id, name="Security Alpha", prefix="SEC")
+    with pytest.raises(ProjectAlreadyExistsError, match="name 'Security Alpha' already exists"):
+        await proj_srv.create_project(guild_id=guild_id, name="Security Alpha", prefix="SEC2")
+
+    # 2. Project Already Exists (prefix)
+    with pytest.raises(ProjectAlreadyExistsError, match="is already in use"):
+        await proj_srv.create_project(guild_id=guild_id, name="Security Beta", prefix="SEC")
+
+    # 3. Team Already Exists
+    await team_srv.create_team(guild_id=guild_id, name="Red Team", discord_role_id=1111)
+    with pytest.raises(TeamAlreadyExistsError, match="name 'Red Team' already exists"):
+        await team_srv.create_team(guild_id=guild_id, name="Red Team", discord_role_id=2222)
+
+    # 4. Project Not Found on task creation
+    fake_project_id = uuid4()
+    with pytest.raises(ProjectNotFoundError, match="not found"):
+        await task_srv.create_task(
+            guild_id=guild_id,
+            title="Invalid Task",
+            project_id=fake_project_id,
+            creator_discord_id=1001,
+        )
+
+    # 5. Task Not Found on updates
+    fake_task_id = uuid4()
+    with pytest.raises(TaskNotFoundError, match="does not exist"):
+        await task_srv.update_status(fake_task_id, TaskStatus.COMPLETED, 1, 1001)
+
+    with pytest.raises(TaskNotFoundError, match="does not exist"):
+        await task_srv.update_priority(fake_task_id, PriorityLevel.HIGH, 1001)
+
+    with pytest.raises(TaskNotFoundError, match="does not exist"):
+        await task_srv.update_assignee(fake_task_id, 1002, 1001)
+
+    with pytest.raises(TaskNotFoundError, match="does not exist"):
+        await task_srv.update_details(fake_task_id, 1001, title="New Title")
+
+    # 6. StaleVersionError on OCC conflict
+    proj = await proj_srv.create_project(guild_id=guild_id, name="Ops", prefix="OPS")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Setup Monitoring",
+        project_id=proj.id,
+        creator_discord_id=1001,
+    )
+    with pytest.raises(StaleVersionError, match="already modified"):
+        await task_srv.update_status(
+            task_id=task.id,
+            new_status=TaskStatus.IN_PROGRESS,
+            expected_version=999,  # Wrong version
+            actor_discord_id=1001,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cogs_handle_service_and_unexpected_errors(services, caplog):
+    """Test that cogs translate typed errors gracefully and safely sanitize unexpected exceptions."""
+    bot = MagicMock(spec=discord.Client)
+    project_cog = ProjectCog(bot, services["project"], services["team"])
+    team_cog = TeamCog(bot, services["team"])
+    task_cog = TaskCog(bot, services["task"], services["project"])
+
+    guild_id = 9999999999
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.id = 1001
+    interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
+    interaction.response.is_done.return_value = True
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    # 1. Project Cog: Duplicate project name translates to clean error message
+    await services["project"].create_project(guild_id=guild_id, name="Infra", prefix="INF")
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.id = 12345
+    await project_cog.project_create.callback(
+        project_cog, interaction, name="Infra", prefix="INF2", channel=mock_channel
+    )
+    interaction.followup.send.assert_awaited()
+    last_call_arg = interaction.followup.send.call_args[0][0]
+    assert "already exists" in last_call_arg
+
+    # 2. Team Cog: Duplicate team name translates to clean error message
+    interaction.followup.send.reset_mock()
+    await services["team"].create_team(guild_id=guild_id, name="Blue Team", discord_role_id=5555)
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 6666
+    await team_cog.team_create.callback(team_cog, interaction, name="Blue Team", role=mock_role)
+    interaction.followup.send.assert_awaited()
+    last_call_arg = interaction.followup.send.call_args[0][0]
+    assert "already exists" in last_call_arg
+
+    # 3. Task Cog: Status update on non-existent task
+    interaction.followup.send.reset_mock()
+    await task_cog.task_status.callback(task_cog, interaction, task="NON-EXISTENT", status="completed")
+    interaction.followup.send.assert_awaited()
+    last_call_arg = interaction.followup.send.call_args[0][0]
+    assert "not found" in last_call_arg

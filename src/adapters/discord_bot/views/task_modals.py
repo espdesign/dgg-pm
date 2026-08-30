@@ -1,11 +1,17 @@
+from __future__ import annotations
+
+import logging
 import re
 from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.models import Task
 from src.services.task_service import TaskService
 from src.utils.date_parser import parse_natural_date
+
+logger = logging.getLogger("dgg_pm.views.task_modals")
 
 
 def _extract_user_ids(text: str | None) -> list[int]:
@@ -48,7 +54,9 @@ class TaskNoteModal(discord.ui.Modal):
                 ephemeral=False,
             )
         except Exception as e:
-            await interaction.response.send_message(f"❌ Failed to add note: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"adding note to task '{self.short_id}'", logger, ephemeral=True
+            )
 
 
 class TaskEditModal(discord.ui.Modal):
@@ -155,4 +163,6 @@ class TaskEditModal(discord.ui.Modal):
             if hasattr(interaction.client, "sync_task_thread"):
                 await interaction.client.sync_task_thread(updated_task, sync_title=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Failed to update task details: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"updating details for task '{self.short_id}'", logger, ephemeral=True
+            )

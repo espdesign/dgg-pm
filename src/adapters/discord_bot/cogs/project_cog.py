@@ -1,12 +1,19 @@
+from __future__ import annotations
+
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
+
+logger = logging.getLogger("dgg_pm.cogs.project")
 
 
 class ProjectCog(commands.Cog):
@@ -94,7 +101,7 @@ class ProjectCog(commands.Cog):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to create project: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating project '{name}'", logger, ephemeral=True)
 
     @app_commands.command(
         name="project-setup-forum",
@@ -112,28 +119,33 @@ class ProjectCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True)
-        tags_added, total_tags, err = await setup_forum_tags(forum)
-        if err:
-            await interaction.followup.send(f"❌ Failed to configure tags in <#{forum.id}>: {err}", ephemeral=True)
-            return
+        try:
+            tags_added, total_tags, err = await setup_forum_tags(forum)
+            if err:
+                await interaction.followup.send(f"❌ Failed to configure tags in <#{forum.id}>: {err}", ephemeral=True)
+                return
 
-        embed = discord.Embed(
-            title=f"🏷️ Forum Tags Configured: #{forum.name}",
-            description=(
-                f"Successfully verified and updated tags in <#{forum.id}>!\n\n"
-                f"• **New Tags Added:** `{tags_added}`\n"
-                f"• **Total Available Tags:** `{total_tags}` / 20\n\n"
-                "**Standard Tags Managed:**\n"
-                "• **Status:** `⏳ Not Started`, `🟡 In Progress`, `✅ Completed`\n"
-                "• **Priority:** `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority`\n"
-                "• **Type:** `🐛 Bug`, `✨ Feature`, `🔧 Task`"
-            ),
-            color=discord.Color.green(),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        from src.adapters.discord_bot.menu_manager import menu_manager
+            embed = discord.Embed(
+                title=f"🏷️ Forum Tags Configured: #{forum.name}",
+                description=(
+                    f"Successfully verified and updated tags in <#{forum.id}>!\n\n"
+                    f"• **New Tags Added:** `{tags_added}`\n"
+                    f"• **Total Available Tags:** `{total_tags}` / 20\n\n"
+                    "**Standard Tags Managed:**\n"
+                    "• **Status:** `⏳ Not Started`, `🟡 In Progress`, `✅ Completed`\n"
+                    "• **Priority:** `🔴 High Priority`, `🟡 Normal Priority`, `🟢 Low Priority`\n"
+                    "• **Type:** `🐛 Bug`, `✨ Feature`, `🔧 Task`"
+                ),
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            from src.adapters.discord_bot.menu_manager import menu_manager
 
-        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"configuring forum tags for <#{forum.id}>", logger, ephemeral=True
+            )
 
     async def project_autocomplete(
         self,
@@ -143,13 +155,17 @@ class ProjectCog(commands.Cog):
         """Autocomplete active projects for current guild."""
         if not interaction.guild:
             return []
-        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-        choices = [
-            app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
-            for p in projects
-            if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
-        ]
-        return choices[:25]
+        try:
+            projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            choices = [
+                app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
+                for p in projects
+                if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
+            ]
+            return choices[:25]
+        except Exception as e:
+            logger.exception("Error in project_autocomplete: %s", e)
+            return []
 
     async def team_autocomplete(
         self,
@@ -159,13 +175,17 @@ class ProjectCog(commands.Cog):
         """Autocomplete functional teams for current guild."""
         if not interaction.guild:
             return []
-        teams = await self.team_service.list_teams(interaction.guild.id)
-        choices = [
-            app_commands.Choice(name=t.name, value=t.name)
-            for t in teams
-            if not current or current.lower() in t.name.lower()
-        ]
-        return choices[:25]
+        try:
+            teams = await self.team_service.list_teams(interaction.guild.id)
+            choices = [
+                app_commands.Choice(name=t.name, value=t.name)
+                for t in teams
+                if not current or current.lower() in t.name.lower()
+            ]
+            return choices[:25]
+        except Exception as e:
+            logger.exception("Error in team_autocomplete: %s", e)
+            return []
 
     async def archived_project_autocomplete(
         self,
@@ -175,14 +195,18 @@ class ProjectCog(commands.Cog):
         """Autocomplete archived projects for current guild."""
         if not interaction.guild:
             return []
-        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=True)
-        archived = [p for p in projects if p.is_archived]
-        choices = [
-            app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
-            for p in archived
-            if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
-        ]
-        return choices[:25]
+        try:
+            projects = await self.project_service.list_projects(interaction.guild.id, include_archived=True)
+            archived = [p for p in projects if p.is_archived]
+            choices = [
+                app_commands.Choice(name=f"{p.name} ({p.prefix})", value=p.name)
+                for p in archived
+                if not current or current.lower() in p.name.lower() or current.lower() in p.prefix.lower()
+            ]
+            return choices[:25]
+        except Exception as e:
+            logger.exception("Error in archived_project_autocomplete: %s", e)
+            return []
 
     @app_commands.command(name="project-assign", description="Map a functional team container to a project.")
     @app_commands.describe(
@@ -229,28 +253,33 @@ class ProjectCog(commands.Cog):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to assign team to project: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"assigning team '{team_name}' to project '{project_name}'", logger, ephemeral=True
+            )
 
     @app_commands.command(name="project-list", description="List all projects in this server.")
     async def project_list(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         await interaction.response.defer(ephemeral=True)
-        projects = await self.project_service.list_projects(interaction.guild.id)
-        if not projects:
-            await interaction.followup.send("📁 No active projects found. Use `/project-create` to start one.")
+        try:
+            projects = await self.project_service.list_projects(interaction.guild.id)
+            if not projects:
+                await interaction.followup.send("📁 No active projects found. Use `/project-create` to start one.")
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+                return
+
             from src.adapters.discord_bot.menu_manager import menu_manager
+            from src.adapters.discord_bot.views.project_menu import ProjectActiveListView, build_active_projects_embed
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
-            return
-
-        from src.adapters.discord_bot.menu_manager import menu_manager
-        from src.adapters.discord_bot.views.project_menu import ProjectActiveListView, build_active_projects_embed
-
-        embed = build_active_projects_embed(projects, page=0, total_count=len(projects))
-        view = ProjectActiveListView(projects, self.project_service, self.team_service, self.task_service)
-        await interaction.followup.send(embed=embed, view=view)
-        await menu_manager.register_menu(interaction)
+            embed = build_active_projects_embed(projects, page=0, total_count=len(projects))
+            view = ProjectActiveListView(projects, self.project_service, self.team_service, self.task_service)
+            await interaction.followup.send(embed=embed, view=view)
+            await menu_manager.register_menu(interaction)
+        except Exception as e:
+            await send_interaction_error(interaction, e, "listing projects", logger, ephemeral=True)
 
     @app_commands.command(name="project-archive", description="Archive a project and its associated tasks.")
     @app_commands.describe(project_name="Name of the project to archive")
@@ -260,31 +289,34 @@ class ProjectCog(commands.Cog):
         if not interaction.guild:
             return
         await interaction.response.defer(ephemeral=True)
-        project = await self.project_service.get_by_name(interaction.guild.id, project_name)
-        if not project:
-            await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
-            return
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
 
-        tasks = []
-        if self.task_service:
-            tasks, _ = await self.task_service.list_tasks(
-                guild_id=interaction.guild.id,
-                project_id=project.id,
-                include_archived=False,
-                limit=500,
-            )
+            tasks = []
+            if self.task_service:
+                tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id,
+                    project_id=project.id,
+                    include_archived=False,
+                    limit=500,
+                )
 
-        await self.project_service.archive_project(project.id)
+            await self.project_service.archive_project(project.id)
 
-        if hasattr(self.bot, "sync_task_thread"):
-            for t in tasks:
-                if t.discord_thread_id:
-                    await self.bot.sync_task_thread(t, action="archive")
+            if hasattr(self.bot, "sync_task_thread"):
+                for t in tasks:
+                    if t.discord_thread_id:
+                        await self.bot.sync_task_thread(t, action="archive")
 
-        await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
-        from src.adapters.discord_bot.menu_manager import menu_manager
+            await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
+            from src.adapters.discord_bot.menu_manager import menu_manager
 
-        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"archiving project '{project_name}'", logger, ephemeral=True)
 
     @app_commands.command(name="project-unarchive", description="Restore an archived project and its tasks.")
     @app_commands.describe(project_name="Name of the project to restore")
@@ -294,35 +326,41 @@ class ProjectCog(commands.Cog):
         if not interaction.guild:
             return
         await interaction.response.defer(ephemeral=True)
-        project = await self.project_service.get_by_name(interaction.guild.id, project_name)
-        if not project:
-            await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
-            return
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
 
-        await self.project_service.unarchive_project(project.id)
+            await self.project_service.unarchive_project(project.id)
 
-        if self.task_service and hasattr(self.bot, "sync_task_thread"):
-            restored_tasks, _ = await self.task_service.list_tasks(
-                guild_id=interaction.guild.id,
-                project_id=project.id,
-                include_archived=False,
-                limit=500,
-            )
-            for t in restored_tasks:
-                if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
-                    await self.bot.sync_task_thread(t, action="unarchive")
+            if self.task_service and hasattr(self.bot, "sync_task_thread"):
+                restored_tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id,
+                    project_id=project.id,
+                    include_archived=False,
+                    limit=500,
+                )
+                for t in restored_tasks:
+                    if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
+                        await self.bot.sync_task_thread(t, action="unarchive")
 
-        await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
-        from src.adapters.discord_bot.menu_manager import menu_manager
+            await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
+            from src.adapters.discord_bot.menu_manager import menu_manager
 
-        menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"restoring project '{project_name}'", logger, ephemeral=True)
 
     @app_commands.command(name="project-menu", description="Open interactive Project Management Control Center.")
     async def project_menu(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.menu_manager import menu_manager
-        from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
+        try:
+            from src.adapters.discord_bot.menu_manager import menu_manager
+            from src.adapters.discord_bot.views.project_menu import ProjectMenuView, build_project_menu_embed
 
-        embed = build_project_menu_embed()
-        view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        await menu_manager.register_menu(interaction)
+            embed = build_project_menu_embed()
+            view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await menu_manager.register_menu(interaction)
+        except Exception as e:
+            await send_interaction_error(interaction, e, "opening project menu", logger, ephemeral=True)

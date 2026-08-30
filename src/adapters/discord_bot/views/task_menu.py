@@ -6,6 +6,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed
@@ -175,21 +176,24 @@ class TaskCreateModal(discord.ui.Modal):
                 await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
             elif isinstance(target_chan, discord.TextChannel):
                 msg = await target_chan.send(embed=embed)
-                thread = await msg.create_thread(
-                    name=f"[{task.short_id}] {task.title[:90]}",
-                    auto_archive_duration=10080,
-                )
-                thread_view = TaskActionView(
-                    task_id=task.id,
-                    current_status=task.status,
-                    current_priority=task.priority,
-                    task_service=self.task_service,
-                )
-                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                if task.assignee_discord_id:
-                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                await thread.send(content=thread_intro, view=thread_view)
-                await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
+                try:
+                    thread = await msg.create_thread(
+                        name=f"[{task.short_id}] {task.title[:90]}",
+                        auto_archive_duration=10080,
+                    )
+                    thread_view = TaskActionView(
+                        task_id=task.id,
+                        current_status=task.status,
+                        current_priority=task.priority,
+                        task_service=self.task_service,
+                    )
+                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
+                    if task.assignee_discord_id:
+                        thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
+                    await thread.send(content=thread_intro, view=thread_view)
+                    await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
+                except Exception:
+                    await self.task_service.update_discord_message_ids(task.id, msg.id, None)
             elif isinstance(target_chan, discord.Thread):
                 view = TaskActionView(
                     task_id=task.id,
@@ -211,8 +215,7 @@ class TaskCreateModal(discord.ui.Modal):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            logger.exception("Error creating task via modal: %s", e)
-            await interaction.response.send_message(f"❌ Failed to create task: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating task '{title}'", logger, ephemeral=True)
 
 
 class TaskSelectProjectView(discord.ui.View):

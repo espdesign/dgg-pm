@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from src.domain.enums import TeamRoleType
+from src.domain.exceptions import TeamAlreadyExistsError
 from src.domain.models import Team, TeamMember
 from src.ports.repositories import ITeamRepo
 
@@ -17,7 +18,7 @@ class TeamService:
     ) -> Team:
         existing = await self.team_repo.get_by_name(guild_id, name)
         if existing:
-            raise ValueError(f"Team with name '{name}' already exists in this server.")
+            raise TeamAlreadyExistsError(f"Team with name '{name}' already exists in this server.")
 
         team = Team(
             guild_id=guild_id,

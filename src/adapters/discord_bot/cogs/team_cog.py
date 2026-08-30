@@ -1,11 +1,18 @@
+from __future__ import annotations
+
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.enums import TeamRoleType
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
+
+logger = logging.getLogger("dgg_pm.cogs.team")
 
 
 class TeamCog(commands.Cog):
@@ -57,7 +64,7 @@ class TeamCog(commands.Cog):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to create team: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating team '{name}'", logger, ephemeral=True)
 
     async def team_autocomplete(
         self,
@@ -67,13 +74,17 @@ class TeamCog(commands.Cog):
         """Autocomplete functional teams for current guild."""
         if not interaction.guild:
             return []
-        teams = await self.team_service.list_teams(interaction.guild.id)
-        choices = [
-            app_commands.Choice(name=t.name, value=t.name)
-            for t in teams
-            if not current or current.lower() in t.name.lower()
-        ]
-        return choices[:25]
+        try:
+            teams = await self.team_service.list_teams(interaction.guild.id)
+            choices = [
+                app_commands.Choice(name=t.name, value=t.name)
+                for t in teams
+                if not current or current.lower() in t.name.lower()
+            ]
+            return choices[:25]
+        except Exception as e:
+            logger.exception("Error during team autocomplete: %s", e)
+            return []
 
     @app_commands.command(name="team-assign", description="Assign a Discord member to a team with domain role.")
     @app_commands.describe(
@@ -133,36 +144,44 @@ class TeamCog(commands.Cog):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to assign team member: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"assigning member to team '{team_name}'", logger, ephemeral=True
+            )
 
     @app_commands.command(name="team-list", description="List all functional teams in this server.")
     async def team_list(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
         await interaction.response.defer(ephemeral=True)
-        teams = await self.team_service.list_teams(interaction.guild.id)
-        if not teams:
-            await interaction.followup.send("👥 No teams created yet. Use `/team-create` to set one up.")
+        try:
+            teams = await self.team_service.list_teams(interaction.guild.id)
+            if not teams:
+                await interaction.followup.send("👥 No teams created yet. Use `/team-create` to set one up.")
+                from src.adapters.discord_bot.menu_manager import menu_manager
+
+                menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
+                return
+
+            embed = discord.Embed(title="👥 Server Teams", color=discord.Color.teal())
+            for t in teams:
+                embed.add_field(name=f"**{t.name}**", value=f"Role: <@&{t.discord_role_id}>", inline=False)
+
+            await interaction.followup.send(embed=embed)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
-            menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
-            return
-
-        embed = discord.Embed(title="👥 Server Teams", color=discord.Color.teal())
-        for t in teams:
-            embed.add_field(name=f"**{t.name}**", value=f"Role: <@&{t.discord_role_id}>", inline=False)
-
-        await interaction.followup.send(embed=embed)
-        from src.adapters.discord_bot.menu_manager import menu_manager
-
-        await menu_manager.register_menu(interaction)
+            await menu_manager.register_menu(interaction)
+        except Exception as e:
+            await send_interaction_error(interaction, e, "listing teams", logger, ephemeral=True)
 
     @app_commands.command(name="team-menu", description="Open interactive Team Management Control Center.")
     async def team_menu(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.menu_manager import menu_manager
-        from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
+        try:
+            from src.adapters.discord_bot.menu_manager import menu_manager
+            from src.adapters.discord_bot.views.team_menu import TeamMenuView, build_team_menu_embed
 
-        embed = build_team_menu_embed()
-        view = TeamMenuView(self.team_service, self.project_service, self.task_service)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        await menu_manager.register_menu(interaction)
+            embed = build_team_menu_embed()
+            view = TeamMenuView(self.team_service, self.project_service, self.task_service)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await menu_manager.register_menu(interaction)
+        except Exception as e:
+            await send_interaction_error(interaction, e, "opening team menu", logger, ephemeral=True)

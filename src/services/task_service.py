@@ -13,15 +13,19 @@ from src.domain.enums import (
     TaskHistoryAction,
     TaskStatus,
 )
+from src.domain.exceptions import (
+    ProjectNotFoundError,
+    StaleVersionError,
+    TaskNotFoundError,
+    ValidationError,
+)
 from src.domain.models import Task, TaskHistory
 from src.ports.repositories import ITaskRepo
 from src.ports.unit_of_work import IUnitOfWork
 from src.services.outbox_service import OutboxService
 from src.services.project_service import ProjectService
 
-
-class StaleVersionError(Exception):
-    """Raised when an optimistic concurrency update fails due to a version mismatch."""
+__all__ = ["StaleVersionError", "TaskService"]
 
 
 class TaskService:
@@ -65,7 +69,7 @@ class TaskService:
         if project_name and not resolved_project_id:
             project = await self.project_service.get_by_name(guild_id, project_name)
             if not project:
-                raise ValueError(f"Project '{project_name}' was not found in this server.")
+                raise ProjectNotFoundError(f"Project '{project_name}' was not found in this server.")
             resolved_project_id = project.id
 
         clean_watchers = list(set(watchers or []))
@@ -148,7 +152,7 @@ class TaskService:
     ) -> Task:
         current_task = await self.task_repo.get_by_id(task_id)
         if not current_task:
-            raise ValueError(f"Task with ID {task_id} does not exist.")
+            raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
 
         old_status = current_task.status
         completed_at = datetime.now(UTC) if new_status == TaskStatus.COMPLETED else None
@@ -213,7 +217,7 @@ class TaskService:
     ) -> TaskHistory:
         task = await self.task_repo.get_by_id(task_id)
         if not task:
-            raise ValueError(f"Task with ID {task_id} does not exist.")
+            raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
 
         async with self._transaction() as session:
             history = TaskHistory(
@@ -252,7 +256,7 @@ class TaskService:
     ) -> Task:
         current_task = await self.task_repo.get_by_id(task_id)
         if not current_task:
-            raise ValueError(f"Task with ID {task_id} does not exist.")
+            raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
 
         old_assignee = current_task.assignee_discord_id
         if old_assignee == new_assignee_id:
@@ -267,7 +271,7 @@ class TaskService:
                 session=session,
             )
             if not updated_task:
-                raise ValueError(f"Failed to update assignee for task {task_id}.")
+                raise ValidationError(f"Failed to update assignee for task {task_id}.")
 
             note = f"Assigned to <@{new_assignee_id}>" if new_assignee_id else "Removed assignee (unassigned)"
             history = TaskHistory(
@@ -305,7 +309,7 @@ class TaskService:
     ) -> Task:
         current_task = await self.task_repo.get_by_id(task_id)
         if not current_task:
-            raise ValueError(f"Task with ID {task_id} does not exist.")
+            raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
 
         old_priority = current_task.priority
         if old_priority == new_priority:
@@ -318,7 +322,7 @@ class TaskService:
                 session=session,
             )
             if not updated_task:
-                raise ValueError(f"Failed to update priority for task {task_id}.")
+                raise ValidationError(f"Failed to update priority for task {task_id}.")
 
             history = TaskHistory(
                 task_id=task_id,
@@ -358,7 +362,7 @@ class TaskService:
     ) -> Task:
         current_task = await self.task_repo.get_by_id(task_id)
         if not current_task:
-            raise ValueError(f"Task with ID {task_id} does not exist.")
+            raise TaskNotFoundError(f"Task with ID {task_id} does not exist.")
 
         async with self._transaction() as session:
             updated_task = await self.task_repo.update_task(
@@ -371,7 +375,7 @@ class TaskService:
                 session=session,
             )
             if not updated_task:
-                raise ValueError(f"Failed to update task {task_id}.")
+                raise ValidationError(f"Failed to update task {task_id}.")
 
             # If due_at changed, reschedule outbox reminders
             if clear_due_at:

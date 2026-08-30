@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from src.domain.exceptions import ProjectAlreadyExistsError, ProjectNotFoundError
 from src.domain.models import Project, ProjectTeam
 from src.ports.repositories import IProjectRepo
 
@@ -34,12 +35,12 @@ class ProjectService:
         # Check name uniqueness in guild
         existing_name = await self.project_repo.get_by_name(guild_id, name)
         if existing_name:
-            raise ValueError(f"Project with name '{name}' already exists in this server.")
+            raise ProjectAlreadyExistsError(f"Project with name '{name}' already exists in this server.")
 
         assigned_prefix = (prefix or self.derive_default_prefix(name)).upper()
         existing_prefix = await self.project_repo.get_by_prefix(guild_id, assigned_prefix)
         if existing_prefix:
-            raise ValueError(
+            raise ProjectAlreadyExistsError(
                 f"Project prefix '{assigned_prefix}' is already in use by project '{existing_prefix.name}'."
             )
 
@@ -68,7 +69,10 @@ class ProjectService:
 
     async def allocate_next_short_id(self, project_id: UUID, session: Any = None) -> tuple[int, str]:
         """Atomically increments next_task_number and returns (task_number, short_id)."""
-        task_num, prefix = await self.project_repo.increment_task_number_atomic(project_id, session=session)
+        try:
+            task_num, prefix = await self.project_repo.increment_task_number_atomic(project_id, session=session)
+        except ValueError as e:
+            raise ProjectNotFoundError(f"Project with ID '{project_id}' not found.") from e
         short_id = f"{prefix}-{task_num}"
         return task_num, short_id
 

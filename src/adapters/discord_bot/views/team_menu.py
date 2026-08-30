@@ -3,6 +3,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.domain.enums import TeamRoleType
 from src.domain.models import Team
 from src.services.project_service import ProjectService
@@ -51,8 +52,7 @@ class TeamCreateModalWithName(discord.ui.Modal):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            logger.exception("Error creating team via modal: %s", e)
-            await interaction.response.send_message(f"❌ Failed to create team: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating team '{name}'", logger, ephemeral=True)
 
 
 class TeamCreateRoleSelectView(discord.ui.View):
@@ -249,8 +249,9 @@ class TeamAssignMemberSelectView(discord.ui.View):
             )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
-            logger.exception("Error assigning team member: %s", e)
-            await interaction.response.send_message(f"❌ Failed to assign team member: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"assigning user to team '{team.name}'", logger, ephemeral=True
+            )
 
 
 class TeamRosterDetailView(discord.ui.View):

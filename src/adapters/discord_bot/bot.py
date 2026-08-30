@@ -9,6 +9,7 @@ from src.adapters.discord_bot.cogs.project_cog import ProjectCog
 from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
 from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
@@ -258,11 +259,7 @@ class DggPmBot(commands.Bot):
                 await self.sync_task_thread(updated_task)
                 return
             except Exception as e:
-                logger.exception("Error handling dynamic unassign: %s", e)
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(f"❌ Failed to unassign task: {e}", ephemeral=True)
-                else:
-                    await interaction.followup.send(f"❌ Failed to unassign task: {e}", ephemeral=True)
+                await send_interaction_error(interaction, e, "unassigning task", logger, ephemeral=True)
                 return
 
         if action == "priority":
@@ -280,11 +277,7 @@ class DggPmBot(commands.Bot):
                     await self.sync_task_thread(updated_task)
                     return
                 except Exception as e:
-                    logger.exception("Error handling dynamic priority change: %s", e)
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(f"❌ Failed to update priority: {e}", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Failed to update priority: {e}", ephemeral=True)
+                    await send_interaction_error(interaction, e, "updating task priority", logger, ephemeral=True)
                     return
 
         if action == "assignee":
@@ -302,11 +295,7 @@ class DggPmBot(commands.Bot):
                     await self.sync_task_thread(updated_task)
                     return
                 except Exception as e:
-                    logger.exception("Error handling dynamic assignee change: %s", e)
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(f"❌ Failed to update assignee: {e}", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Failed to update assignee: {e}", ephemeral=True)
+                    await send_interaction_error(interaction, e, "updating task assignee", logger, ephemeral=True)
                     return
 
         if action == "due":
@@ -324,11 +313,7 @@ class DggPmBot(commands.Bot):
                     await self.sync_root_task_message(updated_task)
                     return
                 except Exception as e:
-                    logger.exception("Error handling dynamic due date change: %s", e)
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message(f"❌ Failed to update due date: {e}", ephemeral=True)
-                    else:
-                        await interaction.followup.send(f"❌ Failed to update due date: {e}", ephemeral=True)
+                    await send_interaction_error(interaction, e, "updating task due date", logger, ephemeral=True)
                     return
 
         if action == "watchers":
@@ -344,11 +329,7 @@ class DggPmBot(commands.Bot):
                 await self.sync_root_task_message(updated_task)
                 return
             except Exception as e:
-                logger.exception("Error handling dynamic watchers change: %s", e)
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(f"❌ Failed to update watchers: {e}", ephemeral=True)
-                else:
-                    await interaction.followup.send(f"❌ Failed to update watchers: {e}", ephemeral=True)
+                await send_interaction_error(interaction, e, "updating task watchers", logger, ephemeral=True)
                 return
 
         target_status = TaskStatus.IN_PROGRESS if action in ("start", "reopen") else TaskStatus.COMPLETED
@@ -372,15 +353,13 @@ class DggPmBot(commands.Bot):
                 await self.sync_root_task_message(latest_task)
                 await self.sync_task_thread(latest_task)
                 await interaction.followup.send(
-                    "⚠️ This task was already updated by another team member. The card has been refreshed.",
+                    "⚠️ This task was already modified by another team member. The card has been refreshed.",
                     ephemeral=True,
                 )
             else:
                 if not interaction.response.is_done():
                     await interaction.response.send_message("❌ Task no longer exists.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ Task no longer exists.", ephemeral=True)
         except Exception as e:
-            logger.exception("Error handling dynamic task button: %s", e)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Failed to process button action: {e}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"❌ Failed to process button action: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, "processing task button action", logger, ephemeral=True)

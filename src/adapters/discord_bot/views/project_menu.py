@@ -6,6 +6,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import setup_forum_tags
 from src.domain.enums import TaskStatus
 from src.domain.models import Project, Team
@@ -129,8 +130,7 @@ class ProjectCreateModal(discord.ui.Modal):
 
             menu_manager.schedule_toast_dismissal(interaction, delay=60.0)
         except Exception as e:
-            logger.exception("Error creating project via modal: %s", e)
-            await interaction.response.send_message(f"❌ Failed to create project: {e}", ephemeral=True)
+            await send_interaction_error(interaction, e, f"creating project '{name}'", logger, ephemeral=True)
 
 
 class ProjectChannelSelectView(discord.ui.View):
@@ -464,8 +464,9 @@ class ProjectArchiveConfirmView(discord.ui.View):
             )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
-            logger.exception("Failed to archive project: %s", e)
-            await interaction.response.send_message(f"❌ Failed to archive project: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"archiving project '{self.project.name}'", logger, ephemeral=True
+            )
 
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
@@ -533,8 +534,9 @@ class ProjectRestoreConfirmView(discord.ui.View):
             )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
-            logger.exception("Failed to restore project: %s", e)
-            await interaction.response.send_message(f"❌ Failed to restore project: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"restoring project '{self.project.name}'", logger, ephemeral=True
+            )
 
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
@@ -1022,8 +1024,13 @@ class ProjectAssignTimelineModal(discord.ui.Modal):
             view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
-            logger.exception("Error assigning team to project via modal: %s", e)
-            await interaction.response.send_message(f"❌ Failed to assign team: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction,
+                e,
+                f"assigning team '{self.team.name}' to project '{self.project.name}'",
+                logger,
+                ephemeral=True,
+            )
 
 
 class ProjectAssignTeamView(discord.ui.View):
@@ -1159,8 +1166,9 @@ class ProjectAssignTeamView(discord.ui.View):
             view = ProjectMenuView(self.project_service, self.team_service, self.task_service)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
-            logger.exception("Error assigning team to project: %s", e)
-            await interaction.response.send_message(f"❌ Failed to assign team: {e}", ephemeral=True)
+            await send_interaction_error(
+                interaction, e, f"assigning team '{team.name}' to project '{proj.name}'", logger, ephemeral=True
+            )
 
     async def _on_timeline_clicked(self, interaction: discord.Interaction) -> None:
         proj = self._get_selected_project()
