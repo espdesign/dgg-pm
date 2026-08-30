@@ -515,6 +515,61 @@ class PmHubView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
+        label="Tech Tree",
+        emoji="🌲",
+        style=discord.ButtonStyle.primary,
+        row=0,
+        custom_id="pm_hub:tech_tree",
+    )
+    async def tech_tree_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not interaction.guild:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        if not projects:
+            await interaction.response.send_message("ℹ️ No active projects found in this server.", ephemeral=True)
+            return
+
+        channel_id = interaction.channel.id if interaction.channel else None
+        parent_id = getattr(interaction.channel, "parent_id", None)
+        channel_ids = {cid for cid in (channel_id, parent_id) if cid}
+        channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
+
+        target_project = None
+        if len(channel_projects) == 1:
+            target_project = channel_projects[0]
+        elif len(projects) == 1:
+            target_project = projects[0]
+
+        if target_project:
+            await interaction.response.defer(ephemeral=True)
+            buf = await self.task_service.render_project_tree(
+                guild_id=interaction.guild.id,
+                project_id=target_project.id,
+                orientation="lr",
+            )
+            file = discord.File(fp=buf, filename="tech_tree.png")
+            embed = discord.Embed(
+                title=f"🌲 Tech Tree: [{target_project.prefix}] {target_project.name}",
+                description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
+                color=discord.Color.from_rgb(16, 152, 247),
+            )
+            embed.set_image(url="attachment://tech_tree.png")
+            from src.adapters.discord_bot.views.tree_view import TechTreeViewer
+
+            view = TechTreeViewer(self.task_service, target_project, current_orientation="lr")
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+            return
+
+        from src.adapters.discord_bot.views.tree_view import TechTreeProjectSelectView
+
+        view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
+        await interaction.response.send_message(
+            "🌲 Choose a project to view its Tech Tree visualization:",
+            view=view,
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
         label="My Settings",
         emoji="⚙️",
         style=discord.ButtonStyle.secondary,

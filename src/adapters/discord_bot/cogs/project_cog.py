@@ -463,6 +463,56 @@ class ProjectCog(commands.Cog):
         except Exception as e:
             await send_interaction_error(interaction, e, f"restoring project '{project_name}'", logger, ephemeral=True)
 
+    @app_commands.command(name="project-tree", description="Render tech-tree dependency graph for a project.")
+    @app_commands.describe(
+        project_name="Name of the project to visualize",
+        orientation="Layout orientation: horizontal (lr) or vertical (tb)",
+    )
+    @app_commands.choices(
+        orientation=[
+            app_commands.Choice(name="Horizontal (Left to Right)", value="lr"),
+            app_commands.Choice(name="Vertical (Top to Bottom)", value="tb"),
+        ]
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    async def project_tree(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        orientation: app_commands.Choice[str] | None = None,
+    ) -> None:
+        if not interaction.guild or not self.task_service:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            orient_val = orientation.value if orientation else "lr"
+            buf = await self.task_service.render_project_tree(
+                guild_id=interaction.guild.id,
+                project_id=project.id,
+                orientation=orient_val,
+            )
+            file = discord.File(fp=buf, filename="tech_tree.png")
+            orient_label = "Horizontal (Left to Right)" if orient_val == "lr" else "Vertical (Top to Bottom)"
+            embed = discord.Embed(
+                title=f"🌲 Tech Tree: [{project.prefix}] {project.name}",
+                description=f"Showing dependency graph in **{orient_label}** layout.",
+                color=discord.Color.from_rgb(16, 152, 247),
+            )
+            embed.set_image(url="attachment://tech_tree.png")
+            from src.adapters.discord_bot.views.tree_view import TechTreeViewer
+
+            view = TechTreeViewer(self.task_service, project, current_orientation=orient_val)
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"rendering tech tree for '{project_name}'", logger, ephemeral=True
+            )
+
     @app_commands.command(name="project-menu", description="Open interactive Project Management Control Center.")
     async def project_menu(self, interaction: discord.Interaction) -> None:
         try:

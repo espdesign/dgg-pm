@@ -49,8 +49,8 @@ async def test_project_menu_and_modal(services):
 
     # 1. Test ProjectMenuView and embed
     view = ProjectMenuView(proj_srv, team_srv, task_service=services["task"])
-    # 7 buttons: New Project, Active Projects, Set Squad Role, Set Lead, Archive, Restore, Hub
-    assert len(view.children) == 7
+    # 8 buttons: New Project, Active Projects, Set Squad Role, Set Lead, Archive, Restore, Tech Tree, Hub
+    assert len(view.children) == 8
 
     # Test clicking New Project opens ProjectChannelSelectView
     new_proj_interaction = MagicMock(spec=discord.Interaction)
@@ -449,7 +449,7 @@ async def test_pm_hub_navigation(services):
     hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
     welcome_embed = build_hub_welcome_embed()
     assert "Control Hub" in welcome_embed.title
-    assert len(hub_view.children) == 5  # New Task, Task Board, Projects, My Settings, Guides
+    assert len(hub_view.children) == 6  # New Task, Task Board, Projects, Tech Tree, My Settings, Guides
 
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock()

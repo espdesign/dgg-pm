@@ -14,6 +14,7 @@ from src.adapters.db.tables import (
     OutboxEventTable,
     ProjectTable,
     ProjectTeamTable,
+    TaskDependencyTable,
     TaskHistoryTable,
     TaskTable,
     TaskWatcherTable,
@@ -483,6 +484,83 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
                 )
                 for r in rows
             ]
+
+    async def add_dependency(
+        self, task_id: UUID, depends_on_task_id: UUID, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._get_session(session) as sess:
+            exists_stmt = select(TaskDependencyTable).where(
+                TaskDependencyTable.task_id == task_id,
+                TaskDependencyTable.depends_on_task_id == depends_on_task_id,
+            )
+            res = await sess.execute(exists_stmt)
+            if res.scalar_one_or_none():
+                return True
+            row = TaskDependencyTable(
+                task_id=task_id,
+                depends_on_task_id=depends_on_task_id,
+                created_at=datetime.now(UTC),
+            )
+            sess.add(row)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
+            return True
+
+    async def remove_dependency(
+        self, task_id: UUID, depends_on_task_id: UUID, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._get_session(session) as sess:
+            stmt = delete(TaskDependencyTable).where(
+                TaskDependencyTable.task_id == task_id,
+                TaskDependencyTable.depends_on_task_id == depends_on_task_id,
+            )
+            res = await sess.execute(stmt)
+            if self._should_commit(session):
+                await sess.commit()
+            else:
+                await sess.flush()
+            return res.rowcount > 0
+
+    async def get_prerequisite_ids(self, task_id: UUID, session: AsyncSession | None = None) -> list[UUID]:
+        async with self._get_session(session) as sess:
+            stmt = select(TaskDependencyTable.depends_on_task_id).where(TaskDependencyTable.task_id == task_id)
+            res = await sess.execute(stmt)
+            return list(res.scalars().all())
+
+    async def get_dependent_ids(self, task_id: UUID, session: AsyncSession | None = None) -> list[UUID]:
+        async with self._get_session(session) as sess:
+            stmt = select(TaskDependencyTable.task_id).where(TaskDependencyTable.depends_on_task_id == task_id)
+            res = await sess.execute(stmt)
+            return list(res.scalars().all())
+
+    async def get_dependencies_for_tasks(
+        self, task_ids: list[UUID], session: AsyncSession | None = None
+    ) -> list[tuple[UUID, UUID]]:
+        if not task_ids:
+            return []
+        async with self._get_session(session) as sess:
+            stmt = select(TaskDependencyTable.task_id, TaskDependencyTable.depends_on_task_id).where(
+                or_(
+                    TaskDependencyTable.task_id.in_(task_ids),
+                    TaskDependencyTable.depends_on_task_id.in_(task_ids),
+                )
+            )
+            res = await sess.execute(stmt)
+            return [(row[0], row[1]) for row in res.all()]
+
+    async def get_all_guild_dependencies(
+        self, guild_id: int, session: AsyncSession | None = None
+    ) -> list[tuple[UUID, UUID]]:
+        async with self._get_session(session) as sess:
+            stmt = (
+                select(TaskDependencyTable.task_id, TaskDependencyTable.depends_on_task_id)
+                .join(TaskTable, TaskTable.id == TaskDependencyTable.task_id)
+                .where(TaskTable.guild_id == guild_id)
+            )
+            res = await sess.execute(stmt)
+            return [(row[0], row[1]) for row in res.all()]
 
 
 class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):

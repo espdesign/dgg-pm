@@ -94,14 +94,26 @@ class TaskActionView(discord.ui.View):
         )
         self.add_item(self.edit_btn)
 
-        self.unassign_btn = discord.ui.Button(
-            label="Unassign",
-            emoji="🚫",
+        self.deps_btn = discord.ui.Button(
+            label="Dependencies",
+            emoji="🔗",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"task:unassign:{task_id}",
+            custom_id=f"task:deps:{task_id}",
             row=0,
         )
-        self.add_item(self.unassign_btn)
+        self.add_item(self.deps_btn)
+
+        if current_status == TaskStatus.COMPLETED:
+            self.unassign_btn = discord.ui.Button(
+                label="Unassign",
+                emoji="🚫",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"task:unassign:{task_id}",
+                row=0,
+            )
+            self.add_item(self.unassign_btn)
+        else:
+            self.unassign_btn = None
 
         # Row 1: Priority Dropdown
         priority_options = [

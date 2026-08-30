@@ -818,6 +818,98 @@ class TaskCog(commands.Cog):
         except Exception as e:
             await send_interaction_error(interaction, e, "listing tasks", logger, ephemeral=True)
 
+    @app_commands.command(
+        name="task-depend",
+        description="Add a prerequisite dependency: this task requires another task to finish first.",
+    )
+    @app_commands.describe(
+        task="The dependent task that is blocked (e.g. INF-2)",
+        depends_on="The prerequisite task that must finish first (e.g. INF-1)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete, depends_on=task_autocomplete)
+    async def task_depend(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        depends_on: str,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            target_task = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not target_task:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, target_task)
+
+            await self.task_service.add_dependency(
+                guild_id=interaction.guild.id,
+                task_short_id=task,
+                depends_on_short_id=depends_on,
+                actor_discord_id=interaction.user.id,
+            )
+            await interaction.followup.send(
+                f"🔗 Linked dependency: **`[{task}]`** now depends on **`[{depends_on}]`** finishing first.",
+                ephemeral=True,
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"linking dependency for '{task}'", logger, ephemeral=True)
+
+    @app_commands.command(
+        name="task-undepend",
+        description="Remove a prerequisite dependency from a task.",
+    )
+    @app_commands.describe(
+        task="The dependent task (e.g. INF-2)",
+        depends_on="The prerequisite task to unblock/unlink (e.g. INF-1)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete, depends_on=task_autocomplete)
+    async def task_undepend(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        depends_on: str,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            target_task = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not target_task:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            if self.auth_service:
+                await self.auth_service.require_task_mutation(interaction.user, target_task)
+
+            removed = await self.task_service.remove_dependency(
+                guild_id=interaction.guild.id,
+                task_short_id=task,
+                depends_on_short_id=depends_on,
+                actor_discord_id=interaction.user.id,
+            )
+            if removed:
+                await interaction.followup.send(
+                    f"🔓 Unlinked dependency: **`[{task}]`** no longer depends on **`[{depends_on}]`**.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    f"ℹ️ **`[{task}]`** did not depend on **`[{depends_on}]`**.",
+                    ephemeral=True,
+                )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"unlinking dependency for '{task}'", logger, ephemeral=True)
+
     @app_commands.command(name="task-menu", description="Open interactive Task Operations Control Center.")
     async def task_menu(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:

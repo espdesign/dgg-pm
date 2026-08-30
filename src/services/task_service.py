@@ -1,5 +1,5 @@
-from __future__ import annotations
-
+import io
+import re
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -24,8 +24,48 @@ from src.ports.repositories import ITaskRepo
 from src.ports.unit_of_work import IUnitOfWork
 from src.services.outbox_service import OutboxService
 from src.services.project_service import ProjectService
+from src.services.tree_render import render_tree
 
-__all__ = ["StaleVersionError", "TaskService"]
+__all__ = ["StaleVersionError", "TaskService", "parse_inline_dependencies"]
+
+
+def parse_inline_dependencies(text: str | None) -> list[str]:
+    """Extracts task keys from phrases like 'Requires: #INF-1, INF-2' or 'Blocked by: INF-3'."""
+    if not text:
+        return []
+    keys: list[str] = []
+    pattern = r"(?:requires|depends\s+on|blocked\s+by|after)[:\s]+([A-Za-z0-9_#,\s-]+?)(?:\.|\n|$)"
+    matches = re.finditer(pattern, text, re.IGNORECASE)
+    for m in matches:
+        raw_items = m.group(1).split(",")
+        for item in raw_items:
+            clean = item.strip().lstrip("#").strip().upper()
+            if clean and "-" in clean and len(clean) <= 20:
+                keys.append(clean)
+    return list(dict.fromkeys(keys))
+
+
+def _detect_cycle(edges: list[tuple[UUID, UUID]], new_edge: tuple[UUID, UUID]) -> bool:
+    """Checks if adding new_edge (dependent_id, prereq_id) creates a cycle in the DAG."""
+    dependent, prereq = new_edge
+    if dependent == prereq:
+        return True
+
+    adj: dict[UUID, list[UUID]] = {}
+    for src, dst in edges:
+        adj.setdefault(src, []).append(dst)
+    adj.setdefault(dependent, []).append(prereq)
+
+    visited: set[UUID] = set()
+    queue: list[UUID] = [prereq]
+    while queue:
+        curr = queue.pop(0)
+        if curr == dependent:
+            return True
+        if curr not in visited:
+            visited.add(curr)
+            queue.extend(adj.get(curr, []))
+    return False
 
 
 class TaskService:
@@ -63,6 +103,7 @@ class TaskService:
         body: str | None = None,
         watchers: list[int] | None = None,
         metadata_json: dict[str, Any] | None = None,
+        prerequisite_short_ids: list[str] | None = None,
     ) -> Task:
         # Resolve project if project_name given
         resolved_project_id = project_id
@@ -139,6 +180,21 @@ class TaskService:
                 },
                 session=session,
             )
+
+        # Link any prerequisites specified explicitly or found in body tags
+        target_prereqs = list(prerequisite_short_ids or [])
+        if not target_prereqs and saved_task.body:
+            target_prereqs = parse_inline_dependencies(saved_task.body)
+        for prereq_key in target_prereqs:
+            try:
+                await self.add_dependency(
+                    guild_id=guild_id,
+                    task_short_id=saved_task.short_id,
+                    depends_on_short_id=prereq_key,
+                    actor_discord_id=creator_discord_id,
+                )
+            except Exception:
+                pass
 
         return saved_task
 
@@ -526,3 +582,149 @@ class TaskService:
 
     async def get_history(self, task_id: UUID) -> list[TaskHistory]:
         return await self.task_repo.get_history(task_id)
+
+    async def add_dependency(
+        self,
+        guild_id: int,
+        task_short_id: str,
+        depends_on_short_id: str,
+        actor_discord_id: int | None = None,
+    ) -> bool:
+        """Adds a dependency indicating that task_short_id depends on depends_on_short_id."""
+        task = await self.get_by_short_id(guild_id, task_short_id)
+        if not task:
+            raise TaskNotFoundError(f"Task '{task_short_id}' was not found in this server.")
+
+        depends_on_task = await self.get_by_short_id(guild_id, depends_on_short_id)
+        if not depends_on_task:
+            raise TaskNotFoundError(f"Prerequisite task '{depends_on_short_id}' was not found in this server.")
+
+        if task.id == depends_on_task.id:
+            raise ValidationError("A task cannot depend on itself.")
+
+        # Cycle detection
+        guild_deps = await self.task_repo.get_all_guild_dependencies(guild_id)
+        if _detect_cycle(guild_deps, (task.id, depends_on_task.id)):
+            raise ValidationError(
+                f"Cannot add dependency: '{depends_on_short_id}' already directly or indirectly "
+                f"depends on '{task_short_id}', which would create a circular loop."
+            )
+
+        async with self._transaction() as session:
+            res = await self.task_repo.add_dependency(task.id, depends_on_task.id, session=session)
+            if actor_discord_id:
+                history = TaskHistory(
+                    task_id=task.id,
+                    actor_discord_id=actor_discord_id,
+                    action=TaskHistoryAction.UPDATED,
+                    notes=f"Added prerequisite dependency on {depends_on_short_id}",
+                )
+                await self.task_repo.add_history(history, session=session)
+            return res
+
+    async def remove_dependency(
+        self,
+        guild_id: int,
+        task_short_id: str,
+        depends_on_short_id: str,
+        actor_discord_id: int | None = None,
+    ) -> bool:
+        """Removes a dependency between task_short_id and depends_on_short_id."""
+        task = await self.get_by_short_id(guild_id, task_short_id)
+        if not task:
+            raise TaskNotFoundError(f"Task '{task_short_id}' was not found in this server.")
+
+        depends_on_task = await self.get_by_short_id(guild_id, depends_on_short_id)
+        if not depends_on_task:
+            raise TaskNotFoundError(f"Prerequisite task '{depends_on_short_id}' was not found in this server.")
+
+        async with self._transaction() as session:
+            res = await self.task_repo.remove_dependency(task.id, depends_on_task.id, session=session)
+            if actor_discord_id and res:
+                history = TaskHistory(
+                    task_id=task.id,
+                    actor_discord_id=actor_discord_id,
+                    action=TaskHistoryAction.UPDATED,
+                    notes=f"Removed prerequisite dependency on {depends_on_short_id}",
+                )
+                await self.task_repo.add_history(history, session=session)
+            return res
+
+    async def get_task_dependencies(self, task_id: UUID) -> tuple[list[Task], list[Task]]:
+        """Returns (prerequisites, dependents) for a given task."""
+        prereq_ids = await self.task_repo.get_prerequisite_ids(task_id)
+        dependent_ids = await self.task_repo.get_dependent_ids(task_id)
+
+        prereqs = []
+        for pid in prereq_ids:
+            t = await self.task_repo.get_by_id(pid)
+            if t:
+                prereqs.append(t)
+
+        dependents = []
+        for did in dependent_ids:
+            t = await self.task_repo.get_by_id(did)
+            if t:
+                dependents.append(t)
+
+        return prereqs, dependents
+
+    async def get_project_tree_data(
+        self, guild_id: int, project_id: UUID
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+        tasks, _ = await self.task_repo.list_tasks(
+            guild_id=guild_id,
+            project_id=project_id,
+            include_archived=False,
+            limit=500,
+        )
+        if not tasks:
+            return [], []
+
+        task_map = {t.id: t for t in tasks}
+        task_ids = list(task_map.keys())
+        deps = await self.task_repo.get_dependencies_for_tasks(task_ids)
+
+        prereqs_map: dict[UUID, list[UUID]] = {t.id: [] for t in tasks}
+        edges: list[tuple[str, str]] = []
+
+        for dependent_id, prereq_id in deps:
+            if dependent_id in prereqs_map and prereq_id in task_map:
+                prereqs_map[dependent_id].append(prereq_id)
+                edges.append((task_map[prereq_id].short_id, task_map[dependent_id].short_id))
+
+        nodes: list[dict[str, Any]] = []
+        for t in tasks:
+            prereq_tasks = [task_map[pid] for pid in prereqs_map[t.id] if pid in task_map]
+            all_prereqs_complete = all(p.is_completed for p in prereq_tasks)
+
+            if t.is_completed:
+                state = "complete"
+            elif t.status == TaskStatus.IN_PROGRESS:
+                state = "active"
+            elif t.metadata_json.get("blocked") is True:
+                state = "blocked"
+            elif not all_prereqs_complete:
+                state = "locked"
+            else:
+                state = "available"
+
+            nodes.append(
+                {
+                    "key": t.short_id,
+                    "short_id": f"[{t.short_id}]",
+                    "name": t.title,
+                    "description": t.body or "",
+                    "state": state,
+                    "assignee": str(t.assignee_discord_id) if t.assignee_discord_id else None,
+                    "priority": t.priority.value,
+                }
+            )
+
+        return nodes, edges
+
+    async def render_project_tree(self, guild_id: int, project_id: UUID, orientation: str = "lr") -> io.BytesIO:
+        project = await self.project_service.get_by_id(project_id)
+        project_name = project.name if project else "Project Tech Tree"
+        nodes, edges = await self.get_project_tree_data(guild_id, project_id)
+        return render_tree(nodes, edges, title=f"Tech Tree: {project_name}", mode=orientation)

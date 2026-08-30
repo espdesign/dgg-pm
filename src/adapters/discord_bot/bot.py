@@ -9,6 +9,7 @@ from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.hub_menu import PmHubView
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
+from src.adapters.discord_bot.views.task_dependency_view import TaskDependencyView, build_dependency_embed
 from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
@@ -314,6 +315,31 @@ class DggPmBot(commands.Bot):
             )
             await interaction.response.send_modal(modal)
             return
+
+        if action == "deps":
+            try:
+                sibling_tasks = []
+                if task.project_id:
+                    sibling_tasks, _ = await self.task_service.list_tasks(
+                        guild_id=interaction.guild.id,
+                        project_id=task.project_id,
+                        include_archived=False,
+                        limit=50,
+                    )
+                prerequisites, dependents = await self.task_service.get_task_dependencies(task_id)
+                view = TaskDependencyView(
+                    task_service=self.task_service,
+                    task=task,
+                    sibling_tasks=sibling_tasks,
+                    prerequisites=prerequisites,
+                    dependents=dependents,
+                )
+                embed = build_dependency_embed(task, prerequisites, dependents)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                return
+            except Exception as e:
+                await send_interaction_error(interaction, e, "opening task dependencies", logger, ephemeral=True)
+                return
 
         if action == "unassign":
             try:

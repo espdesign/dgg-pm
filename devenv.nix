@@ -82,6 +82,10 @@
       python scripts/clear_db.py --seed
     '';
 
+    seed-tree.exec = ''
+      python scripts/seed_tech_tree_forum.py
+    '';
+
     db-shell.exec = ''
       psql -h 127.0.0.1 -U postgres -d dgg_pm
     '';
@@ -114,6 +118,7 @@
     echo "   - db-init      : Initialize PostgreSQL database schema"
     echo "   - db-clear     : Wipe/truncate PostgreSQL database tables"
     echo "   - db-reset     : Wipe database tables and re-seed test data"
+    echo "   - seed-tree    : Seed interactive tech-tree test project & forum"
     echo "   - db-shell     : Open interactive psql shell"
     echo "   - sync         : Sync dependencies with uv"
     echo "   - devenv up    : Start background services (PostgreSQL, App)"

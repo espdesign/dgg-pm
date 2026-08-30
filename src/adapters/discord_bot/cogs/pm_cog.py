@@ -755,6 +755,96 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         except Exception as e:
             await send_interaction_error(interaction, e, f"updating watchers for task '{task}'", logger, ephemeral=True)
 
+    @task_group.command(
+        name="depend",
+        description="Add a prerequisite dependency: this task requires another task to finish first.",
+    )
+    @app_commands.describe(
+        task="The dependent task that is blocked (e.g. INF-2)",
+        depends_on="The prerequisite task that must finish first (e.g. INF-1)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete, depends_on=task_autocomplete)
+    async def task_depend(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        depends_on: str,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            target_task = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not target_task:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            await self.auth_service.require_task_mutation(interaction.user, target_task)
+
+            await self.task_service.add_dependency(
+                guild_id=interaction.guild.id,
+                task_short_id=task,
+                depends_on_short_id=depends_on,
+                actor_discord_id=interaction.user.id,
+            )
+            await interaction.followup.send(
+                f"🔗 Linked dependency: **`[{task}]`** now depends on **`[{depends_on}]`** finishing first.",
+                ephemeral=True,
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"linking dependency for '{task}'", logger, ephemeral=True)
+
+    @task_group.command(
+        name="undepend",
+        description="Remove a prerequisite dependency from a task.",
+    )
+    @app_commands.describe(
+        task="The dependent task (e.g. INF-2)",
+        depends_on="The prerequisite task to unblock/unlink (e.g. INF-1)",
+    )
+    @app_commands.autocomplete(task=task_autocomplete, depends_on=task_autocomplete)
+    async def task_undepend(
+        self,
+        interaction: discord.Interaction,
+        task: str,
+        depends_on: str,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            target_task = await self.task_service.get_by_short_id(interaction.guild.id, task)
+            if not target_task:
+                await interaction.followup.send(f"❌ Task '{task}' not found.", ephemeral=True)
+                return
+
+            await self.auth_service.require_task_mutation(interaction.user, target_task)
+
+            removed = await self.task_service.remove_dependency(
+                guild_id=interaction.guild.id,
+                task_short_id=task,
+                depends_on_short_id=depends_on,
+                actor_discord_id=interaction.user.id,
+            )
+            if removed:
+                await interaction.followup.send(
+                    f"🔓 Unlinked dependency: **`[{task}]`** no longer depends on **`[{depends_on}]`**.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    f"ℹ️ **`[{task}]`** did not depend on **`[{depends_on}]`**.",
+                    ephemeral=True,
+                )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+        except Exception as e:
+            await send_interaction_error(interaction, e, f"unlinking dependency for '{task}'", logger, ephemeral=True)
+
     # ==========================================
     # Project Subgroup: /pm project <cmd>
     # ==========================================
@@ -855,6 +945,56 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "listing projects", logger, ephemeral=True)
+
+    @project_group.command(name="tree", description="Render tech-tree dependency graph for a project.")
+    @app_commands.describe(
+        project_name="Name of the project to visualize",
+        orientation="Layout orientation: horizontal (lr) or vertical (tb)",
+    )
+    @app_commands.choices(
+        orientation=[
+            app_commands.Choice(name="Horizontal (Left to Right)", value="lr"),
+            app_commands.Choice(name="Vertical (Top to Bottom)", value="tb"),
+        ]
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    async def project_tree(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        orientation: app_commands.Choice[str] | None = None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            orient_val = orientation.value if orientation else "lr"
+            buf = await self.task_service.render_project_tree(
+                guild_id=interaction.guild.id,
+                project_id=project.id,
+                orientation=orient_val,
+            )
+            file = discord.File(fp=buf, filename="tech_tree.png")
+            orient_label = "Horizontal (Left to Right)" if orient_val == "lr" else "Vertical (Top to Bottom)"
+            embed = discord.Embed(
+                title=f"🌲 Tech Tree: [{project.prefix}] {project.name}",
+                description=f"Showing dependency graph in **{orient_label}** layout.",
+                color=discord.Color.from_rgb(16, 152, 247),
+            )
+            embed.set_image(url="attachment://tech_tree.png")
+            from src.adapters.discord_bot.views.tree_view import TechTreeViewer
+
+            view = TechTreeViewer(self.task_service, project, current_orientation=orient_val)
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"rendering tech tree for '{project_name}'", logger, ephemeral=True
+            )
 
     @project_group.command(name="archive", description="Archive a project container.")
     @app_commands.describe(project_name="Name of the project to archive")
@@ -1277,3 +1417,53 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "listing teams", logger, ephemeral=True)
+
+    @app_commands.command(name="tree", description="Render tech-tree dependency graph for a project.")
+    @app_commands.describe(
+        project_name="Name of the project to visualize",
+        orientation="Layout orientation: horizontal (lr) or vertical (tb)",
+    )
+    @app_commands.choices(
+        orientation=[
+            app_commands.Choice(name="Horizontal (Left to Right)", value="lr"),
+            app_commands.Choice(name="Vertical (Top to Bottom)", value="tb"),
+        ]
+    )
+    @app_commands.autocomplete(project_name=project_autocomplete)
+    async def pm_tree(
+        self,
+        interaction: discord.Interaction,
+        project_name: str,
+        orientation: app_commands.Choice[str] | None = None,
+    ) -> None:
+        if not interaction.guild:
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
+            if not project:
+                await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
+                return
+
+            orient_val = orientation.value if orientation else "lr"
+            buf = await self.task_service.render_project_tree(
+                guild_id=interaction.guild.id,
+                project_id=project.id,
+                orientation=orient_val,
+            )
+            file = discord.File(fp=buf, filename="tech_tree.png")
+            orient_label = "Horizontal (Left to Right)" if orient_val == "lr" else "Vertical (Top to Bottom)"
+            embed = discord.Embed(
+                title=f"🌲 Tech Tree: [{project.prefix}] {project.name}",
+                description=f"Showing dependency graph in **{orient_label}** layout.",
+                color=discord.Color.from_rgb(16, 152, 247),
+            )
+            embed.set_image(url="attachment://tech_tree.png")
+            from src.adapters.discord_bot.views.tree_view import TechTreeViewer
+
+            view = TechTreeViewer(self.task_service, project, current_orientation=orient_val)
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"rendering tech tree for '{project_name}'", logger, ephemeral=True
+            )

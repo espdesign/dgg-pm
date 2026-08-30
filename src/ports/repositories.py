@@ -105,6 +105,32 @@ class ITaskRepo(ABC):
     async def get_history(self, task_id: UUID) -> list[TaskHistory]:
         """Retrieves chronological audit history for a task."""
 
+    @abstractmethod
+    async def add_dependency(self, task_id: UUID, depends_on_task_id: UUID, session: Any | None = None) -> bool:
+        """Adds a dependency indicating task_id depends on depends_on_task_id."""
+
+    @abstractmethod
+    async def remove_dependency(self, task_id: UUID, depends_on_task_id: UUID, session: Any | None = None) -> bool:
+        """Removes a dependency between task_id and depends_on_task_id."""
+
+    @abstractmethod
+    async def get_prerequisite_ids(self, task_id: UUID, session: Any | None = None) -> list[UUID]:
+        """Gets task UUIDs that task_id depends on (prerequisites)."""
+
+    @abstractmethod
+    async def get_dependent_ids(self, task_id: UUID, session: Any | None = None) -> list[UUID]:
+        """Gets task UUIDs that depend on task_id (dependents)."""
+
+    @abstractmethod
+    async def get_dependencies_for_tasks(
+        self, task_ids: list[UUID], session: Any | None = None
+    ) -> list[tuple[UUID, UUID]]:
+        """Gets list of (task_id, depends_on_task_id) pairs for a list of task IDs."""
+
+    @abstractmethod
+    async def get_all_guild_dependencies(self, guild_id: int, session: Any | None = None) -> list[tuple[UUID, UUID]]:
+        """Gets all (task_id, depends_on_task_id) pairs in a guild."""
+
 
 class IProjectRepo(ABC):
     @abstractmethod

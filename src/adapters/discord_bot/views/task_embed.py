@@ -35,7 +35,12 @@ def get_task_jump_url(task: Task) -> str | None:
     return None
 
 
-def build_task_embed(task: Task, project_name: str | None = None) -> discord.Embed:
+def build_task_embed(
+    task: Task,
+    project_name: str | None = None,
+    prerequisites: list[Task] | None = None,
+    dependents: list[Task] | None = None,
+) -> discord.Embed:
     """Builds a rich, beautifully styled Discord Embed representing a task."""
     color = discord.Color.light_grey() if task.is_archived else STATUS_COLORS.get(task.status, discord.Color.blue())
 
@@ -75,6 +80,15 @@ def build_task_embed(task: Task, project_name: str | None = None) -> discord.Emb
     else:
         due_str = "*No deadline set*"
     embed.add_field(name="Due Date", value=due_str, inline=True)
+
+    # Prerequisites & Unlocks
+    if prerequisites:
+        prereqs_str = ", ".join(f"`[{p.short_id}]`" for p in prerequisites)
+        embed.add_field(name="⛓️ Prerequisites", value=prereqs_str, inline=True)
+
+    if dependents:
+        deps_str = ", ".join(f"`[{d.short_id}]`" for d in dependents)
+        embed.add_field(name="🔓 Unlocks", value=deps_str, inline=True)
 
     # Watchers / CC
     if task.watchers:

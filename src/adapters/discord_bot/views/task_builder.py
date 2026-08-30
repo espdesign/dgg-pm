@@ -11,7 +11,7 @@ from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed, get_task_jump_url
 from src.domain.enums import PriorityLevel
-from src.domain.models import Project
+from src.domain.models import Project, Task
 from src.utils.date_parser import get_due_date_from_preset, parse_natural_date
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ def build_task_draft_embed(
     due_at: datetime | None = None,
     watchers: list[int] | None = None,
     target_channel: discord.abc.GuildChannel | discord.Thread | None = None,
+    prerequisite_short_ids: list[str] | None = None,
 ) -> discord.Embed:
     """Builds a live preview embed of the task currently being configured in the builder."""
     proj_display = f"📁 [{project.prefix}] {project.name}" if project else "📌 Standalone Task (Ad-hoc)"
@@ -49,6 +50,7 @@ def build_task_draft_embed(
         due_display = "*No due date (Click preset picker below)*"
 
     watchers_display = " ".join(f"<@{uid}>" for uid in watchers) if watchers else "*None*"
+    prereqs_display = ", ".join(f"`[{p}]`" for p in prerequisite_short_ids) if prerequisite_short_ids else "*None*"
 
     chan_name = getattr(target_channel, "name", None)
     chan_display = f"#{chan_name}" if chan_name else "Current Channel"
@@ -62,6 +64,7 @@ def build_task_draft_embed(
             f"• **Assignee**: {assignee_display}\n"
             f"• **Priority**: {priority_display}\n"
             f"• **Due Date**: {due_display}\n"
+            f"• **Prerequisites**: {prereqs_display}\n"
             f"• **Watchers (CC)**: {watchers_display}\n"
             f"• **Publish Target**: `{chan_display}`"
         ),
@@ -235,12 +238,77 @@ class TaskDetailsModal(discord.ui.Modal):
             await interaction.response.send_message(embed=embed, view=draft_view, ephemeral=True)
 
 
+class DraftPrerequisiteSelectView(discord.ui.View):
+    """Ephemeral view to pick prerequisite tasks for a new task draft."""
+
+    def __init__(self, draft_view: TaskCreateDraftView, sibling_tasks: list[Task]):
+        super().__init__(timeout=120)
+        self.draft_view = draft_view
+        self.sibling_tasks = sibling_tasks
+
+        options: list[discord.SelectOption] = []
+        for t in sibling_tasks[:25]:
+            is_selected = t.short_id in draft_view.prerequisite_short_ids
+            options.append(
+                discord.SelectOption(
+                    label=f"[{t.short_id}]"[:100],
+                    value=t.short_id,
+                    description=(t.title[:85] + "...") if len(t.title) > 85 else t.title,
+                    default=is_selected,
+                    emoji="✅" if t.is_completed else "📋",
+                )
+            )
+
+        if options:
+            self.select = discord.ui.Select(
+                placeholder="🔗 Pick Prerequisite Tasks...",
+                min_values=0,
+                max_values=len(options),
+                options=options,
+            )
+            self.select.callback = self._on_select
+            self.add_item(self.select)
+
+        done_btn = discord.ui.Button(label="Done", style=discord.ButtonStyle.success, emoji="✅")
+        done_btn.callback = self._on_done
+        self.add_item(done_btn)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        self.draft_view.prerequisite_short_ids = list(interaction.data.get("values", []))  # type: ignore
+        await interaction.response.defer()
+
+    async def _on_done(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        self.draft_view._rebuild_items()
+        embed = build_task_draft_embed(
+            title=self.draft_view.title,
+            description=self.draft_view.description,
+            project=self.draft_view.project,
+            assignee_id=self.draft_view.assignee_id,
+            priority=self.draft_view.priority,
+            due_at=self.draft_view.due_at,
+            watchers=self.draft_view.watchers,
+            target_channel=self.draft_view.target_channel or interaction.channel,
+            prerequisite_short_ids=self.draft_view.prerequisite_short_ids,
+        )
+        if self.draft_view._initial_interaction:
+            try:
+                await self.draft_view._initial_interaction.edit_original_response(embed=embed, view=self.draft_view)
+            except Exception:
+                pass
+        await interaction.response.edit_message(
+            content=f"✅ Configured {len(self.draft_view.prerequisite_short_ids)} prerequisite task(s) for this draft.",
+            embed=None,
+            view=None,
+        )
+
+
 class TaskCreateDraftView(discord.ui.View):
     """Interactive multi-step Task Creation Builder (Non-modal interactive configuration).
 
     Allows users to pick assignees with native Discord member autocomplete (UserSelect),
-    set due dates with 1-click quick presets, adjust priority, add watchers, and confirm
-    task creation without typing commands or IDs.
+    set due dates with 1-click quick presets, adjust priority, add watchers, configure
+    prerequisites, and confirm task creation without typing commands or IDs.
     """
 
     def __init__(
@@ -255,6 +323,7 @@ class TaskCreateDraftView(discord.ui.View):
         due_at: datetime | None = None,
         watchers: list[int] | None = None,
         auth_service: AuthService | None = None,
+        prerequisite_short_ids: list[str] | None = None,
     ):
         super().__init__(timeout=300)
         self.task_service = task_service
@@ -267,6 +336,7 @@ class TaskCreateDraftView(discord.ui.View):
         self.due_at = due_at
         self.watchers = watchers or []
         self.auth_service = auth_service
+        self.prerequisite_short_ids = prerequisite_short_ids or []
         self._initial_interaction: discord.Interaction | None = None
 
         self._rebuild_items()
@@ -303,6 +373,17 @@ class TaskCreateDraftView(discord.ui.View):
         )
         self.edit_btn.callback = self._on_edit_details_clicked
         self.add_item(self.edit_btn)
+
+        if self.project:
+            prereq_label = f"Prereqs ({len(self.prerequisite_short_ids)})"
+            self.prereqs_btn = discord.ui.Button(
+                label=prereq_label,
+                emoji="🔗",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            self.prereqs_btn.callback = self._on_prereqs_clicked
+            self.add_item(self.prereqs_btn)
 
         if self.assignee_id:
             self.unassign_btn = discord.ui.Button(
@@ -476,6 +557,32 @@ class TaskCreateDraftView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=self)
 
+    async def _on_prereqs_clicked(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not self.project:
+            return
+
+        tasks, _ = await self.task_service.list_tasks(
+            guild_id=interaction.guild.id,
+            project_id=self.project.id,
+            include_archived=False,
+            limit=50,
+        )
+        if not tasks:
+            await interaction.response.send_message(
+                "ℹ️ There are no existing tasks in this project yet to link as prerequisites.",
+                ephemeral=True,
+            )
+            return
+
+        view = DraftPrerequisiteSelectView(self, tasks)
+        proj_label = f"[{self.project.prefix}] {self.project.name}"
+        task_label = self.title or "this new task"
+        await interaction.response.send_message(
+            f"🔗 Select prerequisites for **{task_label}** in **{proj_label}**:",
+            view=view,
+            ephemeral=True,
+        )
+
     async def _on_edit_details_clicked(self, interaction: discord.Interaction) -> None:
         modal = TaskDetailsModal(
             task_service=self.task_service,
@@ -524,6 +631,7 @@ class TaskCreateDraftView(discord.ui.View):
                 priority=self.priority,
                 body=self.description,
                 watchers=self.watchers,
+                prerequisite_short_ids=self.prerequisite_short_ids,
             )
 
             target_chan = self.target_channel or interaction.channel

@@ -1834,6 +1834,15 @@ class ProjectMenuView(discord.ui.View):
             self.restore_btn = None
 
         if self.task_service:
+            self.tech_tree_btn = discord.ui.Button(
+                label="Tech Tree",
+                emoji="🌲",
+                style=discord.ButtonStyle.secondary,
+                row=1 if self.is_server_manager else 0,
+            )
+            self.tech_tree_btn.callback = self._on_tech_tree_clicked
+            self.add_item(self.tech_tree_btn)
+
             self.hub_btn = discord.ui.Button(
                 label="PM Main Menu",
                 emoji="🏠",
@@ -1843,6 +1852,7 @@ class ProjectMenuView(discord.ui.View):
             self.hub_btn.callback = self._on_hub_clicked
             self.add_item(self.hub_btn)
         else:
+            self.tech_tree_btn = None
             self.hub_btn = None
 
     async def on_timeout(self) -> None:
@@ -1858,6 +1868,43 @@ class ProjectMenuView(discord.ui.View):
                 await self._initial_interaction.delete_original_response()
         except Exception:
             pass
+
+    async def _on_tech_tree_clicked(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not self.task_service:
+            return
+        projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        if not projects:
+            await interaction.response.send_message("ℹ️ No active projects found in this server.", ephemeral=True)
+            return
+
+        if len(projects) == 1:
+            await interaction.response.defer(ephemeral=True)
+            buf = await self.task_service.render_project_tree(
+                guild_id=interaction.guild.id,
+                project_id=projects[0].id,
+                orientation="lr",
+            )
+            file = discord.File(fp=buf, filename="tech_tree.png")
+            embed = discord.Embed(
+                title=f"🌲 Tech Tree: [{projects[0].prefix}] {projects[0].name}",
+                description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
+                color=discord.Color.from_rgb(16, 152, 247),
+            )
+            embed.set_image(url="attachment://tech_tree.png")
+            from src.adapters.discord_bot.views.tree_view import TechTreeViewer
+
+            view = TechTreeViewer(self.task_service, projects[0], current_orientation="lr")
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+            return
+
+        from src.adapters.discord_bot.views.tree_view import TechTreeProjectSelectView
+
+        view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
+        await interaction.response.send_message(
+            "🌲 Choose a project to view its Tech Tree visualization:",
+            view=view,
+            ephemeral=True,
+        )
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
         from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed

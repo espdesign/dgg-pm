@@ -151,6 +151,19 @@ class TaskHistoryTable(Base):
     task = relationship("TaskTable", back_populates="history")
 
 
+class TaskDependencyTable(Base):
+    __tablename__ = "task_dependencies"
+
+    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    depends_on_task_id = Column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    task = relationship("TaskTable", foreign_keys=[task_id])
+    depends_on = relationship("TaskTable", foreign_keys=[depends_on_task_id])
+
+
 class OutboxEventTable(Base):
     __tablename__ = "outbox_events"
 

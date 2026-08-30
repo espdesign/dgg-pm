@@ -203,7 +203,7 @@ async def test_task_action_view_and_modals(services):
     assert f"task:complete:{task.id}" in custom_ids
     assert f"task:note:{task.id}" in custom_ids
     assert f"task:edit:{task.id}" in custom_ids
-    assert f"task:unassign:{task.id}" in custom_ids
+    assert f"task:deps:{task.id}" in custom_ids
     assert f"task:priority:{task.id}" in custom_ids
     assert f"task:assignee:{task.id}" in custom_ids
     assert f"task:due:{task.id}" in custom_ids

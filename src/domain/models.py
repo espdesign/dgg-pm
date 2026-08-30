@@ -62,6 +62,12 @@ class TaskHistory(DomainModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class TaskDependency(DomainModel):
+    task_id: UUID
+    depends_on_task_id: UUID
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Project(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     guild_id: int
