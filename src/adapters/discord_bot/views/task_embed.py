@@ -8,7 +8,7 @@ from src.domain.models import Task, TaskHistory
 STATUS_COLORS = {
     TaskStatus.NOT_STARTED: discord.Color.blue(),
     TaskStatus.IN_PROGRESS: discord.Color.gold(),
-    TaskStatus.COMPLETED: discord.Color.green(),
+    TaskStatus.COMPLETED: discord.Color.brand_green(),
 }
 
 STATUS_EMOJIS = {
@@ -18,9 +18,9 @@ STATUS_EMOJIS = {
 }
 
 PRIORITY_EMOJIS = {
-    PriorityLevel.HIGH: "🔴 High",
-    PriorityLevel.NORMAL: "🔵 Normal",
-    PriorityLevel.LOW: "⚪ Low",
+    PriorityLevel.HIGH: "⚡ High Priority",
+    PriorityLevel.NORMAL: "🔷 Normal Priority",
+    PriorityLevel.LOW: "⚪ Low Priority",
 }
 
 
@@ -41,72 +41,89 @@ def build_task_embed(
     prerequisites: list[Task] | None = None,
     dependents: list[Task] | None = None,
 ) -> discord.Embed:
-    """Builds a rich, beautifully styled Discord Embed representing a task."""
-    color = discord.Color.light_grey() if task.is_archived else STATUS_COLORS.get(task.status, discord.Color.blue())
+    """Builds an Expanded Visual Card Discord Embed representing a task."""
+    color = discord.Color.dark_grey() if task.is_archived else STATUS_COLORS.get(task.status, discord.Color.blue())
 
-    prefix_title = f"[{task.short_id}] {task.title}"
+    prefix_title = f"📋 [{task.short_id}] {task.title}"
     if task.is_archived:
         prefix_title = f"📁 [ARCHIVED] {prefix_title}"
 
     jump_url = get_task_jump_url(task)
+    desc_text = task.body or "*No additional description provided.*"
 
     embed = discord.Embed(
         title=prefix_title,
         url=jump_url,
-        description=task.body or "*No additional description provided.*",
+        description=f"### 📝 Overview\n{desc_text}",
         color=color,
         timestamp=task.created_at,
     )
 
-    # Status and Priority row
-    embed.add_field(name="Status", value=STATUS_EMOJIS.get(task.status, task.status.value), inline=True)
-    embed.add_field(name="Priority", value=PRIORITY_EMOJIS.get(task.priority, task.priority.value), inline=True)
+    # 1. Status & Priority Section
+    status_label = STATUS_EMOJIS.get(task.status, task.status.value)
+    priority_label = PRIORITY_EMOJIS.get(task.priority, task.priority.value)
+    embed.add_field(
+        name="📊 Status & Priority",
+        value=f"• **State**: `{status_label}`\n• **Priority**: `{priority_label}`",
+        inline=True,
+    )
 
-    # Project
-    proj_display = project_name or (str(task.project_id) if task.project_id else "Standalone Task")
-    embed.add_field(name="Project", value=proj_display, inline=True)
-
-    # Assignee
+    # 2. Team & Contributor Section
+    proj_display = project_name or (str(task.project_id) if task.project_id else "Standalone")
     assignee_val = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "*Unassigned*"
-    embed.add_field(name="Assignee", value=assignee_val, inline=True)
+    embed.add_field(
+        name="👥 Team & Assignee",
+        value=(
+            f"• **Project**: **{proj_display}**\n"
+            f"• **Assignee**: {assignee_val}\n"
+            f"• **Created By**: <@{task.creator_discord_id}>"
+        ),
+        inline=True,
+    )
 
-    # Creator
-    embed.add_field(name="Created By", value=f"<@{task.creator_discord_id}>", inline=True)
+    # 3. Dependencies & Prerequisites Section
+    if prerequisites or dependents:
+        dep_lines = []
+        if prerequisites:
+            all_done = all(p.status == TaskStatus.COMPLETED for p in prerequisites)
+            dep_status = "🔓 *Ready*" if all_done else "🔒 *Blocked by prerequisites*"
+            prereqs_str = ", ".join(f"`[{p.short_id}]`" for p in prerequisites)
+            dep_lines.append(f"• **Prerequisites**: {prereqs_str} ({dep_status})")
+        if dependents:
+            deps_str = ", ".join(f"`[{d.short_id}]`" for d in dependents)
+            dep_lines.append(f"• **Unlocks**: {deps_str}")
+        embed.add_field(
+            name="🔗 Dependencies",
+            value="\n".join(dep_lines),
+            inline=False,
+        )
 
-    # Due Date
+    # 4. Timeline & Dates Section
+    time_lines = []
+    created_ts = int(task.created_at.astimezone(UTC).timestamp()) if task.created_at else 0
+    time_lines.append(f"• **Created**: <t:{created_ts}:f> (<t:{created_ts}:R>)")
     if task.due_at:
         due_ts = int(task.due_at.astimezone(UTC).timestamp())
-        due_str = f"<t:{due_ts}:f> (<t:{due_ts}:R>)"
+        time_lines.append(f"• **Target Due Date**: <t:{due_ts}:f> (<t:{due_ts}:R>)")
     else:
-        due_str = "*No deadline set*"
-    embed.add_field(name="Due Date", value=due_str, inline=True)
+        time_lines.append("• **Target Due Date**: *No deadline set*")
 
-    # Prerequisites & Unlocks
-    if prerequisites:
-        prereqs_str = ", ".join(f"`[{p.short_id}]`" for p in prerequisites)
-        embed.add_field(name="⛓️ Prerequisites", value=prereqs_str, inline=True)
-
-    if dependents:
-        deps_str = ", ".join(f"`[{d.short_id}]`" for d in dependents)
-        embed.add_field(name="🔓 Unlocks", value=deps_str, inline=True)
-
-    # Watchers / CC
     if task.watchers:
         watchers_str = ", ".join(f"<@{uid}>" for uid in task.watchers)
-        embed.add_field(name="Watchers (CC)", value=watchers_str, inline=False)
+        time_lines.append(f"• **Watchers**: {watchers_str}")
 
-    footer_text = f"v{task.version} • UUID: {task.id}"
-    embed.set_footer(text=footer_text)
+    embed.add_field(
+        name="⏱️ Timeline & Details",
+        value="\n".join(time_lines),
+        inline=False,
+    )
+
+    embed.set_footer(text=f"dgg-pm • v{task.version} • ID: {task.short_id}")
     return embed
 
 
 def build_thread_workspace_content(task: Task) -> str:
-    """Builds the message content for the task workspace inside a discussion thread.
-
-    The task description (body) leads the message for clarity, followed by a
-    compact assignee/priority summary. Truncated to stay within Discord's 2000-char
-    message limit.
-    """
+    """Builds the message content for the task workspace inside a discussion thread."""
     description = task.body or "*No additional description provided.*"
     if len(description) > 900:
         description = description[:897] + "..."
@@ -118,7 +135,7 @@ def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.
     """Builds an embed listing the chronological audit history of a task."""
     jump_url = get_task_jump_url(task)
     embed = discord.Embed(
-        title=f"📜 Audit Trail: [{task.short_id}] {task.title}",
+        title=f"📜 Audit Trail • [{task.short_id}] {task.title}",
         url=jump_url,
         color=discord.Color.dark_grey(),
     )
@@ -126,7 +143,9 @@ def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.
         embed.description = "*No history recorded for this task.*"
         return embed
 
-    lines = []
+    lines = [
+        "### 🕒 Activity History",
+    ]
     for h in history:
         ts = int(h.created_at.astimezone(UTC).timestamp())
         actor = f"<@{h.actor_discord_id}>"
@@ -134,14 +153,15 @@ def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.
 
         detail = ""
         if h.old_status and h.new_status:
-            detail = f" transitioned from `{h.old_status.value}` ➔ `{h.new_status.value}`"
+            detail = f" transitioned status: `{h.old_status.value}` ➔ `{h.new_status.value}`"
         elif h.action:
-            detail = f" performed `{h.action.value}`"
+            detail = f" performed action: `{h.action.value}`"
 
         if h.notes:
             detail += f'\n  💬 *"{h.notes}"*'
 
         lines.append(f"• **{time_str}** by {actor}:{detail}")
 
-    embed.description = "\n\n".join(lines)
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"dgg-pm • Audit Trail • Task {task.short_id}")
     return embed

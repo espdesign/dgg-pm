@@ -306,20 +306,20 @@ def build_task_board_embed(
 ) -> discord.Embed:
     """Build standardized Task Board embed with active filters and task summary cards."""
     embed = discord.Embed(
-        title=f"⚡ Task Board ({total_count} tasks found)",
+        title=f"📋 Task Board • {total_count} Tasks Active",
         description=(
-            f"**Active Board Filters**:\n"
-            f"• **Project Scope**: `{project_label}`\n"
-            f"• **Status**: `{status_label}`\n"
-            f"• **Assignee**: {assignee_label}\n"
+            "> 🔍 **Active Board Filters**\n"
+            f"> • **Project Scope**: `{project_label}`\n"
+            f"> • **Status**: `{status_label}`\n"
+            f"> • **Assignee**: {assignee_label}"
         ),
-        color=discord.Color.blurple(),
+        color=discord.Color.brand_green() if total_count > 0 else discord.Color.dark_grey(),
     )
 
     if not tasks:
         embed.add_field(
             name="No Tasks Found",
-            value="No tasks match the active filter combination.\nUse **`✨ New Project Task`** to create one.",
+            value="No tasks match the active filter combination.\nUse **`➕ New Task`** to create one.",
             inline=False,
         )
     else:
@@ -327,17 +327,20 @@ def build_task_board_embed(
 
         for t in tasks:
             icon = "🟢" if t.is_completed else ("🟡" if t.status == TaskStatus.IN_PROGRESS else "⚪")
-            assignee_str = f"<@{t.assignee_discord_id}>" if t.assignee_discord_id else "Unassigned"
-            due_str = f" | Due: {t.due_at.strftime('%b %d')}" if t.due_at else ""
+            assignee_str = f"<@{t.assignee_discord_id}>" if t.assignee_discord_id else "*Unassigned*"
+            due_str = f" • Due: {t.due_at.strftime('%b %d')}" if t.due_at else ""
             jump_url = get_task_jump_url(t)
             link_bullet = f"• [🔗 **Open Task Workspace**]({jump_url})\n" if jump_url else ""
             embed.add_field(
                 name=f"{icon} [{t.short_id}] {t.title}",
-                value=f"{link_bullet}• Assignee: {assignee_str}{due_str}\n• Priority: `{t.priority.value.upper()}`",
+                value=(
+                    f"{link_bullet}• **Assignee**: {assignee_str}{due_str}\n"
+                    f"• **Priority**: `{t.priority.value.upper()}`"
+                ),
                 inline=False,
             )
 
-    embed.set_footer(text="dgg-pm • Channel-aware zero-typing task board")
+    embed.set_footer(text="dgg-pm • Interactive Task Board")
     return embed
 
 

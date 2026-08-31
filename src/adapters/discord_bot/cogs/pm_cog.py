@@ -124,7 +124,6 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
 
             projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
             _, count = (
                 await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
             )
@@ -145,7 +144,6 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 guild=interaction.guild,
                 user=interaction.user,
                 active_projects=projects,
-                teams=teams,
                 active_tasks_count=count,
                 current_pref=current_pref,
                 is_server_manager=view.is_server_manager,
@@ -1076,6 +1074,21 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 return
 
             await self.project_service.archive_project(project.id)
+
+            if interaction.guild and project.discord_channel_id:
+                chan = interaction.guild.get_channel(project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=self.user_service,
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project archive: %s", he)
+
             await interaction.followup.send(f"📦 Archived project **{project.name}** (`{project.prefix}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -1098,6 +1111,21 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 return
 
             await self.project_service.unarchive_project(project.id)
+
+            if interaction.guild and project.discord_channel_id:
+                chan = interaction.guild.get_channel(project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=self.user_service,
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project unarchive: %s", he)
+
             await interaction.followup.send(f"📂 Restored project **{project.name}** (`{project.prefix}`).")
             from src.adapters.discord_bot.menu_manager import menu_manager
 

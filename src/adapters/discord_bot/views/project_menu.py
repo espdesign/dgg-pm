@@ -577,7 +577,6 @@ class ProjectChannelSelectView(discord.ui.View):
             from src.domain.enums import NotificationPreference
 
             projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
             _, count = (
                 await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
             )
@@ -597,7 +596,6 @@ class ProjectChannelSelectView(discord.ui.View):
                 guild=interaction.guild,
                 user=interaction.user,
                 active_projects=projects,
-                teams=teams,
                 active_tasks_count=count,
                 current_pref=current_pref,
                 is_server_manager=view.is_server_manager,
@@ -844,6 +842,7 @@ class ProjectArchiveConfirmView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        user_service: UserService | None = None,
         initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
@@ -851,6 +850,7 @@ class ProjectArchiveConfirmView(discord.ui.View):
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
         self._initial_interaction = initial_interaction
 
         self.confirm_btn = discord.ui.Button(
@@ -902,10 +902,25 @@ class ProjectArchiveConfirmView(discord.ui.View):
                     if t.discord_thread_id:
                         await interaction.client.sync_task_thread(t, action="archive")
 
+            if interaction.guild and self.project.discord_channel_id:
+                chan = interaction.guild.get_channel(self.project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=self.user_service,
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project archive: %s", he)
+
             view = ProjectMenuView(
                 self.project_service,
                 self.team_service,
                 self.task_service,
+                user_service=self.user_service,
                 initial_interaction=interaction,
             )
             embed = build_project_menu_embed(view.is_server_manager)
@@ -940,6 +955,7 @@ class ProjectRestoreConfirmView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        user_service: UserService | None = None,
         initial_interaction: discord.Interaction | None = None,
     ):
         super().__init__(timeout=180)
@@ -947,6 +963,7 @@ class ProjectRestoreConfirmView(discord.ui.View):
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
         self._initial_interaction = initial_interaction
 
         self.confirm_btn = discord.ui.Button(
@@ -995,10 +1012,25 @@ class ProjectRestoreConfirmView(discord.ui.View):
                     if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
                         await interaction.client.sync_task_thread(t, action="unarchive")
 
+            if interaction.guild and self.project.discord_channel_id:
+                chan = interaction.guild.get_channel(self.project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=self.user_service,
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project restore: %s", he)
+
             view = ProjectMenuView(
                 self.project_service,
                 self.team_service,
                 self.task_service,
+                user_service=self.user_service,
                 initial_interaction=interaction,
             )
             embed = build_project_menu_embed(view.is_server_manager)
@@ -1056,6 +1088,7 @@ class ProjectArchiveSelectView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        user_service: UserService | None = None,
         current_page: int = 0,
         query: str = "",
         initial_interaction: discord.Interaction | None = None,
@@ -1065,6 +1098,7 @@ class ProjectArchiveSelectView(discord.ui.View):
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
         self.current_page = current_page
         self.query = query
         self._initial_interaction = initial_interaction
@@ -1250,6 +1284,7 @@ class ProjectArchiveSelectView(discord.ui.View):
             project_service=self.project_service,
             team_service=self.team_service,
             task_service=self.task_service,
+            user_service=self.user_service,
         )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
@@ -1296,6 +1331,7 @@ class ProjectRestoreSelectView(discord.ui.View):
         project_service: ProjectService,
         team_service: TeamService,
         task_service: TaskService | None = None,
+        user_service: UserService | None = None,
         current_page: int = 0,
         query: str = "",
         initial_interaction: discord.Interaction | None = None,
@@ -1305,6 +1341,7 @@ class ProjectRestoreSelectView(discord.ui.View):
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
         self.current_page = current_page
         self.query = query
         self._initial_interaction = initial_interaction
@@ -1480,6 +1517,7 @@ class ProjectRestoreSelectView(discord.ui.View):
             project_service=self.project_service,
             team_service=self.team_service,
             task_service=self.task_service,
+            user_service=self.user_service,
             initial_interaction=interaction,
         )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
@@ -2267,7 +2305,6 @@ class ProjectMenuView(discord.ui.View):
             from src.domain.enums import NotificationPreference
 
             projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
             _, count = (
                 await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
             )
@@ -2287,7 +2324,6 @@ class ProjectMenuView(discord.ui.View):
                 guild=interaction.guild,
                 user=interaction.user,
                 active_projects=projects,
-                teams=teams,
                 active_tasks_count=count,
                 current_pref=current_pref,
                 is_server_manager=view.is_server_manager,
@@ -2415,6 +2451,7 @@ class ProjectMenuView(discord.ui.View):
             self.project_service,
             self.team_service,
             self.task_service,
+            user_service=self.user_service,
             initial_interaction=interaction,
         )
         total_pages = max(1, math.ceil(len(projects) / ProjectArchiveSelectView.PAGE_SIZE))
@@ -2437,6 +2474,7 @@ class ProjectMenuView(discord.ui.View):
             self.project_service,
             self.team_service,
             self.task_service,
+            user_service=self.user_service,
             initial_interaction=interaction,
         )
         total_pages = max(1, math.ceil(len(archived) / ProjectRestoreSelectView.PAGE_SIZE))
@@ -2446,13 +2484,14 @@ class ProjectMenuView(discord.ui.View):
 
 def build_project_menu_embed(is_server_manager: bool = True) -> discord.Embed:
     embed = discord.Embed(
-        title="📁 Project Management Control Center",
-        color=discord.Color.blurple(),
+        title="📁 Project Management Hub",
+        color=discord.Color.dark_theme(),
     )
     if is_server_manager:
         embed.description = (
-            "Manage project containers, channel bindings, squad roles, and project leads without typing commands.\n\n"
-            "• **`➕ New Project`**: Create a project container bound to any Forum or Text channel\n"
+            "> 🛠️ **Project Administration & Squad Routing**\n"
+            "> Manage project containers, channel bindings, squad roles, and project leads.\n\n"
+            "• **`➕ New Project`**: Create a project container bound to a Forum channel\n"
             "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads\n"
             "• **`🎭 Set Squad Role`**: Map a Discord role as the project's contributor squad\n"
             "• **`👑 Set Project Lead`**: Designate the project owner / lead with elevated permissions\n"
@@ -2461,8 +2500,9 @@ def build_project_menu_embed(is_server_manager: bool = True) -> discord.Embed:
         )
     else:
         embed.description = (
-            "Browse active project containers, bound channels, and designated squad roles.\n\n"
+            "> 📁 **Active Project Containers**\n"
+            "> Browse active project containers, bound channels, and designated squad roles.\n\n"
             "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads"
         )
-    embed.set_footer(text="dgg-pm • Zero-typing project management")
+    embed.set_footer(text="dgg-pm • Discord-Native Project Management")
     return embed

@@ -26,18 +26,18 @@ def build_settings_embed(user: discord.User | discord.Member, current_pref: Noti
     }
 
     embed = discord.Embed(
-        title=f"⚙️ Notification Preferences for @{user.display_name}",
+        title=f"⚙️ Notification Preferences • @{user.display_name}",
         description=(
-            f"**Current Preference:** `{pref_labels.get(current_pref, current_pref.value)}`\n\n"
-            "Choose how you want to receive task assignments, updates, and deadline reminders in this server:\n\n"
+            f"> 🔔 **Current Active Mode**: `{pref_labels.get(current_pref, current_pref.value)}`\n\n"
+            "Select how you want to receive task assignments, updates, and deadline reminders in this server:\n\n"
             "• **`💬 DM Only`**: Private notifications delivered to your direct messages.\n"
-            "• **`📢 Channel Ping`**: An `@mention` inside the task's thread/forum post (great if DMs are closed).\n"
+            "• **`📢 Channel Ping`**: An `@mention` inside the task's forum thread.\n"
             "• **`🔔 Both`**: Sends both a DM and an in-thread mention for maximum visibility.\n"
-            "• **`🔕 Silent`**: No direct pings (track tasks manually on the task board)."
+            "• **`🔕 Silent`**: No direct pings (track tasks manually on the board)."
         ),
-        color=discord.Color.blurple(),
+        color=discord.Color.dark_theme(),
     )
-    embed.set_footer(text="dgg-pm • Personal notification controls")
+    embed.set_footer(text="dgg-pm • Personal Notification Settings")
     return embed
 
 
@@ -82,11 +82,11 @@ class UserSettingsView(discord.ui.View):
     def _refresh_buttons(self) -> None:
         self.clear_items()
 
-        # Row 0: Preference Buttons
+        # Row 0: Preference Buttons (Selected is vibrant green success style)
         dm_btn = discord.ui.Button(
             label="DM Only",
             emoji="💬",
-            style=discord.ButtonStyle.primary
+            style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.DM
             else discord.ButtonStyle.secondary,
             row=0,
@@ -97,7 +97,7 @@ class UserSettingsView(discord.ui.View):
         chan_btn = discord.ui.Button(
             label="Channel Ping",
             emoji="📢",
-            style=discord.ButtonStyle.primary
+            style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.CHANNEL
             else discord.ButtonStyle.secondary,
             row=0,
@@ -108,7 +108,7 @@ class UserSettingsView(discord.ui.View):
         both_btn = discord.ui.Button(
             label="Both (DM + Ping)",
             emoji="🔔",
-            style=discord.ButtonStyle.primary
+            style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.BOTH
             else discord.ButtonStyle.secondary,
             row=0,
@@ -119,7 +119,7 @@ class UserSettingsView(discord.ui.View):
         none_btn = discord.ui.Button(
             label="Silent",
             emoji="🔕",
-            style=discord.ButtonStyle.primary
+            style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.NONE
             else discord.ButtonStyle.secondary,
             row=0,
@@ -131,7 +131,7 @@ class UserSettingsView(discord.ui.View):
         test_btn = discord.ui.Button(
             label="Test Notification",
             emoji="🧪",
-            style=discord.ButtonStyle.success,
+            style=discord.ButtonStyle.primary,
             row=1,
         )
         test_btn.callback = self._on_test_clicked
@@ -237,7 +237,6 @@ class UserSettingsView(discord.ui.View):
                 if self.project_service
                 else []
             )
-            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
             _, count = (
                 await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
             )
@@ -252,7 +251,6 @@ class UserSettingsView(discord.ui.View):
                 guild=interaction.guild,
                 user=interaction.user,
                 active_projects=projects,
-                teams=teams,
                 active_tasks_count=count,
                 current_pref=self.current_pref,
                 is_server_manager=view.is_server_manager,

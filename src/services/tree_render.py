@@ -15,25 +15,25 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-# --- Color Palette & Aesthetics ---
-BG_COLOR = "#0b0e14"
-GRID_COLOR = "#151b24"
-BANNER_BG_START = "#0f172a"
-BORDER_LINE = "#1e293b"
+# --- Color Palette & Aesthetics (Modern Technical Blueprint) ---
+BG_COLOR = "#0a1128"
+GRID_COLOR = "#152244"
+BANNER_BG_START = "#001f54"
+BORDER_LINE = "#1282a2"
 
 THEME: dict[str, dict[str, str]] = {
     "complete": {
-        "fill": "#0d2818",
-        "edge": "#22c55e",
+        "fill": "#0a2e1d",
+        "edge": "#57f287",
         "glow": "#15803d",
         "text": "#f0fdf4",
         "desc": "#bbf7d0",
-        "accent": "#22c55e",
+        "accent": "#57f287",
         "badge_bg": "#14532d",
         "badge_text": "#86efac",
     },
     "active": {
-        "fill": "#082f49",
+        "fill": "#062846",
         "edge": "#38bdf8",
         "glow": "#0369a1",
         "text": "#f0f9ff",
@@ -43,17 +43,17 @@ THEME: dict[str, dict[str, str]] = {
         "badge_text": "#7dd3fc",
     },
     "available": {
-        "fill": "#1e1b4b",
+        "fill": "#102a5c",
         "edge": "#818cf8",
         "glow": "#4338ca",
         "text": "#e0e7ff",
         "desc": "#c7d2fe",
         "accent": "#818cf8",
-        "badge_bg": "#312e81",
-        "badge_text": "#a5b4fc",
+        "badge_bg": "#1e3a8a",
+        "badge_text": "#93c5fd",
     },
     "locked": {
-        "fill": "#11141a",
+        "fill": "#0a101f",
         "edge": "#334155",
         "glow": "#1e293b",
         "text": "#94a3b8",
@@ -64,11 +64,11 @@ THEME: dict[str, dict[str, str]] = {
     },
     "blocked": {
         "fill": "#3b0d0c",
-        "edge": "#ef4444",
+        "edge": "#ed4245",
         "glow": "#991b1b",
         "text": "#fef2f2",
         "desc": "#fecaca",
-        "accent": "#ef4444",
+        "accent": "#ed4245",
         "badge_bg": "#7f1d1d",
         "badge_text": "#fca5a5",
     },

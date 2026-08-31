@@ -420,6 +420,20 @@ class ProjectCog(commands.Cog):
                     if t.discord_thread_id:
                         await self.bot.sync_task_thread(t, action="archive")
 
+            if interaction.guild and project.discord_channel_id:
+                chan = interaction.guild.get_channel(project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=getattr(self, "user_service", None),
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project archive: %s", he)
+
             await interaction.followup.send(f"📁 Project **{project.name}** and its active tasks have been archived.")
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -453,6 +467,20 @@ class ProjectCog(commands.Cog):
                 for t in restored_tasks:
                     if t.discord_thread_id and t.status != TaskStatus.COMPLETED:
                         await self.bot.sync_task_thread(t, action="unarchive")
+
+            if interaction.guild and project.discord_channel_id:
+                chan = interaction.guild.get_channel(project.discord_channel_id)
+                if chan and isinstance(chan, (discord.ForumChannel, discord.TextChannel)):
+                    try:
+                        await ensure_pinned_hub_post(
+                            channel=chan,
+                            project_service=self.project_service,
+                            team_service=self.team_service,
+                            task_service=self.task_service,
+                            user_service=getattr(self, "user_service", None),
+                        )
+                    except Exception as he:
+                        logger.warning("Could not refresh pinned hub on project unarchive: %s", he)
 
             await interaction.followup.send(f"📂 Project **{project.name}** and its active tasks have been restored.")
             from src.adapters.discord_bot.menu_manager import menu_manager

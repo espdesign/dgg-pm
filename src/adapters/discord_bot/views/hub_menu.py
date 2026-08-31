@@ -619,21 +619,22 @@ def build_hub_welcome_embed(
     bound_projects: list[Project] | None = None,
 ) -> discord.Embed:
     if channel_name:
-        title = f"🎛️ #{channel_name} • Control Hub"
+        title = f"📌 #{channel_name} • Forum Control Hub"
     else:
-        title = "🎛️ Project Management Control Hub"
+        title = "📌 Forum Control Hub"
 
     embed = discord.Embed(
         title=title,
-        color=discord.Color.blurple(),
+        color=discord.Color.dark_theme(),
     )
 
     if bound_projects:
         if len(bound_projects) == 1:
             p = bound_projects[0]
             desc = (
-                f"Interactive management workspace for **{p.name}** (`[{p.prefix}]`).\n"
-                "Click any button below to perform operations without typing commands."
+                f"> 📁 **Bound Project**: **{p.name}** (`[{p.prefix}]`)\n"
+                f"> {p.description or 'Active contributor task feed and discussion board.'}\n\n"
+                "Click any button below to manage tasks, explore dependencies, or adjust preferences."
             )
         else:
             projects_summary = "\n".join(
@@ -641,36 +642,40 @@ def build_hub_welcome_embed(
                 for p in bound_projects
             )
             desc = (
-                f"Interactive management workspace for projects in this channel:\n"
-                f"{projects_summary}\n\n"
-                "Click any button below to perform operations without typing commands."
+                f"> 📁 **Bound Projects in this Channel**:\n{projects_summary}\n\n"
+                "Click any button below to manage tasks, explore dependencies, or adjust preferences."
             )
     else:
         desc = (
-            "Welcome to **dgg-pm**! Manage your entire workflow with interactive dashboards.\n"
-            "Click any button below to launch a private interactive workspace without modifying this hub for others."
+            "> Welcome to **dgg-pm**! Interactive project and task management.\n\n"
+            "Click any button below to launch a private interactive workspace."
         )
 
     embed.description = desc
     embed.add_field(
         name="➕ New Task",
-        value="Create a new task within a project in this forum.",
-        inline=False,
+        value="Create a new task card within this forum channel.",
+        inline=True,
+    )
+    embed.add_field(
+        name="🌲 Tech Tree",
+        value="Render the visual dependency DAG diagram.",
+        inline=True,
     )
     embed.add_field(
         name="👤 My Tasks",
-        value="View your personalized assigned tasks, active deadlines, and progress.",
-        inline=False,
+        value="Filter to your personalized assigned tasks and deadlines.",
+        inline=True,
     )
     embed.add_field(
         name="📁 Projects Hub",
-        value="View project containers, bound channels, squad roles, and project leads.",
-        inline=False,
+        value="Browse project settings, squads, and project leads.",
+        inline=True,
     )
     embed.add_field(
         name="⚙️ My Settings",
-        value="Configure your personal notification delivery (DM, Channel Ping, Both, Silent).",
-        inline=False,
+        value="Configure personal notification delivery preferences.",
+        inline=True,
     )
-    embed.set_footer(text="dgg-pm • Zero-clutter Discord-native project management")
+    embed.set_footer(text="dgg-pm • Discord-Native Project Management")
     return embed

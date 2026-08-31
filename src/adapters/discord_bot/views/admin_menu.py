@@ -17,15 +17,11 @@ from src.adapters.discord_bot.views.settings_menu import (
     UserSettingsView,
     build_settings_embed,
 )
-from src.adapters.discord_bot.views.team_menu import (
-    TeamMenuView,
-    build_team_menu_embed,
-)
 from src.domain.enums import NotificationPreference
 from src.services.auth_service import AuthService
 
 if TYPE_CHECKING:
-    from src.domain.models import Project, Team
+    from src.domain.models import Project
     from src.services.project_service import ProjectService
     from src.services.task_service import TaskService
     from src.services.team_service import TeamService
@@ -38,7 +34,6 @@ def build_pm_dashboard_embed(
     guild: discord.Guild | None,
     user: discord.Member | discord.User,
     active_projects: list[Project] | None = None,
-    teams: list[Team] | None = None,
     active_tasks_count: int = 0,
     current_pref: NotificationPreference = NotificationPreference.DM,
     is_server_manager: bool = False,
@@ -46,7 +41,6 @@ def build_pm_dashboard_embed(
     """Builds the main Project Management & Administration Workspace embed for /pm menu."""
     guild_name = guild.name if guild else "Server"
     proj_count = len(active_projects) if active_projects else 0
-    team_count = len(teams) if teams else 0
 
     pref_labels = {
         NotificationPreference.DM: "💬 DM Only",
@@ -61,22 +55,16 @@ def build_pm_dashboard_embed(
     embed = discord.Embed(
         title="🛠️ Project Management Control Center",
         description=(
-            f"Welcome to **dgg-pm** on **{guild_name}**!\n"
-            f"Role: **{role_badge}**\n\n"
-            "Use the controls below to configure projects, coordinate contributor squads, "
-            "inspect server metrics, and manage your personal notification preferences."
+            f"> Server: **{guild_name}** • Access: **{role_badge}**\n\n"
+            "Central administration portal for project containers, squad role mappings, "
+            "server-wide metrics, and personal notification preferences."
         ),
-        color=discord.Color.brand_green() if is_server_manager else discord.Color.blurple(),
+        color=discord.Color.dark_theme(),
     )
 
     embed.add_field(
         name="📁 Active Projects",
         value=f"**{proj_count}** active",
-        inline=True,
-    )
-    embed.add_field(
-        name="👥 Squads / Teams",
-        value=f"**{team_count}** mapped",
         inline=True,
     )
     embed.add_field(
@@ -96,9 +84,8 @@ def build_pm_dashboard_embed(
             value=(
                 "• **`➕ New Project`**: Launch the multi-step project creation wizard.\n"
                 "• **`📁 Projects`**: Manage channels, assign squad roles, set leads, archive.\n"
-                "• **`👥 Teams`**: Create contributor squads and map Discord roles.\n"
-                "• **`⚙️ Settings`**: Configure personal notification preferences.\n"
-                "• **`📊 Overview`**: Server-wide project status & completion metrics."
+                "• **`📊 Server Overview`**: Server-wide project status & completion metrics.\n"
+                "• **`⚙️ Settings`**: Configure personal notification preferences."
             ),
             inline=False,
         )
@@ -107,13 +94,13 @@ def build_pm_dashboard_embed(
             name="📌 Available Workspace Actions",
             value=(
                 "• **`📁 Projects`**: Browse active projects and mapped channels.\n"
-                "• **`👥 Teams`**: View squad rosters and lead designations.\n"
+                "• **`📊 Server Overview`**: View server-wide project progress.\n"
                 "• **`⚙️ Settings`**: Update your task assignment notification preferences."
             ),
             inline=False,
         )
 
-    embed.set_footer(text="dgg-pm • Zero-clutter Discord-native project management")
+    embed.set_footer(text="dgg-pm • Discord-Native Project Management")
     return embed
 
 
@@ -148,7 +135,6 @@ class PmDashboardOverviewView(discord.ui.View):
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
-        teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
         _, count = await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
         current_pref = (
             await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
@@ -167,7 +153,6 @@ class PmDashboardOverviewView(discord.ui.View):
             guild=interaction.guild,
             user=interaction.user,
             active_projects=projects,
-            teams=teams,
             active_tasks_count=count,
             current_pref=current_pref,
             is_server_manager=view.is_server_manager,
@@ -222,23 +207,22 @@ class PmDashboardView(discord.ui.View):
         self.projects_btn = discord.ui.Button(
             label="Projects",
             emoji="📁",
-            style=discord.ButtonStyle.primary if not self.is_server_manager else discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.secondary,
             row=0,
         )
         self.projects_btn.callback = self._on_projects_clicked
         self.add_item(self.projects_btn)
 
-        if self.team_service:
-            self.teams_btn = discord.ui.Button(
-                label="Teams & Squads",
-                emoji="👥",
-                style=discord.ButtonStyle.secondary,
-                row=0,
-            )
-            self.teams_btn.callback = self._on_teams_clicked
-            self.add_item(self.teams_btn)
+        self.overview_btn = discord.ui.Button(
+            label="Server Overview",
+            emoji="📊",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
+        self.overview_btn.callback = self._on_overview_clicked
+        self.add_item(self.overview_btn)
 
-        # Row 1: Settings, Overview & Guides
+        # Row 1: Settings & Guides
         if self.user_service:
             self.settings_btn = discord.ui.Button(
                 label="My Settings",
@@ -248,15 +232,6 @@ class PmDashboardView(discord.ui.View):
             )
             self.settings_btn.callback = self._on_settings_clicked
             self.add_item(self.settings_btn)
-
-        self.overview_btn = discord.ui.Button(
-            label="Server Overview",
-            emoji="📊",
-            style=discord.ButtonStyle.secondary,
-            row=1,
-        )
-        self.overview_btn.callback = self._on_overview_clicked
-        self.add_item(self.overview_btn)
 
         self.guides_btn = discord.ui.Button(
             label="Guides",
@@ -314,22 +289,6 @@ class PmDashboardView(discord.ui.View):
             return_to="dashboard",
         )
         embed = build_project_menu_embed(view.is_server_manager)
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
-
-    async def _on_teams_clicked(self, interaction: discord.Interaction) -> None:
-        if not self.team_service:
-            await interaction.response.send_message("ℹ️ Teams service not configured.", ephemeral=True)
-            return
-
-        view = TeamMenuView(
-            self.team_service,
-            initial_interaction=interaction,
-            project_service=self.project_service,
-            task_service=self.task_service,
-            user_service=self.user_service,
-            return_to="dashboard",
-        )
-        embed = build_team_menu_embed(view.can_create_teams, view.can_assign_members)
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_settings_clicked(self, interaction: discord.Interaction) -> None:

@@ -568,7 +568,6 @@ class TeamMenuView(discord.ui.View):
                 if self.project_service
                 else []
             )
-            teams = await self.team_service.list_teams(interaction.guild.id)
             _, count = (
                 await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
             )
@@ -588,7 +587,6 @@ class TeamMenuView(discord.ui.View):
                 guild=interaction.guild,
                 user=interaction.user,
                 active_projects=projects,
-                teams=teams,
                 active_tasks_count=count,
                 current_pref=current_pref,
                 is_server_manager=view.is_server_manager,
@@ -681,8 +679,8 @@ class TeamMenuView(discord.ui.View):
 
 def build_team_menu_embed(can_create_teams: bool = True, can_assign_members: bool = True) -> discord.Embed:
     embed = discord.Embed(
-        title="👥 Team Management Control Center",
-        color=discord.Color.blurple(),
+        title="👥 Squad & Team Management Hub",
+        color=discord.Color.dark_theme(),
     )
     bullets = []
     if can_create_teams:
@@ -692,10 +690,16 @@ def build_team_menu_embed(can_create_teams: bool = True, can_assign_members: boo
     bullets.append("• **`📋 Team Roster`**: View all teams and their configured role mappings")
 
     if can_create_teams or can_assign_members:
-        desc = "Configure functional squads, map Discord roles, and assign team leads.\n\n" + "\n".join(bullets)
+        desc = (
+            "> 👥 **Contributor Squads & Permission Mappings**\n"
+            "> Configure functional squads, map Discord roles, and assign team leads.\n\n" + "\n".join(bullets)
+        )
     else:
-        desc = "Inspect configured functional squads and server team rosters.\n\n" + "\n".join(bullets)
+        desc = (
+            "> 👥 **Server Squad Rosters**\n"
+            "> Inspect configured functional squads and server team rosters.\n\n" + "\n".join(bullets)
+        )
 
     embed.description = desc
-    embed.set_footer(text="dgg-pm • Zero-typing team management")
+    embed.set_footer(text="dgg-pm • Discord-Native Team Management")
     return embed

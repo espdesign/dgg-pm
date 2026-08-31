@@ -273,7 +273,7 @@ async def test_team_menu_and_modal(services):
     # 1. Test TeamMenuView and embed
     view = TeamMenuView(team_srv, project_service=services["project"], task_service=services["task"])
     embed = build_team_menu_embed()
-    assert "Team Management Control Center" in embed.title
+    assert "Squad & Team Management Hub" in embed.title
     assert len(view.children) == 4  # Create Team, Assign Member, Team Roster, PM Main Menu
 
     # Test clicking PM Main Menu
@@ -1368,7 +1368,6 @@ async def test_pm_dashboard_view_and_embed(services):
     guild_id = 9999888866
 
     p1 = await proj_srv.create_project(guild_id=guild_id, name="Admin Core", prefix="ADM")
-    t1 = await team_srv.create_team(guild_id=guild_id, name="Devs", discord_role_id=9001)
 
     mock_guild = MagicMock(spec=discord.Guild)
     mock_guild.id = guild_id
@@ -1384,16 +1383,14 @@ async def test_pm_dashboard_view_and_embed(services):
         guild=mock_guild,
         user=mock_admin_user,
         active_projects=[p1],
-        teams=[t1],
         active_tasks_count=5,
         current_pref=NotificationPreference.BOTH,
         is_server_manager=True,
     )
     assert "Project Management Control Center" in embed.title
     assert "1" in embed.fields[0].value
-    assert "1" in embed.fields[1].value
-    assert "5" in embed.fields[2].value
-    assert "Both" in embed.fields[3].value
+    assert "5" in embed.fields[1].value
+    assert "Both" in embed.fields[2].value
 
     # 2. Test PmDashboardView initialization
     dash_view = PmDashboardView(
@@ -1406,7 +1403,6 @@ async def test_pm_dashboard_view_and_embed(services):
     assert dash_view.is_server_manager is True
     assert dash_view.new_proj_btn is not None
     assert dash_view.projects_btn is not None
-    assert dash_view.teams_btn is not None
     assert dash_view.settings_btn is not None
     assert dash_view.overview_btn is not None
     assert dash_view.guides_btn is not None
@@ -1451,22 +1447,7 @@ async def test_pm_dashboard_view_and_embed(services):
     back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
     assert isinstance(back_dash_view, PmDashboardView)
 
-    # 5. Test Teams button opens TeamMenuView
-    inter.response.edit_message.reset_mock()
-    await dash_view._on_teams_clicked(inter)
-    inter.response.edit_message.assert_awaited_once()
-    team_view = inter.response.edit_message.call_args.kwargs["view"]
-    assert isinstance(team_view, TeamMenuView)
-    assert team_view.return_to == "dashboard"
-
-    # Test TeamMenuView Hub button returns to PmDashboardView
-    back_inter.response.edit_message.reset_mock()
-    await team_view._on_hub_clicked(back_inter)
-    back_inter.response.edit_message.assert_awaited_once()
-    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
-    assert isinstance(back_dash_view, PmDashboardView)
-
-    # 6. Test Settings button opens UserSettingsView
+    # 5. Test Settings button opens UserSettingsView
     inter.response.edit_message.reset_mock()
     await dash_view._on_settings_clicked(inter)
     inter.response.edit_message.assert_awaited_once()

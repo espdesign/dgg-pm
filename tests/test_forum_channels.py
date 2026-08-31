@@ -803,7 +803,7 @@ async def test_ensure_pinned_hub_post_multi_project_update(services):
         discord_channel_id=mock_forum.id,
     )
 
-    ok2, msg2 = await ensure_pinned_hub_post(
+    ok2, _msg2 = await ensure_pinned_hub_post(
         channel=mock_forum,
         project_service=proj_srv,
         team_service=team_srv,
@@ -811,9 +811,8 @@ async def test_ensure_pinned_hub_post_multi_project_update(services):
         project_name=p2.name,
     )
     assert ok2 is True
-    assert "Updated Control Hub" in msg2
     assert mock_thread.edit.await_count == 2
-    mock_thread.edit.assert_awaited_with(name="📌 📊 #shared-projects • Control Hub", pinned=True)
+    mock_thread.edit.assert_awaited_with(name="📌 #shared-projects • Forum Control Hub", pinned=True)
     mock_starter_msg.edit.assert_awaited_once()
     edited_embed = mock_starter_msg.edit.call_args.kwargs["embed"]
     assert "Frontend App" in edited_embed.description

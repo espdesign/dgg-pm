@@ -306,13 +306,24 @@ async def ensure_pinned_hub_post(
             await ensure_project_tag(channel, project_name)
 
         # 2. Check if a thread with Control Hub / Management Hub already exists
-        post_title = f"📌 📊 #{channel.name} • Control Hub" if channel_name else "📌 📊 Control Hub"
+        post_title = f"📌 #{channel.name} • Forum Control Hub" if channel_name else "📌 Forum Control Hub"
         existing_thread = None
         if hasattr(channel, "threads"):
             for t in channel.threads:
                 if "Control Hub" in t.name or "Management Hub" in t.name:
                     existing_thread = t
                     break
+        if not existing_thread and hasattr(channel, "active_threads"):
+            try:
+                active_res = channel.active_threads()
+                active = await active_res if hasattr(active_res, "__await__") else active_res
+                threads_list = getattr(active, "threads", active) or []
+                for t in threads_list:
+                    if "Control Hub" in t.name or "Management Hub" in t.name:
+                        existing_thread = t
+                        break
+            except Exception:
+                pass
 
         if existing_thread:
             try:

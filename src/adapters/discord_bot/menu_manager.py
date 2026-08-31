@@ -40,8 +40,8 @@ class MenuSessionManager:
         if self._active_menus.get(key) == interaction:
             self._active_menus.pop(key, None)
 
-    def schedule_toast_dismissal(self, interaction: discord.Interaction, delay: float = 8.0) -> None:
-        """Schedules auto-dismissal of an ephemeral toast message after delay (default: 8s)."""
+    def schedule_toast_dismissal(self, interaction: discord.Interaction, delay: float = 6.0) -> None:
+        """Schedules auto-dismissal of an ephemeral toast message after delay (default: 6s)."""
 
         async def _dismiss() -> None:
             await asyncio.sleep(delay)
