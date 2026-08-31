@@ -34,7 +34,7 @@ class ProjectCog(commands.Cog):
     @app_commands.command(name="project-create", description="Instantiate a top-level project container.")
     @app_commands.describe(
         name="Name of the project (e.g. Infrastructure)",
-        channel="Discord forum or text channel to bind as the project's task feed",
+        channel="Discord Forum Channel to bind as the project's task board",
         role="Discord server role representing the squad working on this project",
         lead="Designated Project Lead member with management permissions",
         prefix="Optional 3-4 letter prefix (e.g. INF)",
@@ -46,7 +46,7 @@ class ProjectCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         name: str,
-        channel: discord.ForumChannel | discord.TextChannel,
+        channel: discord.ForumChannel,
         role: discord.Role | None = None,
         lead: discord.Member | None = None,
         prefix: str | None = None,
@@ -57,9 +57,9 @@ class ProjectCog(commands.Cog):
             await interaction.response.send_message("❌ This command must be used in a Discord server.", ephemeral=True)
             return
 
-        if not isinstance(channel, (discord.ForumChannel, discord.TextChannel)):
+        if not isinstance(channel, discord.ForumChannel):
             await interaction.response.send_message(
-                "❌ Channel must be a Forum Channel or a Text Channel.", ephemeral=True
+                "❌ Projects must be bound to a Discord Forum Channel.", ephemeral=True
             )
             return
 
@@ -76,19 +76,17 @@ class ProjectCog(commands.Cog):
                 category=category,
             )
 
-            is_forum = isinstance(channel, discord.ForumChannel)
-            chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
+            chan_type_label = "Forum Post Board"
             tag_note = ""
 
-            if is_forum:
-                tags_added, _total_tags, tag_err = await setup_forum_tags(channel)
-                if tags_added > 0:
-                    tag_note = f" • Setup {tags_added} PM tags"
-                elif tag_err:
-                    tag_note = f" • ⚠️ {tag_err}"
-                proj_tag_err = await ensure_project_tag(channel, project.name)
-                if proj_tag_err:
-                    tag_note += f" • ⚠️ {proj_tag_err}"
+            tags_added, _total_tags, tag_err = await setup_forum_tags(channel)
+            if tags_added > 0:
+                tag_note = f" • Setup {tags_added} PM tags"
+            elif tag_err:
+                tag_note = f" • ⚠️ {tag_err}"
+            proj_tag_err = await ensure_project_tag(channel, project.name)
+            if proj_tag_err:
+                tag_note += f" • ⚠️ {proj_tag_err}"
 
             # Auto-create and pin the PM Control Hub in the linked channel
             hub_ok, _hub_status = await ensure_pinned_hub_post(

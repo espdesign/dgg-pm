@@ -83,7 +83,7 @@ async def test_project_menu_and_modal(services):
     assert sent_modal.channel == mock_forum_channel
 
     # 3. Test ProjectCreateModal submission -> launches ProjectCreateDraftView
-    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel = MagicMock(spec=discord.ForumChannel)
     mock_channel.id = 123456789
 
     modal = ProjectCreateModal(project_service=proj_srv, channel=mock_channel)
@@ -278,6 +278,10 @@ async def test_team_menu_and_modal(services):
 
     # Test clicking PM Main Menu
     main_menu_interaction = MagicMock(spec=discord.Interaction)
+    main_menu_interaction.guild = MagicMock(spec=discord.Guild)
+    main_menu_interaction.guild.id = guild_id
+    main_menu_interaction.user = MagicMock(spec=discord.Member)
+    main_menu_interaction.user.id = 1001
     main_menu_interaction.response = MagicMock()
     main_menu_interaction.response.edit_message = AsyncMock()
     await view._on_hub_clicked(main_menu_interaction)
@@ -1274,7 +1278,7 @@ async def test_menu_timeouts_and_hub_registration(services):
 async def test_project_create_draft_view_details_edit_and_cancel(services):
     guild_id = 123456789012345678
     proj_srv = services["project"]
-    mock_chan = MagicMock(spec=discord.TextChannel)
+    mock_chan = MagicMock(spec=discord.ForumChannel)
     mock_chan.id = 987123
     mock_chan.name = "eng-general"
 
@@ -1346,3 +1350,154 @@ async def test_project_create_draft_view_details_edit_and_cancel(services):
     draft_view._initial_interaction = initial_inter
     await draft_view.on_timeout()
     initial_inter.delete_original_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pm_dashboard_view_and_embed(services):
+    from src.adapters.discord_bot.views.admin_menu import (
+        PmDashboardOverviewView,
+        PmDashboardView,
+        build_pm_dashboard_embed,
+    )
+    from src.domain.enums import NotificationPreference
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    guild_id = 9999888866
+
+    p1 = await proj_srv.create_project(guild_id=guild_id, name="Admin Core", prefix="ADM")
+    t1 = await team_srv.create_team(guild_id=guild_id, name="Devs", discord_role_id=9001)
+
+    mock_guild = MagicMock(spec=discord.Guild)
+    mock_guild.id = guild_id
+    mock_guild.name = "Engineering Guild"
+
+    mock_admin_user = MagicMock(spec=discord.Member)
+    mock_admin_user.id = 1001
+    mock_admin_user.display_name = "Admin Alice"
+    mock_admin_user.guild_permissions = MagicMock(administrator=True, manage_guild=True)
+
+    # 1. Test build_pm_dashboard_embed
+    embed = build_pm_dashboard_embed(
+        guild=mock_guild,
+        user=mock_admin_user,
+        active_projects=[p1],
+        teams=[t1],
+        active_tasks_count=5,
+        current_pref=NotificationPreference.BOTH,
+        is_server_manager=True,
+    )
+    assert "Project Management Control Center" in embed.title
+    assert "1" in embed.fields[0].value
+    assert "1" in embed.fields[1].value
+    assert "5" in embed.fields[2].value
+    assert "Both" in embed.fields[3].value
+
+    # 2. Test PmDashboardView initialization
+    dash_view = PmDashboardView(
+        project_service=proj_srv,
+        team_service=team_srv,
+        task_service=task_srv,
+        user_service=user_srv,
+        user=mock_admin_user,
+    )
+    assert dash_view.is_server_manager is True
+    assert dash_view.new_proj_btn is not None
+    assert dash_view.projects_btn is not None
+    assert dash_view.teams_btn is not None
+    assert dash_view.settings_btn is not None
+    assert dash_view.overview_btn is not None
+    assert dash_view.guides_btn is not None
+
+    # 3. Test New Project button opens ChannelSelectView
+    inter = MagicMock(spec=discord.Interaction)
+    inter.guild = mock_guild
+    inter.user = mock_admin_user
+    inter.response = MagicMock()
+    inter.response.edit_message = AsyncMock()
+
+    await dash_view._on_new_project_clicked(inter)
+    inter.response.edit_message.assert_awaited_once()
+    chan_view = inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(chan_view, ProjectChannelSelectView)
+    assert chan_view.return_to == "dashboard"
+
+    # Test ProjectChannelSelectView Back button returns to PmDashboardView
+    back_inter = MagicMock(spec=discord.Interaction)
+    back_inter.guild = mock_guild
+    back_inter.user = mock_admin_user
+    back_inter.response = MagicMock()
+    back_inter.response.edit_message = AsyncMock()
+
+    await chan_view._on_back_clicked(back_inter)
+    back_inter.response.edit_message.assert_awaited_once()
+    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(back_dash_view, PmDashboardView)
+
+    # 4. Test Projects button opens ProjectMenuView
+    inter.response.edit_message.reset_mock()
+    await dash_view._on_projects_clicked(inter)
+    inter.response.edit_message.assert_awaited_once()
+    proj_view = inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(proj_view, ProjectMenuView)
+    assert proj_view.return_to == "dashboard"
+
+    # Test ProjectMenuView Hub button returns to PmDashboardView
+    back_inter.response.edit_message.reset_mock()
+    await proj_view._on_hub_clicked(back_inter)
+    back_inter.response.edit_message.assert_awaited_once()
+    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(back_dash_view, PmDashboardView)
+
+    # 5. Test Teams button opens TeamMenuView
+    inter.response.edit_message.reset_mock()
+    await dash_view._on_teams_clicked(inter)
+    inter.response.edit_message.assert_awaited_once()
+    team_view = inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(team_view, TeamMenuView)
+    assert team_view.return_to == "dashboard"
+
+    # Test TeamMenuView Hub button returns to PmDashboardView
+    back_inter.response.edit_message.reset_mock()
+    await team_view._on_hub_clicked(back_inter)
+    back_inter.response.edit_message.assert_awaited_once()
+    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(back_dash_view, PmDashboardView)
+
+    # 6. Test Settings button opens UserSettingsView
+    inter.response.edit_message.reset_mock()
+    await dash_view._on_settings_clicked(inter)
+    inter.response.edit_message.assert_awaited_once()
+    settings_view = inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(settings_view, UserSettingsView)
+    assert settings_view.return_to == "dashboard"
+
+    # Test UserSettingsView Hub button returns to PmDashboardView
+    back_inter.response.edit_message.reset_mock()
+    await settings_view._on_hub_clicked(back_inter)
+    back_inter.response.edit_message.assert_awaited_once()
+    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(back_dash_view, PmDashboardView)
+
+    # 7. Test Overview button and OverviewView Back button
+    inter.response.defer = AsyncMock()
+    inter.edit_original_response = AsyncMock()
+    await dash_view._on_overview_clicked(inter)
+    inter.edit_original_response.assert_awaited_once()
+    overview_view = inter.edit_original_response.call_args.kwargs["view"]
+    assert isinstance(overview_view, PmDashboardOverviewView)
+
+    back_inter.response.edit_message.reset_mock()
+    await overview_view._on_back_clicked(back_inter)
+    back_inter.response.edit_message.assert_awaited_once()
+    back_dash_view = back_inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(back_dash_view, PmDashboardView)
+
+    # 8. Test Guides button
+    inter.response.edit_message.reset_mock()
+    await dash_view._on_guides_clicked(inter)
+    inter.response.edit_message.assert_awaited_once()
+    guides_view = inter.response.edit_message.call_args.kwargs["view"]
+    assert isinstance(guides_view, PmDashboardOverviewView)

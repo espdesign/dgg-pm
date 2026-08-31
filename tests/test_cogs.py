@@ -47,8 +47,9 @@ async def test_project_create_execution(services):
     interaction.followup = MagicMock()
     interaction.followup.send = AsyncMock()
 
-    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel = MagicMock(spec=discord.ForumChannel)
     mock_channel.id = 123456789
+    mock_channel.available_tags = []
     mock_role = MagicMock(spec=discord.Role)
     mock_role.id = 777111
     mock_lead = MagicMock(spec=discord.Member)
@@ -76,6 +77,32 @@ async def test_project_create_execution(services):
     assert project.discord_channel_id == 123456789
     assert project.discord_role_id == 777111
     assert project.lead_discord_id == 888222
+
+
+@pytest.mark.asyncio
+async def test_project_create_rejects_non_forum(services):
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    bot = MagicMock()
+    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = 9999999999
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    mock_text_channel = MagicMock(spec=discord.TextChannel)
+
+    await cog.project_create.callback(
+        cog,
+        interaction=interaction,
+        name="Non Forum Project",
+        channel=mock_text_channel,
+    )
+
+    interaction.response.send_message.assert_awaited_once()
+    assert "Forum Channel" in interaction.response.send_message.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -686,3 +713,60 @@ async def test_pm_project_role_and_lead_commands(services):
     teams_after = await proj_srv.list_teams_for_project(p.id)
     assert len(teams_after) == 1
     assert teams_after[0].discord_role_id == 1001
+
+
+@pytest.mark.asyncio
+async def test_pm_cog_menu_and_notifications(services):
+    from src.adapters.discord_bot.views.admin_menu import PmDashboardView
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    user_srv = services["user"]
+    bot = MagicMock()
+    guild_id = 9999888877
+
+    pm_cog = PmCog(
+        bot=bot,
+        project_service=proj_srv,
+        task_service=task_srv,
+        team_service=team_srv,
+        user_service=user_srv,
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.guild.name = "Test Guild"
+    interaction.user = MagicMock()
+    interaction.user.id = 1001
+    interaction.user.display_name = "Alice"
+    interaction.user.guild_permissions = MagicMock(manage_guild=True, administrator=True)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
+
+    # 1. Test /pm menu
+    await pm_cog.menu.callback(pm_cog, interaction=interaction)
+    interaction.response.send_message.assert_awaited_once()
+    menu_embed = interaction.response.send_message.call_args.kwargs["embed"]
+    menu_view = interaction.response.send_message.call_args.kwargs["view"]
+    assert "Project Management Control Center" in menu_embed.title
+    assert isinstance(menu_view, PmDashboardView)
+
+    # 2. Test /pm notifications with value
+    await pm_cog.notifications.callback(pm_cog, interaction=interaction, notify_preference="channel")
+    interaction.followup.send.assert_awaited_once()
+    assert "CHANNEL" in interaction.followup.send.call_args.args[0]
+
+    pref = await user_srv.get_preference(guild_id, 1001)
+    assert pref == NotificationPreference.CHANNEL
+
+    # 3. Test /pm notification alias without value opens settings view
+    interaction.followup.send.reset_mock()
+    await pm_cog.notification.callback(pm_cog, interaction=interaction, notify_preference=None)
+    interaction.followup.send.assert_awaited_once()
+    settings_embed = interaction.followup.send.call_args.kwargs["embed"]
+    assert "Notification Preferences" in settings_embed.title

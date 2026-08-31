@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import logging
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import discord
@@ -13,6 +15,9 @@ from src.domain.models import Project, Team
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
+
+if TYPE_CHECKING:
+    from src.services.user_service import UserService
 
 logger = logging.getLogger("dgg_pm.views.project_menu")
 
@@ -467,7 +472,7 @@ class ProjectCreateModal(discord.ui.Modal):
 
 
 class ProjectChannelSelectView(discord.ui.View):
-    """Interactive view allowing the user to select any Forum or Text channel for a new project."""
+    """Interactive view allowing the user to select a Forum channel for a new project."""
 
     def __init__(
         self,
@@ -475,17 +480,21 @@ class ProjectChannelSelectView(discord.ui.View):
         team_service: TeamService,
         task_service: TaskService | None = None,
         initial_interaction: discord.Interaction | None = None,
+        user_service: UserService | None = None,
+        return_to: str = "projects",
     ):
         super().__init__(timeout=180)
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
+        self.return_to = return_to
         self._initial_interaction = initial_interaction
 
-        # Row 0: Channel Select dropdown
+        # Row 0: Channel Select dropdown (Forum channels only)
         self.channel_select = discord.ui.ChannelSelect(
-            channel_types=[discord.ChannelType.forum, discord.ChannelType.text],
-            placeholder="📢 Select target Forum or Text channel...",
+            channel_types=[discord.ChannelType.forum],
+            placeholder="📢 Select target Forum channel...",
             min_values=1,
             max_values=1,
             row=0,
@@ -493,9 +502,9 @@ class ProjectChannelSelectView(discord.ui.View):
         self.channel_select.callback = self._on_channel_selected
         self.add_item(self.channel_select)
 
-        # Row 1: Quick button to use current channel
+        # Row 1: Quick button to use current channel (if Forum)
         self.current_chan_btn = discord.ui.Button(
-            label="Use Current Channel",
+            label="Use Current Forum Channel",
             emoji="📍",
             style=discord.ButtonStyle.primary,
             row=1,
@@ -505,7 +514,7 @@ class ProjectChannelSelectView(discord.ui.View):
 
         # Row 1: Back button
         self.back_btn = discord.ui.Button(
-            label="Back to Project Menu",
+            label="Back",
             emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
@@ -529,8 +538,8 @@ class ProjectChannelSelectView(discord.ui.View):
             return
         selected = self.channel_select.values[0]
         chan = interaction.guild.get_channel(selected.id) if hasattr(selected, "id") else selected
-        if not chan or not isinstance(chan, (discord.ForumChannel, discord.TextChannel, discord.Thread)):
-            await interaction.response.send_message("❌ Invalid channel selected.", ephemeral=True)
+        if not chan or not isinstance(chan, discord.ForumChannel):
+            await interaction.response.send_message("❌ Selected channel must be a Forum Channel.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -545,11 +554,10 @@ class ProjectChannelSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_current_channel_clicked(self, interaction: discord.Interaction) -> None:
-        if not interaction.guild or not isinstance(
-            interaction.channel, (discord.ForumChannel, discord.TextChannel, discord.Thread)
-        ):
+        if not interaction.guild or not isinstance(interaction.channel, discord.ForumChannel):
             await interaction.response.send_message(
-                "❌ Current channel must be a Forum or Text channel.", ephemeral=True
+                "❌ Current channel is not a Forum Channel. Please select a Forum Channel from the dropdown above.",
+                ephemeral=True,
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -564,14 +572,48 @@ class ProjectChannelSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     async def _on_back_clicked(self, interaction: discord.Interaction) -> None:
-        view = ProjectMenuView(
-            self.project_service,
-            self.team_service,
-            self.task_service,
-            initial_interaction=interaction,
-        )
-        embed = build_project_menu_embed(view.is_server_manager)
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
+        if self.return_to == "dashboard" and interaction.guild:
+            from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
+            from src.domain.enums import NotificationPreference
+
+            projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
+            _, count = (
+                await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
+            )
+            current_pref = (
+                await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
+                if self.user_service
+                else NotificationPreference.DM
+            )
+            view = PmDashboardView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                self.user_service,
+                initial_interaction=interaction,
+            )
+            embed = build_pm_dashboard_embed(
+                guild=interaction.guild,
+                user=interaction.user,
+                active_projects=projects,
+                teams=teams,
+                active_tasks_count=count,
+                current_pref=current_pref,
+                is_server_manager=view.is_server_manager,
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        else:
+            view = ProjectMenuView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                initial_interaction=interaction,
+                user_service=self.user_service,
+                return_to=self.return_to,
+            )
+            embed = build_project_menu_embed(view.is_server_manager)
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
 
 
 class ProjectSearchModal(discord.ui.Modal):
@@ -2055,11 +2097,15 @@ class ProjectMenuView(discord.ui.View):
         initial_interaction: discord.Interaction | None = None,
         user: discord.Member | discord.User | None = None,
         is_server_manager: bool | None = None,
+        user_service: UserService | None = None,
+        return_to: str = "dashboard",
     ):
         super().__init__(timeout=180)
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.user_service = user_service
+        self.return_to = return_to
         self._initial_interaction = initial_interaction
 
         effective_user = user or (initial_interaction.user if initial_interaction else None)
@@ -2216,12 +2262,44 @@ class ProjectMenuView(discord.ui.View):
         )
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+        if self.return_to == "dashboard" and interaction.guild:
+            from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
+            from src.domain.enums import NotificationPreference
 
-        if self.task_service:
-            view = PmHubView(self.project_service, self.team_service, self.task_service)
-            embed = build_hub_welcome_embed()
+            projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
+            _, count = (
+                await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
+            )
+            current_pref = (
+                await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
+                if self.user_service
+                else NotificationPreference.DM
+            )
+            view = PmDashboardView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                self.user_service,
+                initial_interaction=interaction,
+            )
+            embed = build_pm_dashboard_embed(
+                guild=interaction.guild,
+                user=interaction.user,
+                active_projects=projects,
+                teams=teams,
+                active_tasks_count=count,
+                current_pref=current_pref,
+                is_server_manager=view.is_server_manager,
+            )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
+        else:
+            from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+            if self.task_service:
+                view = PmHubView(self.project_service, self.team_service, self.task_service, self.user_service)
+                embed = build_hub_welcome_embed()
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_new_project_clicked(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
@@ -2235,13 +2313,15 @@ class ProjectMenuView(discord.ui.View):
             self.team_service,
             self.task_service,
             initial_interaction=interaction,
+            user_service=self.user_service,
+            return_to=self.return_to,
         )
         embed = discord.Embed(
-            title="📁 Create Project: Select Channel / Forum",
+            title="📁 Create Project: Select Forum Channel",
             description=(
-                "Choose a **Forum Channel** (recommended) or **Text Channel** to bind as the project's task board.\n\n"
-                "• **Forum Channel**: Tasks become organized forum post cards with native Discord tag filtering.\n"
-                "• **Text Channel**: Tasks are posted as embeds with discussion threads."
+                "Choose a **Forum Channel** to bind as the project's task board.\n\n"
+                "Tasks become organized forum post cards with native Discord tag filtering "
+                "and an interactive pinned Control Hub."
             ),
             color=discord.Color.blue(),
         )

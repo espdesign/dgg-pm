@@ -212,8 +212,9 @@ async def test_cogs_handle_service_and_unexpected_errors(services, caplog):
 
     # 1. Project Cog: Duplicate project name translates to clean error message
     await services["project"].create_project(guild_id=guild_id, name="Infra", prefix="INF")
-    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel = MagicMock(spec=discord.ForumChannel)
     mock_channel.id = 12345
+    mock_channel.available_tags = []
     await project_cog.project_create.callback(
         project_cog, interaction, name="Infra", prefix="INF2", channel=mock_channel
     )

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import discord
@@ -10,6 +13,9 @@ from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
+
+if TYPE_CHECKING:
+    from src.services.user_service import UserService
 
 logger = logging.getLogger("dgg_pm.views.team_menu")
 
@@ -458,11 +464,15 @@ class TeamMenuView(discord.ui.View):
         user: discord.Member | discord.User | None = None,
         can_create_teams: bool | None = None,
         can_assign_members: bool | None = None,
+        user_service: UserService | None = None,
+        return_to: str = "dashboard",
     ):
         super().__init__(timeout=180)
         self.team_service = team_service
         self.project_service = project_service
         self.task_service = task_service
+        self.user_service = user_service
+        self.return_to = return_to
         self._initial_interaction = initial_interaction
 
         effective_user = user or (initial_interaction.user if initial_interaction else None)
@@ -549,12 +559,48 @@ class TeamMenuView(discord.ui.View):
             pass
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+        if self.return_to == "dashboard" and interaction.guild:
+            from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
+            from src.domain.enums import NotificationPreference
 
-        if self.project_service and self.task_service:
-            view = PmHubView(self.project_service, self.team_service, self.task_service)
-            embed = build_hub_welcome_embed()
+            projects = (
+                await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+                if self.project_service
+                else []
+            )
+            teams = await self.team_service.list_teams(interaction.guild.id)
+            _, count = (
+                await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
+            )
+            current_pref = (
+                await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
+                if self.user_service
+                else NotificationPreference.DM
+            )
+            view = PmDashboardView(
+                self.project_service,
+                self.team_service,
+                self.task_service,
+                self.user_service,
+                initial_interaction=interaction,
+            )
+            embed = build_pm_dashboard_embed(
+                guild=interaction.guild,
+                user=interaction.user,
+                active_projects=projects,
+                teams=teams,
+                active_tasks_count=count,
+                current_pref=current_pref,
+                is_server_manager=view.is_server_manager,
+            )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
+        else:
+            from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+            if self.project_service and self.task_service:
+                view = PmHubView(self.project_service, self.team_service, self.task_service, self.user_service)
+                embed = build_hub_welcome_embed()
+                await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     async def _on_create_team_clicked(self, interaction: discord.Interaction) -> None:
         view = TeamCreateRoleSelectView(

@@ -52,6 +52,7 @@ class UserSettingsView(discord.ui.View):
         team_service: TeamService | None = None,
         task_service: TaskService | None = None,
         initial_interaction: discord.Interaction | None = None,
+        return_to: str = "dashboard",
     ):
         super().__init__(timeout=180)
         self.user_service = user_service
@@ -59,6 +60,7 @@ class UserSettingsView(discord.ui.View):
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
+        self.return_to = return_to
         self._initial_interaction = initial_interaction
 
         self._refresh_buttons()
@@ -227,14 +229,44 @@ class UserSettingsView(discord.ui.View):
             await send_interaction_error(interaction, e, "saving notification preference", logger, ephemeral=True)
 
     async def _on_hub_clicked(self, interaction: discord.Interaction) -> None:
-        from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+        if self.return_to == "dashboard" and interaction.guild:
+            from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
 
-        if self.project_service and self.team_service and self.task_service:
-            view = PmHubView(
+            projects = (
+                await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+                if self.project_service
+                else []
+            )
+            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
+            _, count = (
+                await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
+            )
+            view = PmDashboardView(
                 self.project_service,
                 self.team_service,
                 self.task_service,
                 self.user_service,
+                initial_interaction=interaction,
             )
-            embed = build_hub_welcome_embed()
+            embed = build_pm_dashboard_embed(
+                guild=interaction.guild,
+                user=interaction.user,
+                active_projects=projects,
+                teams=teams,
+                active_tasks_count=count,
+                current_pref=self.current_pref,
+                is_server_manager=view.is_server_manager,
+            )
             await interaction.response.edit_message(content=None, embed=embed, view=view)
+        else:
+            from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+
+            if self.project_service and self.team_service and self.task_service:
+                view = PmHubView(
+                    self.project_service,
+                    self.team_service,
+                    self.task_service,
+                    self.user_service,
+                )
+                embed = build_hub_welcome_embed()
+                await interaction.response.edit_message(content=None, embed=embed, view=view)

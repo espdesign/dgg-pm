@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, resolve_forum_tags, setup_forum_tags
-from src.adapters.discord_bot.views.hub_menu import PmHubView, build_hub_welcome_embed
+from src.adapters.discord_bot.views.hub_menu import build_hub_welcome_embed
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import build_task_embed, build_task_history_embed
 from src.adapters.discord_bot.views.task_list_view import TaskListView, build_page_embed
@@ -115,22 +115,47 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
     # ==========================================
     # Root /pm Commands
     # ==========================================
-    @app_commands.command(name="menu", description="Open the interactive Project Management Control Hub.")
+    @app_commands.command(name="menu", description="Open the Project Management Administration & Control Center.")
     async def menu(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ Must be used inside a Discord server.", ephemeral=True)
+            return
         try:
-            view = PmHubView(
+            from src.adapters.discord_bot.views.admin_menu import PmDashboardView, build_pm_dashboard_embed
+
+            projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+            teams = await self.team_service.list_teams(interaction.guild.id) if self.team_service else []
+            _, count = (
+                await self.task_service.list_tasks(interaction.guild.id, limit=1) if self.task_service else ([], 0)
+            )
+            current_pref = (
+                await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
+                if self.user_service
+                else NotificationPreference.DM
+            )
+
+            view = PmDashboardView(
                 project_service=self.project_service,
                 team_service=self.team_service,
                 task_service=self.task_service,
                 user_service=self.user_service,
+                initial_interaction=interaction,
             )
-            embed = build_hub_welcome_embed()
+            embed = build_pm_dashboard_embed(
+                guild=interaction.guild,
+                user=interaction.user,
+                active_projects=projects,
+                teams=teams,
+                active_tasks_count=count,
+                current_pref=current_pref,
+                is_server_manager=view.is_server_manager,
+            )
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             await menu_manager.register_menu(interaction)
         except Exception as e:
-            await send_interaction_error(interaction, e, "opening PM hub menu", logger, ephemeral=True)
+            await send_interaction_error(interaction, e, "opening PM control center", logger, ephemeral=True)
 
     @app_commands.command(name="help", description="View help guide for DGG-PM slash commands and workflows.")
     async def help_command(self, interaction: discord.Interaction) -> None:
@@ -140,7 +165,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             embed.description = (
                 "**DGG-PM** is a collision-free project management bot.\n\n"
                 "**Core Slash Commands (`/pm`):**\n"
-                "• `/pm menu`: Open the interactive dashboard\n"
+                "• `/pm menu`: Open the Project Management Control Center\n"
+                "• `/pm settings` or `/pm notifications`: Configure personal notification delivery\n"
                 "• `/pm task create [project] [title]`: Create a task & thread\n"
                 "• `/pm task list [project] [user] [status]`: View paginated active tasks\n"
                 "• `/pm task assign [task] [assignee]`: Assign a task to a member\n"
@@ -151,7 +177,6 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 "• `/pm team lead [action] [team] [user]`: Designate/remove team lead\n"
                 "• `/pm team list`: View server squad rosters and leads\n"
                 "• `/pm post-hub [channel]`: Post and pin interactive PM Hub in forum/channel\n"
-                "• `/pm settings [notify_preference]`: Configure notification delivery\n"
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -160,17 +185,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         except Exception as e:
             await send_interaction_error(interaction, e, "opening help guide", logger, ephemeral=True)
 
-    @app_commands.command(name="settings", description="Configure your personal notification delivery preference.")
-    @app_commands.describe(notify_preference="Choose where you receive task assignments and updates")
-    @app_commands.choices(
-        notify_preference=[
-            app_commands.Choice(name="Direct Message (DM)", value="dm"),
-            app_commands.Choice(name="Thread Channel Ping", value="channel"),
-            app_commands.Choice(name="Both (DM + Channel)", value="both"),
-            app_commands.Choice(name="Silent / None", value="silent"),
-        ]
-    )
-    async def settings(self, interaction: discord.Interaction, notify_preference: str | None = None) -> None:
+    async def _handle_settings(self, interaction: discord.Interaction, notify_preference: str | None = None) -> None:
         if not self.user_service:
             await interaction.response.send_message("❌ User settings service is not enabled.", ephemeral=True)
             return
@@ -211,6 +226,51 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
         except Exception as e:
             await send_interaction_error(interaction, e, "updating settings", logger, ephemeral=True)
+
+    @app_commands.command(name="settings", description="Configure your personal notification delivery preference.")
+    @app_commands.describe(notify_preference="Choose where you receive task assignments and updates")
+    @app_commands.choices(
+        notify_preference=[
+            app_commands.Choice(name="Direct Message (DM)", value="dm"),
+            app_commands.Choice(name="Thread Channel Ping", value="channel"),
+            app_commands.Choice(name="Both (DM + Channel)", value="both"),
+            app_commands.Choice(name="Silent / None", value="silent"),
+        ]
+    )
+    async def settings(self, interaction: discord.Interaction, notify_preference: str | None = None) -> None:
+        await self._handle_settings(interaction, notify_preference=notify_preference)
+
+    @app_commands.command(
+        name="notifications",
+        description="Configure your personal notification delivery preference (DM, Channel, Both, Silent).",
+    )
+    @app_commands.describe(notify_preference="Choose where you receive task assignments and updates")
+    @app_commands.choices(
+        notify_preference=[
+            app_commands.Choice(name="Direct Message (DM)", value="dm"),
+            app_commands.Choice(name="Thread Channel Ping", value="channel"),
+            app_commands.Choice(name="Both (DM + Channel)", value="both"),
+            app_commands.Choice(name="Silent / None", value="silent"),
+        ]
+    )
+    async def notifications(self, interaction: discord.Interaction, notify_preference: str | None = None) -> None:
+        await self._handle_settings(interaction, notify_preference=notify_preference)
+
+    @app_commands.command(
+        name="notification",
+        description="Configure your personal notification delivery preference (DM, Channel, Both, Silent).",
+    )
+    @app_commands.describe(notify_preference="Choose where you receive task assignments and updates")
+    @app_commands.choices(
+        notify_preference=[
+            app_commands.Choice(name="Direct Message (DM)", value="dm"),
+            app_commands.Choice(name="Thread Channel Ping", value="channel"),
+            app_commands.Choice(name="Both (DM + Channel)", value="both"),
+            app_commands.Choice(name="Silent / None", value="silent"),
+        ]
+    )
+    async def notification(self, interaction: discord.Interaction, notify_preference: str | None = None) -> None:
+        await self._handle_settings(interaction, notify_preference=notify_preference)
 
     @app_commands.command(
         name="post-hub",
@@ -847,13 +907,12 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
 
     # ==========================================
     # Project Subgroup: /pm project <cmd>
-    # ==========================================
     @project_group.command(name="create", description="Create a project container, bind channel, and map team role.")
     @app_commands.describe(
         name="Project Name (e.g. Mobile App)",
         prefix="Short uppercase task prefix (e.g. MOB)",
         role="Discord server role representing the squad working on this project",
-        channel="Discord Forum or Text Channel to bind for tasks",
+        channel="Discord Forum Channel to bind for tasks",
         description="Optional markdown project overview",
         category="Optional organizational category",
     )
@@ -864,11 +923,16 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         name: str,
         prefix: str,
         role: discord.Role,
-        channel: discord.ForumChannel | discord.TextChannel | None = None,
+        channel: discord.ForumChannel | None = None,
         description: str | None = None,
         category: str | None = None,
     ) -> None:
         if not interaction.guild:
+            return
+        if channel is not None and not isinstance(channel, discord.ForumChannel):
+            await interaction.response.send_message(
+                "❌ Projects must be bound to a Discord Forum Channel.", ephemeral=True
+            )
             return
         await interaction.response.defer(ephemeral=True)
         try:
