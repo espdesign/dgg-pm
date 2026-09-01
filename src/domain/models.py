@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -13,6 +14,13 @@ from src.domain.enums import (
     TaskStatus,
     TeamRoleType,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class Actor:
+    user_id: int
+    role_ids: frozenset[int] = frozenset()
+    is_admin: bool = False
 
 
 class DomainModel(BaseModel):

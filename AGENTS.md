@@ -7,8 +7,10 @@ This project uses [`devenv`](https://devenv.sh/) (Nix-based) for managing Python
 ### Rules for Tool & Command Execution
 
 1. **Always use `devenv shell -- <cmd>` for non-interactive commands**:
-   - Do NOT run `pip`, `pytest`, `python`, or `ruff` directly on the host system without devenv.
-   - Execute all project-related commands, test runs, linting, and script invocations using `devenv shell -- <command>`.
+   - The host system runs in a Nix environment where tools (`python`, `python3`, `pip`, `pytest`, `ruff`, `uv`, etc.) are not in host `$PATH`.
+   - Do NOT run bare `python3`, `python`, `pip`, `pytest`, or `ruff` directly on the host.
+   - Always execute all commands, one-off scripts, test runs, and tooling through `devenv shell -- <command>` (or `nix shell`).
+   - **Do NOT write or edit source files using shell scripts or inline python** (e.g. `python -c "open(...)"` or `cat <<EOF`). Always use the dedicated file editing tools (`replace_file_content`) to modify code files.
 
 2. **Common devenv Commands**:
    - **Run Test Suite**: `devenv shell -- run-tests` (or `devenv shell -- pytest`)

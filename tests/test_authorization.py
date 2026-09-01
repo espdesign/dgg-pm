@@ -938,3 +938,55 @@ async def test_auth_service_standalone_task_permissions_option_b(services):
     await lead_view.standalone_btn.callback(bad_interaction)
     bad_interaction.response.send_message.assert_awaited_once()
     assert "Only Server Managers and Team Leads" in bad_interaction.response.send_message.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_pure_domain_actor_authorization(services):
+    """Verifies that AuthService works with 100% pure domain Actor structs without any Discord SDK dependencies."""
+    from src.domain.models import Actor
+
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    auth_srv = AuthService(proj_srv, team_srv)
+
+    guild_id = 9999099
+    project = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Domain Seam Project",
+        prefix="DSM",
+        discord_role_id=5001,
+        lead_discord_id=6001,
+    )
+
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Pure Actor Task",
+        creator_discord_id=7001,
+        assignee_discord_id=7002,
+        project_id=project.id,
+    )
+
+    # 1. Admin Actor
+    admin_actor = Actor(user_id=1, is_admin=True)
+    assert auth_srv.is_server_manager(admin_actor) is True
+    assert await auth_srv.can_mutate_task(admin_actor, task) is True
+    assert await auth_srv.can_create_task_in_project(admin_actor, project.id) is True
+
+    # 2. Project Lead Actor
+    lead_actor = Actor(user_id=6001, is_admin=False)
+    assert await auth_srv.is_project_lead(lead_actor, project.id) is True
+    assert await auth_srv.can_mutate_task(lead_actor, task) is True
+    assert await auth_srv.can_create_task_in_project(lead_actor, project.id) is True
+
+    # 3. Squad Role Member Actor
+    squad_actor = Actor(user_id=8001, role_ids=frozenset({5001}), is_admin=False)
+    assert await auth_srv.can_mutate_task(squad_actor, task) is True
+    assert await auth_srv.can_create_task_in_project(squad_actor, project.id) is True
+
+    # 4. Unrelated Actor
+    stranger_actor = Actor(user_id=9999, role_ids=frozenset({1234}), is_admin=False)
+    assert await auth_srv.can_mutate_task(stranger_actor, task) is False
+    assert await auth_srv.can_create_task_in_project(stranger_actor, project.id) is False
+    with pytest.raises(PermissionDeniedError):
+        await auth_srv.require_task_mutation(stranger_actor, task)
