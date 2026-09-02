@@ -43,17 +43,17 @@ def build_pm_dashboard_embed(
     proj_count = len(active_projects) if active_projects else 0
 
     pref_labels = {
-        NotificationPreference.DM: "💬 DM Only",
-        NotificationPreference.CHANNEL: "📢 Channel Ping",
-        NotificationPreference.BOTH: "🔔 Both (DM + Channel)",
-        NotificationPreference.NONE: "🔕 Silent / None",
+        NotificationPreference.DM: "DM Only",
+        NotificationPreference.CHANNEL: "Channel Ping",
+        NotificationPreference.BOTH: "Both (DM + Channel)",
+        NotificationPreference.NONE: "Silent / None",
     }
     pref_str = pref_labels.get(current_pref, current_pref.value)
 
-    role_badge = "👑 Server Administrator / Manager" if is_server_manager else "👤 Project Contributor"
+    role_badge = "Server Administrator / Manager" if is_server_manager else "Project Contributor"
 
     embed = discord.Embed(
-        title="🛠️ Project Management Control Center",
+        title="Project Management Control Center",
         description=(
             f"> Server: **{guild_name}** • Access: **{role_badge}**\n\n"
             "Central administration portal for project containers, squad role mappings, "
@@ -63,39 +63,39 @@ def build_pm_dashboard_embed(
     )
 
     embed.add_field(
-        name="📁 Active Projects",
+        name="Active Projects",
         value=f"**{proj_count}** active",
         inline=True,
     )
     embed.add_field(
-        name="📋 Active Tasks",
+        name="Active Tasks",
         value=f"**{active_tasks_count}** open",
         inline=True,
     )
     embed.add_field(
-        name="⚙️ Notifications",
+        name="Notifications",
         value=f"`{pref_str}`",
         inline=True,
     )
 
     if is_server_manager:
         embed.add_field(
-            name="🚀 Management Actions",
+            name="Management Actions",
             value=(
-                "• **`➕ New Project`**: Launch the multi-step project creation wizard.\n"
-                "• **`📁 Projects`**: Manage channels, assign squad roles, set leads, archive.\n"
-                "• **`📊 Server Overview`**: Server-wide project status & completion metrics.\n"
-                "• **`⚙️ Settings`**: Configure personal notification preferences."
+                "• **`New Project`**: Launch the multi-step project creation wizard.\n"
+                "• **`Projects`**: Manage channels, assign squad roles, set leads, archive.\n"
+                "• **`Server Overview`**: Server-wide project status & completion metrics.\n"
+                "• **`Settings`**: Configure personal notification preferences."
             ),
             inline=False,
         )
     else:
         embed.add_field(
-            name="📌 Available Workspace Actions",
+            name="Available Workspace Actions",
             value=(
-                "• **`📁 Projects`**: Browse active projects and mapped channels.\n"
-                "• **`📊 Server Overview`**: View server-wide project progress.\n"
-                "• **`⚙️ Settings`**: Update your task assignment notification preferences."
+                "• **`Projects`**: Browse active projects and mapped channels.\n"
+                "• **`Server Overview`**: View server-wide project progress.\n"
+                "• **`Settings`**: Update your task assignment notification preferences."
             ),
             inline=False,
         )
@@ -124,7 +124,6 @@ class PmDashboardOverviewView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Control Center",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -197,7 +196,6 @@ class PmDashboardView(discord.ui.View):
         if self.is_server_manager:
             self.new_proj_btn = discord.ui.Button(
                 label="New Project",
-                emoji="➕",
                 style=discord.ButtonStyle.success,
                 row=0,
             )
@@ -206,7 +204,6 @@ class PmDashboardView(discord.ui.View):
 
         self.projects_btn = discord.ui.Button(
             label="Projects",
-            emoji="📁",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -215,7 +212,6 @@ class PmDashboardView(discord.ui.View):
 
         self.overview_btn = discord.ui.Button(
             label="Server Overview",
-            emoji="📊",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -226,7 +222,6 @@ class PmDashboardView(discord.ui.View):
         if self.user_service:
             self.settings_btn = discord.ui.Button(
                 label="My Settings",
-                emoji="⚙️",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -235,7 +230,6 @@ class PmDashboardView(discord.ui.View):
 
         self.guides_btn = discord.ui.Button(
             label="Guides",
-            emoji="📖",
             style=discord.ButtonStyle.secondary,
             row=1,
         )

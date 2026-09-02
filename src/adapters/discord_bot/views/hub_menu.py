@@ -336,7 +336,6 @@ class PmHubView(discord.ui.View):
 
     @discord.ui.button(
         label="New Task",
-        emoji="➕",
         style=discord.ButtonStyle.success,
         row=0,
         custom_id="pm_hub:new_task",
@@ -398,7 +397,7 @@ class PmHubView(discord.ui.View):
             )
             picker_view._initial_interaction = interaction
             embed = discord.Embed(
-                title="➕ New Task: Select Project",
+                title="New Task: Select Project",
                 description="Choose which active project in this channel to create the task under:",
                 color=discord.Color.blurple(),
             )
@@ -423,7 +422,7 @@ class PmHubView(discord.ui.View):
                     modal = TaskCreateModal(
                         task_service=self.task_service,
                         project=None,
-                        target_channel=target_channel,
+                        target_channel=interaction.channel,
                         auth_service=auth_srv,
                     )
                     await interaction.response.send_modal(modal)
@@ -451,10 +450,10 @@ class PmHubView(discord.ui.View):
                     initial_interaction=interaction,
                 )
                 embed = discord.Embed(
-                    title="📁 Select Project Container",
+                    title="Select Project Container",
                     description=(
                         "Choose which active project to create the task inside:\n"
-                        "• Use **`🔍 Search Projects`** to quickly filter across all projects."
+                        "• Use **`Search Projects`** to quickly filter across all projects."
                     ),
                     color=discord.Color.blurple(),
                 )
@@ -462,7 +461,6 @@ class PmHubView(discord.ui.View):
 
     @discord.ui.button(
         label="My Tasks",
-        emoji="👤",
         style=discord.ButtonStyle.primary,
         row=0,
         custom_id="pm_hub:my_tasks",
@@ -495,7 +493,7 @@ class PmHubView(discord.ui.View):
             )
             picker_view._initial_interaction = interaction
             embed = discord.Embed(
-                title="👤 My Tasks: Select Project Scope",
+                title="My Tasks: Select Project Scope",
                 description="Choose which project scope to view your assigned tasks for:",
                 color=discord.Color.blurple(),
             )
@@ -538,7 +536,6 @@ class PmHubView(discord.ui.View):
 
     @discord.ui.button(
         label="Projects Hub",
-        emoji="📁",
         style=discord.ButtonStyle.primary,
         row=0,
         custom_id="pm_hub:projects",
@@ -559,7 +556,6 @@ class PmHubView(discord.ui.View):
 
     @discord.ui.button(
         label="Visual Graph",
-        emoji="🌲",
         style=discord.ButtonStyle.primary,
         row=0,
         custom_id="pm_hub:tech_tree",
@@ -594,7 +590,7 @@ class PmHubView(discord.ui.View):
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(
-                title=f"🌲 Visual Graph: [{target_project.prefix}] {target_project.name}",
+                title=f"Visual Graph: [{target_project.prefix}] {target_project.name}",
                 description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
                 color=discord.Color.from_rgb(16, 152, 247),
             )
@@ -609,7 +605,7 @@ class PmHubView(discord.ui.View):
 
         view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
         await interaction.response.send_message(
-            "🌲 Choose a project to view its Visual Graph visualization:",
+            "Choose a project to view its Visual Graph visualization:",
             view=view,
             ephemeral=True,
         )
@@ -620,9 +616,9 @@ def build_hub_welcome_embed(
     bound_projects: list[Project] | None = None,
 ) -> discord.Embed:
     if channel_name:
-        title = f"📌 #{channel_name} • Forum Control Hub"
+        title = f"#{channel_name} • Forum Control Hub"
     else:
-        title = "📌 Forum Control Hub"
+        title = "Forum Control Hub"
 
     embed = discord.Embed(
         title=title,
@@ -633,7 +629,7 @@ def build_hub_welcome_embed(
         if len(bound_projects) == 1:
             p = bound_projects[0]
             desc = (
-                f"> 📁 **Bound Project**: **{p.name}** (`[{p.prefix}]`)\n"
+                f"> **Bound Project**: **{p.name}** (`[{p.prefix}]`)\n"
                 f"> {p.description or 'Active contributor task feed and discussion board.'}\n\n"
                 "Click any button below to manage tasks, explore dependencies, or view projects."
             )
@@ -643,7 +639,7 @@ def build_hub_welcome_embed(
                 for p in bound_projects
             )
             desc = (
-                f"> 📁 **Bound Projects in this Channel**:\n{projects_summary}\n\n"
+                f"> **Bound Projects in this Channel**:\n{projects_summary}\n\n"
                 "Click any button below to manage tasks, explore dependencies, or view projects."
             )
     else:
@@ -654,22 +650,22 @@ def build_hub_welcome_embed(
 
     embed.description = desc
     embed.add_field(
-        name="➕ New Task",
+        name="New Task",
         value="Create a new task card within this forum channel.",
         inline=True,
     )
     embed.add_field(
-        name="🌲 Visual Graph",
+        name="Visual Graph",
         value="Render the visual dependency DAG diagram.",
         inline=True,
     )
     embed.add_field(
-        name="👤 My Tasks",
+        name="My Tasks",
         value="Filter to your personalized assigned tasks and deadlines.",
         inline=True,
     )
     embed.add_field(
-        name="📁 Projects Hub",
+        name="Projects Hub",
         value="Browse project settings, squads, and project leads.",
         inline=True,
     )

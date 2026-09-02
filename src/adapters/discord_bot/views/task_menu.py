@@ -306,9 +306,9 @@ def build_task_board_embed(
 ) -> discord.Embed:
     """Build standardized Task Board embed with active filters and task summary cards."""
     embed = discord.Embed(
-        title=f"📋 Task Board • {total_count} Tasks Active",
+        title=f"Task Board • {total_count} Tasks Active",
         description=(
-            "> 🔍 **Active Board Filters**\n"
+            "> **Active Board Filters**\n"
             f"> • **Project Scope**: `{project_label}`\n"
             f"> • **Status**: `{status_label}`\n"
             f"> • **Assignee**: {assignee_label}"
@@ -319,7 +319,7 @@ def build_task_board_embed(
     if not tasks:
         embed.add_field(
             name="No Tasks Found",
-            value="No tasks match the active filter combination.\nUse **`➕ New Task`** to create one.",
+            value="No tasks match the active filter combination.\nUse **`New Task`** to create one.",
             inline=False,
         )
     else:
@@ -330,7 +330,7 @@ def build_task_board_embed(
             assignee_str = f"<@{t.assignee_discord_id}>" if t.assignee_discord_id else "*Unassigned*"
             due_str = f" • Due: {t.due_at.strftime('%b %d')}" if t.due_at else ""
             jump_url = get_task_jump_url(t)
-            link_bullet = f"• [🔗 **Open Task Workspace**]({jump_url})\n" if jump_url else ""
+            link_bullet = f"• [**Open Task Workspace**]({jump_url})\n" if jump_url else ""
             embed.add_field(
                 name=f"{icon} [{t.short_id}] {t.title}",
                 value=(
@@ -423,7 +423,6 @@ class TaskMenuView(discord.ui.View):
 
         self.new_task_btn = discord.ui.Button(
             label=new_task_label,
-            emoji="✨",
             style=discord.ButtonStyle.primary,
             row=0,
         )
@@ -433,7 +432,6 @@ class TaskMenuView(discord.ui.View):
         if self.can_create_standalone:
             self.standalone_btn = discord.ui.Button(
                 label="Standalone Task",
-                emoji="📌",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -442,7 +440,6 @@ class TaskMenuView(discord.ui.View):
 
         self.search_scope_btn = discord.ui.Button(
             label="Search Scope",
-            emoji="🔍",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -451,7 +448,6 @@ class TaskMenuView(discord.ui.View):
 
         self.reset_btn = discord.ui.Button(
             label="Reset Filters",
-            emoji="🔄",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -461,7 +457,6 @@ class TaskMenuView(discord.ui.View):
         if self.team_service:
             self.hub_btn = discord.ui.Button(
                 label="PM Menu",
-                emoji="🏠",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -469,19 +464,16 @@ class TaskMenuView(discord.ui.View):
             self.add_item(self.hub_btn)
 
         # Row 1: Project Scope Filter Dropdown
-        # Options: Global scope, then channel-bound projects, then remaining projects (or search results)
         project_options = [
             discord.SelectOption(
                 label="All Projects (Global Scope)",
                 value="all",
-                emoji="🌐",
                 default=(self.selected_project_id is None),
             )
         ]
 
         channel_ids = {cid for cid in (self.current_channel_id, self.parent_channel_id) if cid}
 
-        # If a search query is active, filter projects; otherwise list channel projects then others
         if self.search_query:
             q = self.search_query.lower()
             filtered = [
@@ -490,7 +482,7 @@ class TaskMenuView(discord.ui.View):
                 if q in p.name.lower() or q in p.prefix.lower() or (p.category and q in p.category.lower())
             ]
         else:
-            # Sort channel projects first
+
             def sort_key(p: Project) -> tuple[int, str]:
                 is_chan = 0 if (p.discord_channel_id and p.discord_channel_id in channel_ids) else 1
                 return (is_chan, p.name.lower())
@@ -499,18 +491,17 @@ class TaskMenuView(discord.ui.View):
 
         for p in filtered[:24]:
             is_chan = bool(p.discord_channel_id and p.discord_channel_id in channel_ids)
-            chan_tag = " 📍 (This Channel)" if is_chan else ""
+            chan_tag = " (This Channel)" if is_chan else ""
             project_options.append(
                 discord.SelectOption(
                     label=f"[{p.prefix}] {p.name}{chan_tag}"[:100],
                     value=str(p.id),
-                    emoji="📍" if is_chan else "📁",
                     default=(self.selected_project_id == p.id),
                 )
             )
 
         self.project_select = discord.ui.Select(
-            placeholder="📁 Filter by Project Scope...",
+            placeholder="Filter by project scope...",
             options=project_options,
             row=1,
         )
@@ -522,7 +513,6 @@ class TaskMenuView(discord.ui.View):
             discord.SelectOption(
                 label="Active Tasks (In Progress & Not Started)",
                 value="active",
-                emoji="⚡",
                 default=(self.status_filter_value == "active"),
             ),
             discord.SelectOption(
@@ -546,12 +536,11 @@ class TaskMenuView(discord.ui.View):
             discord.SelectOption(
                 label="All Statuses (including Completed)",
                 value="all",
-                emoji="📊",
                 default=(self.status_filter_value == "all"),
             ),
         ]
         self.status_select = discord.ui.Select(
-            placeholder="📊 Filter by Status...",
+            placeholder="Filter by status...",
             options=status_options,
             row=2,
         )
@@ -561,7 +550,7 @@ class TaskMenuView(discord.ui.View):
         # Row 3: Assignee User Select Picker
         member_defaults = [discord.Object(id=self.selected_assignee_id)] if self.selected_assignee_id else []
         self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Filter by Assignee / Member (or clear)...",
+            placeholder="Filter by assignee / member (or clear)...",
             row=3,
             min_values=0,
             max_values=1,
@@ -573,7 +562,6 @@ class TaskMenuView(discord.ui.View):
         # Row 4: Clear Member Filter Button
         self.clear_member_btn = discord.ui.Button(
             label="Clear Assignee Filter",
-            emoji="👤",
             style=discord.ButtonStyle.secondary,
             row=4,
         )
@@ -807,18 +795,18 @@ class TaskMenuView(discord.ui.View):
 
 def build_task_menu_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="⚡ Task Operations Control Center",
+        title="Task Operations Control Center",
         description=(
             "Create, filter, and manage tasks with zero typing.\n\n"
             "**Task Types**:\n"
-            "• **`✨ New Project Task`**: Tied to a project container with automatic channel/thread routing\n"
-            "• **`📌 Standalone Task`**: Ad-hoc, one-off task in this channel (default `TASK-#` prefix)\n\n"
+            "• **`New Project Task`**: Tied to a project container with automatic channel/thread routing\n"
+            "• **`Standalone Task`**: Ad-hoc, one-off task in this channel (default `TASK-#` prefix)\n\n"
             "**Live Board Controls**:\n"
-            "• **`📁 Project Scope`**: Focus board on a specific project or global server scope\n"
-            "• **`🔍 Search Scope`**: Search across all server projects to instantly switch scope\n"
-            "• **`📊 Status Filter`**: Filter by progress status (In Progress, Not Started, Completed)\n"
-            "• **`👤 Assignee Filter`**: Filter to tasks assigned to a specific team member\n"
-            "• **`🔄 Reset Filters`**: Reset to channel default or global board view"
+            "• **`Project Scope`**: Focus board on a specific project or global server scope\n"
+            "• **`Search Scope`**: Search across all server projects to instantly switch scope\n"
+            "• **`Status Filter`**: Filter by progress status (In Progress, Not Started, Completed)\n"
+            "• **`Assignee Filter`**: Filter to tasks assigned to a specific team member\n"
+            "• **`Reset Filters`**: Reset to channel default or global board view"
         ),
         color=discord.Color.blurple(),
     )

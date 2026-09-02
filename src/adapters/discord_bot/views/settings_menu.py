@@ -19,21 +19,21 @@ logger = logging.getLogger("dgg_pm.views.settings_menu")
 
 def build_settings_embed(user: discord.User | discord.Member, current_pref: NotificationPreference) -> discord.Embed:
     pref_labels = {
-        NotificationPreference.DM: "💬 Direct Messages (DM Only)",
-        NotificationPreference.CHANNEL: "📢 Channel Ping (In-Thread @mention)",
-        NotificationPreference.BOTH: "🔔 Both (DM + Channel @mention)",
-        NotificationPreference.NONE: "🔕 Silent / None (No direct pings)",
+        NotificationPreference.DM: "Direct Messages (DM Only)",
+        NotificationPreference.CHANNEL: "Channel Ping (In-Thread @mention)",
+        NotificationPreference.BOTH: "Both (DM + Channel @mention)",
+        NotificationPreference.NONE: "Silent / None (No direct pings)",
     }
 
     embed = discord.Embed(
-        title=f"⚙️ Notification Preferences • @{user.display_name}",
+        title=f"Notification Preferences • @{user.display_name}",
         description=(
-            f"> 🔔 **Current Active Mode**: `{pref_labels.get(current_pref, current_pref.value)}`\n\n"
+            f"> **Current Active Mode**: `{pref_labels.get(current_pref, current_pref.value)}`\n\n"
             "Select how you want to receive task assignments, updates, and deadline reminders in this server:\n\n"
-            "• **`💬 DM Only`**: Private notifications delivered to your direct messages.\n"
-            "• **`📢 Channel Ping`**: An `@mention` inside the task's forum thread.\n"
-            "• **`🔔 Both`**: Sends both a DM and an in-thread mention for maximum visibility.\n"
-            "• **`🔕 Silent`**: No direct pings (track tasks manually on the board)."
+            "• **`DM Only`**: Private notifications delivered to your direct messages.\n"
+            "• **`Channel Ping`**: An `@mention` inside the task's forum thread.\n"
+            "• **`Both`**: Sends both a DM and an in-thread mention for maximum visibility.\n"
+            "• **`Silent`**: No direct pings (track tasks manually on the board)."
         ),
         color=discord.Color.dark_theme(),
     )
@@ -85,7 +85,6 @@ class UserSettingsView(discord.ui.View):
         # Row 0: Preference Buttons (Selected is vibrant green success style)
         dm_btn = discord.ui.Button(
             label="DM Only",
-            emoji="💬",
             style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.DM
             else discord.ButtonStyle.secondary,
@@ -96,7 +95,6 @@ class UserSettingsView(discord.ui.View):
 
         chan_btn = discord.ui.Button(
             label="Channel Ping",
-            emoji="📢",
             style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.CHANNEL
             else discord.ButtonStyle.secondary,
@@ -107,7 +105,6 @@ class UserSettingsView(discord.ui.View):
 
         both_btn = discord.ui.Button(
             label="Both (DM + Ping)",
-            emoji="🔔",
             style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.BOTH
             else discord.ButtonStyle.secondary,
@@ -118,7 +115,6 @@ class UserSettingsView(discord.ui.View):
 
         none_btn = discord.ui.Button(
             label="Silent",
-            emoji="🔕",
             style=discord.ButtonStyle.success
             if self.current_pref == NotificationPreference.NONE
             else discord.ButtonStyle.secondary,
@@ -130,7 +126,6 @@ class UserSettingsView(discord.ui.View):
         # Row 1: Test & Back to Hub
         test_btn = discord.ui.Button(
             label="Test Notification",
-            emoji="🧪",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -140,7 +135,6 @@ class UserSettingsView(discord.ui.View):
         if self.project_service and self.team_service and self.task_service:
             back_btn = discord.ui.Button(
                 label="PM Main Menu",
-                emoji="🏠",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -158,7 +152,7 @@ class UserSettingsView(discord.ui.View):
         pref = self.current_pref
         if pref == NotificationPreference.NONE:
             await interaction.response.send_message(
-                "🔕 **Your notification preference is set to Silent / None.**\nNo test notification was sent.",
+                "**Your notification preference is set to Silent / None.**\nNo test notification was sent.",
                 ephemeral=True,
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -167,7 +161,7 @@ class UserSettingsView(discord.ui.View):
             return
 
         test_embed = discord.Embed(
-            title="🧪 dgg-pm Notification Test",
+            title="dgg-pm Notification Test",
             description=(
                 f"Hello <@{interaction.user.id}>! This is a test notification from **{interaction.guild.name}**.\n\n"
                 f"• **Delivery Mode**: `{pref.value.upper()}`\n"

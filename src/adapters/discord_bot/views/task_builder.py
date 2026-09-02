@@ -33,15 +33,15 @@ def build_task_draft_embed(
     prerequisite_short_ids: list[str] | None = None,
 ) -> discord.Embed:
     """Builds a live preview embed of the task currently being configured in the builder."""
-    proj_display = f"📁 [{project.prefix}] {project.name}" if project else "📌 Standalone Task (Ad-hoc)"
+    proj_display = f"[{project.prefix}] {project.name}" if project else "Standalone Task (Ad-hoc)"
     assignee_display = f"<@{assignee_id}>" if assignee_id else "*Unassigned (Click member picker below)*"
 
     if priority == PriorityLevel.HIGH:
-        priority_display = "🔴 High Priority"
+        priority_display = "High"
     elif priority == PriorityLevel.LOW:
-        priority_display = "🟢 Low Priority"
+        priority_display = "Low"
     else:
-        priority_display = "🔵 Normal Priority"
+        priority_display = "Normal"
 
     if due_at:
         due_ts = int(due_at.astimezone(UTC).timestamp())
@@ -56,10 +56,10 @@ def build_task_draft_embed(
     chan_display = f"#{chan_name}" if chan_name else "Current Channel"
 
     embed = discord.Embed(
-        title=f"📝 Task Draft: {title[:90]}",
+        title=f"Task Draft: {title[:90]}",
         description=(
             "Configure optional assignee, deadline, and priority using the pickers below, "
-            "then click **`🚀 Create Task`** to publish.\n\n"
+            "then click **`Create Task`** to publish.\n\n"
             f"• **Project Scope**: {proj_display}\n"
             f"• **Assignee**: {assignee_display}\n"
             f"• **Priority**: {priority_display}\n"
@@ -249,7 +249,7 @@ class DraftPrerequisiteSelectView(discord.ui.View):
         options: list[discord.SelectOption] = []
         for t in sibling_tasks[:25]:
             is_selected = t.short_id in draft_view.prerequisite_short_ids
-            emoji = "✅" if t.is_completed else ("⏳" if t.status == TaskStatus.IN_PROGRESS else "📋")
+            emoji = "🟢" if t.is_completed else ("🟡" if t.status == TaskStatus.IN_PROGRESS else "⚪")
             options.append(
                 discord.SelectOption(
                     label=f"[{t.short_id}]"[:100],
@@ -262,7 +262,7 @@ class DraftPrerequisiteSelectView(discord.ui.View):
 
         if options:
             self.select = discord.ui.Select(
-                placeholder="🔗 Select Prerequisite Tasks (Blocks this task)...",
+                placeholder="Select prerequisite tasks (blocks this task)...",
                 min_values=0,
                 max_values=len(options),
                 options=options,
@@ -274,7 +274,6 @@ class DraftPrerequisiteSelectView(discord.ui.View):
         done_btn = discord.ui.Button(
             label="Done & Return to Draft",
             style=discord.ButtonStyle.success,
-            emoji="✅",
             row=1,
         )
         done_btn.callback = self._on_done
@@ -283,7 +282,6 @@ class DraftPrerequisiteSelectView(discord.ui.View):
         cancel_btn = discord.ui.Button(
             label="Back to Draft",
             style=discord.ButtonStyle.secondary,
-            emoji="↩️",
             row=1,
         )
         cancel_btn.callback = self._on_done
@@ -299,7 +297,7 @@ class DraftPrerequisiteSelectView(discord.ui.View):
         )
         task_label = self.draft_view.title or "New Task"
         embed = discord.Embed(
-            title=f"🔗 Configure Prerequisites: {task_label}",
+            title=f"Configure Prerequisites: {task_label}",
             description=(
                 f"Select tasks in **{proj_label}** that must be completed before **{task_label}** can be started.\n\n"
                 f"**Currently Selected ({len(sel)}):**\n{sel_text}\n\n"
@@ -392,7 +390,6 @@ class TaskCreateDraftView(discord.ui.View):
         # Row 0: Action Buttons
         self.create_btn = discord.ui.Button(
             label="Create Task",
-            emoji="🚀",
             style=discord.ButtonStyle.success,
             row=0,
         )
@@ -401,7 +398,6 @@ class TaskCreateDraftView(discord.ui.View):
 
         self.edit_btn = discord.ui.Button(
             label="Edit Title / Body",
-            emoji="✏️",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -412,7 +408,6 @@ class TaskCreateDraftView(discord.ui.View):
             prereq_label = f"Prereqs ({len(self.prerequisite_short_ids)})"
             self.prereqs_btn = discord.ui.Button(
                 label=prereq_label,
-                emoji="🔗",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -422,7 +417,6 @@ class TaskCreateDraftView(discord.ui.View):
         if self.assignee_id:
             self.unassign_btn = discord.ui.Button(
                 label="Unassign",
-                emoji="🚫",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -431,7 +425,6 @@ class TaskCreateDraftView(discord.ui.View):
 
         self.cancel_btn = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.danger,
             row=0,
         )
@@ -441,7 +434,7 @@ class TaskCreateDraftView(discord.ui.View):
         # Row 1: Assignee Native Member Select Picker
         assignee_defaults = [discord.Object(id=self.assignee_id)] if self.assignee_id else []
         self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Select Assignee Member (or clear)...",
+            placeholder="Select assignee member (or clear)...",
             min_values=0,
             max_values=1,
             row=1,
@@ -452,18 +445,18 @@ class TaskCreateDraftView(discord.ui.View):
 
         # Row 2: Due Date Quick Presets Select Dropdown
         due_options = [
-            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today", emoji="⏰"),
-            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow", emoji="⏰"),
-            discord.SelectOption(label="In 2 Days", value="2days", emoji="📅"),
-            discord.SelectOption(label="In 3 Days", value="3days", emoji="📅"),
-            discord.SelectOption(label="In 1 Week", value="1week", emoji="📅"),
-            discord.SelectOption(label="In 2 Weeks", value="2weeks", emoji="📅"),
-            discord.SelectOption(label="In 1 Month", value="1month", emoji="📅"),
-            discord.SelectOption(label="Custom Date / Time...", value="custom", emoji="✏️"),
-            discord.SelectOption(label="Clear Due Date", value="clear", emoji="❌"),
+            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today"),
+            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow"),
+            discord.SelectOption(label="In 2 Days", value="2days"),
+            discord.SelectOption(label="In 3 Days", value="3days"),
+            discord.SelectOption(label="In 1 Week", value="1week"),
+            discord.SelectOption(label="In 2 Weeks", value="2weeks"),
+            discord.SelectOption(label="In 1 Month", value="1month"),
+            discord.SelectOption(label="Custom Date / Time...", value="custom"),
+            discord.SelectOption(label="Clear Due Date", value="clear"),
         ]
         self.due_select = discord.ui.Select(
-            placeholder="📅 Pick Due Date Preset...",
+            placeholder="Pick due date preset...",
             options=due_options,
             row=2,
         )
@@ -475,24 +468,21 @@ class TaskCreateDraftView(discord.ui.View):
             discord.SelectOption(
                 label="High Priority",
                 value="high",
-                emoji="🔴",
                 default=(self.priority == PriorityLevel.HIGH),
             ),
             discord.SelectOption(
                 label="Normal Priority",
                 value="normal",
-                emoji="🔵",
                 default=(self.priority == PriorityLevel.NORMAL),
             ),
             discord.SelectOption(
                 label="Low Priority",
                 value="low",
-                emoji="⚪",
                 default=(self.priority == PriorityLevel.LOW),
             ),
         ]
         self.priority_select = discord.ui.Select(
-            placeholder="⚡ Select Priority Level...",
+            placeholder="Select priority level...",
             options=priority_options,
             row=3,
         )
@@ -502,7 +492,7 @@ class TaskCreateDraftView(discord.ui.View):
         # Row 4: Watchers Native Member Multi-Select Picker
         watcher_defaults = [discord.Object(id=uid) for uid in self.watchers] if self.watchers else []
         self.watchers_select = discord.ui.UserSelect(
-            placeholder="👀 Pick Watchers / CC (Optional, up to 10 or clear)...",
+            placeholder="Pick watchers / CC (optional, up to 10 or clear)...",
             min_values=0,
             max_values=10,
             row=4,

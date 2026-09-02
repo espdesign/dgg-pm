@@ -2164,7 +2164,6 @@ class ProjectMenuView(discord.ui.View):
         if self.is_server_manager:
             self.new_project_btn = discord.ui.Button(
                 label="New Project",
-                emoji="➕",
                 style=discord.ButtonStyle.primary,
                 row=0,
             )
@@ -2176,7 +2175,6 @@ class ProjectMenuView(discord.ui.View):
         # Row 0: Active Projects (Always visible)
         self.list_projects_btn = discord.ui.Button(
             label="Active Projects",
-            emoji="📋",
             style=discord.ButtonStyle.secondary if self.is_server_manager else discord.ButtonStyle.primary,
             row=0,
         )
@@ -2186,7 +2184,6 @@ class ProjectMenuView(discord.ui.View):
         if self.is_server_manager:
             self.set_role_btn = discord.ui.Button(
                 label="Set Squad Role",
-                emoji="🎭",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -2195,7 +2192,6 @@ class ProjectMenuView(discord.ui.View):
 
             self.set_lead_btn = discord.ui.Button(
                 label="Set Project Lead",
-                emoji="👑",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -2204,7 +2200,6 @@ class ProjectMenuView(discord.ui.View):
 
             self.archive_btn = discord.ui.Button(
                 label="Archive Project",
-                emoji="📦",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -2213,7 +2208,6 @@ class ProjectMenuView(discord.ui.View):
 
             self.restore_btn = discord.ui.Button(
                 label="Restore Project",
-                emoji="♻️",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -2228,7 +2222,6 @@ class ProjectMenuView(discord.ui.View):
         if self.task_service:
             self.tech_tree_btn = discord.ui.Button(
                 label="Visual Graph",
-                emoji="🌲",
                 style=discord.ButtonStyle.secondary,
                 row=1 if self.is_server_manager else 0,
             )
@@ -2237,7 +2230,6 @@ class ProjectMenuView(discord.ui.View):
 
             self.hub_btn = discord.ui.Button(
                 label="PM Main Menu",
-                emoji="🏠",
                 style=discord.ButtonStyle.secondary,
                 row=1 if self.is_server_manager else 0,
             )
@@ -2484,25 +2476,25 @@ class ProjectMenuView(discord.ui.View):
 
 def build_project_menu_embed(is_server_manager: bool = True) -> discord.Embed:
     embed = discord.Embed(
-        title="📁 Project Management Hub",
+        title="Project Management Hub",
         color=discord.Color.dark_theme(),
     )
     if is_server_manager:
         embed.description = (
-            "> 🛠️ **Project Administration & Squad Routing**\n"
+            "> **Project Administration & Squad Routing**\n"
             "> Manage project containers, channel bindings, squad roles, and project leads.\n\n"
-            "• **`➕ New Project`**: Create a project container bound to a Forum channel\n"
-            "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads\n"
-            "• **`🎭 Set Squad Role`**: Map a Discord role as the project's contributor squad\n"
-            "• **`👑 Set Project Lead`**: Designate the project owner / lead with elevated permissions\n"
-            "• **`📦 Archive Project`**: Soft-delete a completed project\n"
-            "• **`♻️ Restore Project`**: Bring back an archived project"
+            "• **`New Project`**: Create a project container bound to a Forum channel\n"
+            "• **`Active Projects`**: View all running projects, squad roles, and designated leads\n"
+            "• **`Set Squad Role`**: Map a Discord role as the project's contributor squad\n"
+            "• **`Set Project Lead`**: Designate the project owner / lead with elevated permissions\n"
+            "• **`Archive Project`**: Soft-delete a completed project\n"
+            "• **`Restore Project`**: Bring back an archived project"
         )
     else:
         embed.description = (
-            "> 📁 **Active Project Containers**\n"
+            "> **Active Project Containers**\n"
             "> Browse active project containers, bound channels, and designated squad roles.\n\n"
-            "• **`📋 Active Projects`**: View all running projects, squad roles, and designated leads"
+            "• **`Active Projects`**: View all running projects, squad roles, and designated leads"
         )
     embed.set_footer(text="dgg-pm • Discord-Native Project Management")
     return embed

@@ -21,11 +21,11 @@ logger = logging.getLogger("dgg_pm.views.task_buttons")
 def build_task_controls_embed(task: Task) -> discord.Embed:
     """Builds a summary embed for the interactive ephemeral task controls."""
     prio_map = {
-        PriorityLevel.HIGH: "🔴 High Priority",
-        PriorityLevel.NORMAL: "🔵 Normal Priority",
-        PriorityLevel.LOW: "⚪ Low Priority",
+        PriorityLevel.HIGH: "High",
+        PriorityLevel.NORMAL: "Normal",
+        PriorityLevel.LOW: "Low",
     }
-    prio_str = prio_map.get(task.priority, "🔵 Normal Priority")
+    prio_str = prio_map.get(task.priority, "Normal")
     assignee_str = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "*Unassigned*"
     due_str = (
         f"<t:{int(task.due_at.timestamp())}:f> (<t:{int(task.due_at.timestamp())}:R>)"
@@ -35,7 +35,7 @@ def build_task_controls_embed(task: Task) -> discord.Embed:
     watchers_str = " ".join(f"<@{uid}>" for uid in task.watchers) if task.watchers else "*None*"
 
     embed = discord.Embed(
-        title=f"⚙️ Quick Controls: [{task.short_id}] {task.title[:70]}",
+        title=f"Quick Controls: [{task.short_id}] {task.title[:70]}",
         description=(
             "Use the dropdowns below to quickly adjust priority, assignee, due date, or watchers.\n\n"
             f"• **Priority**: {prio_str}\n"
@@ -84,7 +84,6 @@ class TaskQuickControlsView(discord.ui.View):
         # Row 0: Action / Dismiss buttons
         done_btn = discord.ui.Button(
             label="Done",
-            emoji="✅",
             style=discord.ButtonStyle.success,
             row=0,
         )
@@ -94,7 +93,6 @@ class TaskQuickControlsView(discord.ui.View):
         if self.task.assignee_discord_id:
             unassign_btn = discord.ui.Button(
                 label="Unassign",
-                emoji="🚫",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -106,24 +104,21 @@ class TaskQuickControlsView(discord.ui.View):
             discord.SelectOption(
                 label="High Priority",
                 value="high",
-                emoji="🔴",
                 default=(self.task.priority == PriorityLevel.HIGH),
             ),
             discord.SelectOption(
                 label="Normal Priority",
                 value="normal",
-                emoji="🔵",
                 default=(self.task.priority == PriorityLevel.NORMAL),
             ),
             discord.SelectOption(
                 label="Low Priority",
                 value="low",
-                emoji="⚪",
                 default=(self.task.priority == PriorityLevel.LOW),
             ),
         ]
         self.priority_select = discord.ui.Select(
-            placeholder="⚡ Change Priority...",
+            placeholder="Change priority...",
             options=priority_options,
             row=1,
         )
@@ -133,7 +128,7 @@ class TaskQuickControlsView(discord.ui.View):
         # Row 2: Assignee User Select Picker
         assignee_defaults = [discord.Object(id=self.task.assignee_discord_id)] if self.task.assignee_discord_id else []
         self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Reassign Member (or clear)...",
+            placeholder="Reassign member (or clear)...",
             min_values=0,
             max_values=1,
             default_values=assignee_defaults,
@@ -144,17 +139,17 @@ class TaskQuickControlsView(discord.ui.View):
 
         # Row 3: Due Date Quick Presets Dropdown
         due_options = [
-            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today", emoji="⏰"),
-            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow", emoji="⏰"),
-            discord.SelectOption(label="In 2 Days", value="2days", emoji="📅"),
-            discord.SelectOption(label="In 3 Days", value="3days", emoji="📅"),
-            discord.SelectOption(label="In 1 Week", value="1week", emoji="📅"),
-            discord.SelectOption(label="In 2 Weeks", value="2weeks", emoji="📅"),
-            discord.SelectOption(label="In 1 Month", value="1month", emoji="📅"),
-            discord.SelectOption(label="Clear Due Date", value="clear", emoji="❌"),
+            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today"),
+            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow"),
+            discord.SelectOption(label="In 2 Days", value="2days"),
+            discord.SelectOption(label="In 3 Days", value="3days"),
+            discord.SelectOption(label="In 1 Week", value="1week"),
+            discord.SelectOption(label="In 2 Weeks", value="2weeks"),
+            discord.SelectOption(label="In 1 Month", value="1month"),
+            discord.SelectOption(label="Clear Due Date", value="clear"),
         ]
         self.due_select = discord.ui.Select(
-            placeholder="📅 Set Due Date (Quick Presets)...",
+            placeholder="Set due date...",
             options=due_options,
             row=3,
         )
@@ -164,7 +159,7 @@ class TaskQuickControlsView(discord.ui.View):
         # Row 4: Watchers User Select Picker (Multi-Select)
         watcher_defaults = [discord.Object(id=uid) for uid in self.task.watchers] if self.task.watchers else []
         self.watchers_select = discord.ui.UserSelect(
-            placeholder="👀 Manage Watchers / CC (Pick up to 10 or clear)...",
+            placeholder="Manage watchers (pick up to 10 or clear)...",
             min_values=0,
             max_values=10,
             default_values=watcher_defaults,
@@ -280,7 +275,7 @@ class TaskQuickControlsView(discord.ui.View):
         async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
             self.stop()
             embed = discord.Embed(
-                title=f"✅ Updated [{self.task.short_id}]",
+                title=f"Updated [{self.task.short_id}]",
                 description="Task changes have been saved to the workspace.",
                 color=discord.Color.green(),
             )
@@ -319,7 +314,6 @@ class TaskActionView(discord.ui.View):
         if current_status == TaskStatus.COMPLETED:
             self.reopen_btn = discord.ui.Button(
                 label="Reopen / Undo",
-                emoji="🔄",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"task:reopen:{task_id}",
                 row=0,
@@ -328,7 +322,6 @@ class TaskActionView(discord.ui.View):
         elif current_status == TaskStatus.IN_PROGRESS:
             self.notstarted_btn = discord.ui.Button(
                 label="Convert to Not Started",
-                emoji="⏳",
                 style=discord.ButtonStyle.danger,
                 custom_id=f"task:notstarted:{task_id}",
                 row=0,
@@ -336,7 +329,6 @@ class TaskActionView(discord.ui.View):
             self.add_item(self.notstarted_btn)
             self.complete_btn = discord.ui.Button(
                 label="Complete",
-                emoji="🟢",
                 style=discord.ButtonStyle.success,
                 custom_id=f"task:complete:{task_id}",
                 row=0,
@@ -345,7 +337,6 @@ class TaskActionView(discord.ui.View):
         else:
             self.start_btn = discord.ui.Button(
                 label="In Progress",
-                emoji="🟡",
                 style=discord.ButtonStyle.primary,
                 custom_id=f"task:start:{task_id}",
                 row=0,
@@ -354,7 +345,6 @@ class TaskActionView(discord.ui.View):
 
             self.complete_btn = discord.ui.Button(
                 label="Complete",
-                emoji="🟢",
                 style=discord.ButtonStyle.success,
                 custom_id=f"task:complete:{task_id}",
                 row=0,
@@ -363,7 +353,6 @@ class TaskActionView(discord.ui.View):
 
         self.note_btn = discord.ui.Button(
             label="Add Note",
-            emoji="📝",
             style=discord.ButtonStyle.primary,
             custom_id=f"task:note:{task_id}",
             row=0,
@@ -373,7 +362,6 @@ class TaskActionView(discord.ui.View):
         # Row 1: Advanced Actions / Tools (Edit Details in first position)
         self.edit_btn = discord.ui.Button(
             label="Edit Details",
-            emoji="✏️",
             style=discord.ButtonStyle.secondary,
             custom_id=f"task:edit:{task_id}",
             row=1,
@@ -382,7 +370,6 @@ class TaskActionView(discord.ui.View):
 
         self.deps_btn = discord.ui.Button(
             label="Dependencies",
-            emoji="🔗",
             style=discord.ButtonStyle.secondary,
             custom_id=f"task:deps:{task_id}",
             row=1,
@@ -391,7 +378,6 @@ class TaskActionView(discord.ui.View):
 
         self.controls_btn = discord.ui.Button(
             label="Quick Controls",
-            emoji="⚙️",
             style=discord.ButtonStyle.secondary,
             custom_id=f"task:controls:{task_id}",
             row=1,

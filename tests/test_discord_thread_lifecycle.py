@@ -584,4 +584,4 @@ def test_task_board_embed_formats_jump_links():
     )
     field = embed.fields[0]
     assert "https://discord.com/channels/999/888/777" in field.value
-    assert "[🔗 **Open Task Workspace**]" in field.value
+    assert "[**Open Task Workspace**]" in field.value

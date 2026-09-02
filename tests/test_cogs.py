@@ -811,7 +811,7 @@ async def test_task_quick_controls_view_callbacks(services):
 
     ctrl_embed = build_task_controls_embed(task)
     assert "Quick Controls" in ctrl_embed.title
-    assert "Low Priority" in ctrl_embed.description
+    assert "Priority**: Low" in ctrl_embed.description
 
     mock_bot = MagicMock()
     mock_bot.sync_root_task_message = AsyncMock()

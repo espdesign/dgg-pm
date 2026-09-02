@@ -21,7 +21,7 @@ def build_dependency_embed(task: Task, prerequisites: list[Task], dependents: li
         f"Configure prerequisite tasks that must be completed before **[{task.short_id}]** can be started."
     )
     embed = discord.Embed(
-        title=f"🔗 Manage Dependencies: [{task.short_id}]",
+        title=f"Manage Dependencies: [{task.short_id}]",
         description=desc,
         color=discord.Color.from_rgb(16, 152, 247),
     )
@@ -29,12 +29,12 @@ def build_dependency_embed(task: Task, prerequisites: list[Task], dependents: li
     if prerequisites:
         lines = []
         for p in prerequisites:
-            status_icon = "✅" if p.is_completed else ("⏳" if p.status == TaskStatus.IN_PROGRESS else "📋")
+            status_icon = "🟢" if p.is_completed else ("🟡" if p.status == TaskStatus.IN_PROGRESS else "⚪")
             lines.append(f"{status_icon} **`[{p.short_id}]`** {p.title}")
-        embed.add_field(name=f"⛓️ Prerequisites ({len(prerequisites)})", value="\n".join(lines), inline=False)
+        embed.add_field(name=f"Prerequisites ({len(prerequisites)})", value="\n".join(lines), inline=False)
     else:
         embed.add_field(
-            name="⛓️ Prerequisites (0)",
+            name="Prerequisites (0)",
             value="*No prerequisites — this task can be started immediately.*",
             inline=False,
         )
@@ -42,10 +42,10 @@ def build_dependency_embed(task: Task, prerequisites: list[Task], dependents: li
     if dependents:
         lines = []
         for d in dependents:
-            status_icon = "✅" if d.is_completed else ("⏳" if d.status == TaskStatus.IN_PROGRESS else "🔒")
+            status_icon = "🟢" if d.is_completed else ("🟡" if d.status == TaskStatus.IN_PROGRESS else "⚪")
             lines.append(f"{status_icon} **`[{d.short_id}]`** {d.title}")
         embed.add_field(
-            name=f"🔓 Unlocks ({len(dependents)})",
+            name=f"Unlocks ({len(dependents)})",
             value="\n".join(lines) + "\n*(These tasks require this task to finish first)*",
             inline=False,
         )
@@ -84,12 +84,7 @@ class TaskDependencyView(discord.ui.View):
         if candidate_tasks:
             options: list[discord.SelectOption] = []
             for t in candidate_tasks[:25]:
-                if t.is_completed:
-                    emoji = "✅"
-                elif t.status == TaskStatus.IN_PROGRESS:
-                    emoji = "⏳"
-                else:
-                    emoji = "📋"
+                emoji = "🟢" if t.is_completed else ("🟡" if t.status == TaskStatus.IN_PROGRESS else "⚪")
 
                 is_selected = t.id in prereq_ids
                 desc = (t.title[:85] + "...") if len(t.title) > 85 else t.title
@@ -104,7 +99,7 @@ class TaskDependencyView(discord.ui.View):
                 )
 
             select = discord.ui.Select(
-                placeholder="⛓️ Select Prerequisite Tasks (Blocks this task)...",
+                placeholder="Select prerequisite tasks (blocks this task)...",
                 min_values=0,
                 max_values=len(options),
                 options=options,
@@ -116,8 +111,7 @@ class TaskDependencyView(discord.ui.View):
         # Done button
         done_btn = discord.ui.Button(
             label="Done",
-            style=discord.ButtonStyle.secondary,
-            emoji="✅",
+            style=discord.ButtonStyle.success,
             row=1,
         )
         done_btn.callback = self._on_done

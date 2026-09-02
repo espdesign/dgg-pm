@@ -112,7 +112,7 @@ class DiscordNotifier(INotificationDispatcher):
         label = reminder_labels.get(reminder_type, "approaching deadline")
 
         embed = discord.Embed(
-            title=f"⏰ Task Deadline Reminder: [{short_id}]",
+            title=f"Task Deadline Reminder: [{short_id}]",
             description=f"Your assigned task **[{short_id}] {title}** is **{label}**.",
             color=discord.Color.red() if reminder_type == "due" else discord.Color.gold(),
         )
@@ -135,7 +135,7 @@ class DiscordNotifier(INotificationDispatcher):
             user_id=assignee_id,
             embed=embed,
             thread=thread,
-            mention_text=f"⏰ <@{assignee_id}> **Task Deadline Reminder:** [{short_id}] {title} is **{label}**!",
+            mention_text=f"<@{assignee_id}> **Task Deadline Reminder:** [{short_id}] {title} is **{label}**!",
         )
 
     async def _handle_status_changed(self, payload: dict) -> None:
@@ -158,7 +158,7 @@ class DiscordNotifier(INotificationDispatcher):
                 chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                 if isinstance(chan, discord.Thread):
                     thread = chan
-                    msg = f"🔄 **Status Updated:** `{old_status}` ➔ **`{new_status}`** by <@{actor_id}>"
+                    msg = f"**Status Updated:** `{old_status}` ➔ **`{new_status}`** by <@{actor_id}>"
                     if notes:
                         msg += f"\n> {notes}"
                     await thread.send(msg)
@@ -238,7 +238,7 @@ class DiscordNotifier(INotificationDispatcher):
 
         if recipients:
             embed = discord.Embed(
-                title=f"🔔 Task Update: [{short_id}] {title}",
+                title=f"Task Update: [{short_id}] {title}",
                 description=f"Status changed from `{old_status}` to **`{new_status}`** by <@{actor_id}>.",
                 color=discord.Color.green() if new_status == "completed" else discord.Color.blue(),
             )
@@ -252,7 +252,7 @@ class DiscordNotifier(INotificationDispatcher):
                     user_id=uid,
                     embed=embed,
                     thread=thread,
-                    mention_text=f"🔔 <@{uid}> Task **[{short_id}] {title}** status updated to **`{new_status}`**",
+                    mention_text=f"<@{uid}> Task **[{short_id}] {title}** status updated to **`{new_status}`**",
                 )
 
     async def _handle_note_added(self, payload: dict) -> None:
@@ -274,7 +274,7 @@ class DiscordNotifier(INotificationDispatcher):
                 if isinstance(chan, discord.Thread):
                     thread = chan
                     was_archived = getattr(thread, "archived", False)
-                    await thread.send(f"📝 **Note added by <@{actor_id}>:**\n> {note}")
+                    await thread.send(f"**Note added by <@{actor_id}>:**\n> {note}")
                     if was_archived or is_completed:
                         try:
                             await thread.edit(archived=True)
@@ -291,7 +291,7 @@ class DiscordNotifier(INotificationDispatcher):
 
         if recipients:
             embed = discord.Embed(
-                title=f"💬 New Note: [{short_id}] {title}",
+                title=f"New Note: [{short_id}] {title}",
                 description=f"<@{actor_id}> added a note:\n> {note}",
                 color=discord.Color.blue(),
             )
@@ -302,7 +302,7 @@ class DiscordNotifier(INotificationDispatcher):
                     user_id=uid,
                     embed=embed,
                     thread=thread,
-                    mention_text=f"💬 <@{uid}> New note on **[{short_id}] {title}**",
+                    mention_text=f"<@{uid}> New note on **[{short_id}] {title}**",
                 )
 
     async def _handle_task_created(self, payload: dict) -> None:
@@ -326,7 +326,7 @@ class DiscordNotifier(INotificationDispatcher):
 
         if assignee_id and assignee_id != creator_id:
             embed = discord.Embed(
-                title=f"📥 New Task Assigned: [{short_id}]",
+                title=f"New Task Assigned: [{short_id}]",
                 description=f"<@{creator_id}> assigned you a new task: **{title}**",
                 color=discord.Color.blue(),
             )
@@ -337,7 +337,7 @@ class DiscordNotifier(INotificationDispatcher):
                 user_id=assignee_id,
                 embed=embed,
                 thread=thread,
-                mention_text=f"📥 <@{assignee_id}> You have been assigned to task **[{short_id}] {title}**!",
+                mention_text=f"<@{assignee_id}> You have been assigned to task **[{short_id}] {title}**!",
             )
 
         # Notify watchers added during task creation
@@ -346,7 +346,7 @@ class DiscordNotifier(INotificationDispatcher):
             watcher_recipients.discard(assignee_id)
         if watcher_recipients:
             watcher_embed = discord.Embed(
-                title=f"👀 Added as Watcher: [{short_id}]",
+                title=f"Added as Watcher: [{short_id}]",
                 description=f"<@{creator_id}> added you as a watcher to task **{title}**.",
                 color=discord.Color.blue(),
             )
@@ -357,7 +357,7 @@ class DiscordNotifier(INotificationDispatcher):
                     user_id=w_id,
                     embed=watcher_embed,
                     thread=thread,
-                    mention_text=f"👀 <@{w_id}> You were added as a watcher on task **[{short_id}] {title}**",
+                    mention_text=f"<@{w_id}> You were added as a watcher on task **[{short_id}] {title}**",
                 )
 
     async def _handle_task_updated(self, payload: dict) -> None:
@@ -384,13 +384,13 @@ class DiscordNotifier(INotificationDispatcher):
             new_assignee = payload.get("new_assignee_id")
             old_assignee = payload.get("old_assignee_id")
             if new_assignee:
-                thread_msg = f"👤 **Assignee Updated:** Assigned to <@{new_assignee}> by <@{actor_id}>"
+                thread_msg = f"**Assignee Updated:** Assigned to <@{new_assignee}> by <@{actor_id}>"
                 embed_desc = f"<@{actor_id}> assigned this task to <@{new_assignee}>."
             else:
-                thread_msg = f"👤 **Assignee Updated:** Unassigned by <@{actor_id}>"
+                thread_msg = f"**Assignee Updated:** Unassigned by <@{actor_id}>"
                 embed_desc = f"<@{actor_id}> removed the assignee from this task."
 
-            embed_title = f"👤 Task Assignment: [{short_id}] {title}"
+            embed_title = f"Task Assignment: [{short_id}] {title}"
             embed_color = discord.Color.blue()
             recipients = set(watchers)
             if new_assignee:
@@ -401,9 +401,9 @@ class DiscordNotifier(INotificationDispatcher):
         elif update_type == "priority" or ("old_priority" in payload and "new_priority" in payload):
             old_prio = payload.get("old_priority", "")
             new_prio = payload.get("new_priority", "")
-            thread_msg = f"⚡ **Priority Updated:** `{old_prio}` ➔ **`{new_prio}`** by <@{actor_id}>"
+            thread_msg = f"**Priority Updated:** `{old_prio}` ➔ **`{new_prio}`** by <@{actor_id}>"
             embed_desc = f"Priority changed from `{old_prio}` to **`{new_prio}`** by <@{actor_id}>."
-            embed_title = f"⚡ Priority Changed: [{short_id}] {title}"
+            embed_title = f"Priority Changed: [{short_id}] {title}"
             embed_color = discord.Color.gold()
             recipients = set(watchers)
             if assignee_id:
@@ -426,9 +426,9 @@ class DiscordNotifier(INotificationDispatcher):
         else:
             changes = payload.get("changes", [])
             change_text = "\n".join(f"• {c}" for c in changes) if changes else "Task details were updated."
-            thread_msg = f"✏️ **Task Updated by <@{actor_id}>:**\n{change_text}"
+            thread_msg = f"**Task Updated by <@{actor_id}>:**\n{change_text}"
             embed_desc = f"<@{actor_id}> updated task details:\n{change_text}"
-            embed_title = f"✏️ Task Updated: [{short_id}] {title}"
+            embed_title = f"Task Updated: [{short_id}] {title}"
             embed_color = discord.Color.blue()
             old_watchers = payload.get("old_watchers", [])
             added_watchers = set(watchers) - set(old_watchers)

@@ -1085,7 +1085,7 @@ async def test_task_menu_channel_scoping_and_global_search(services):
     # Verify channel project is marked with "📍 (This Channel)"
     this_chan_option = next((opt for opt in view_channel.project_select.options if opt.value == str(proj_a.id)), None)
     assert this_chan_option is not None
-    assert "📍" in this_chan_option.label
+    assert "(This Channel)" in this_chan_option.label
     assert this_chan_option.default is True
 
     # 3. Test opening TaskMenuView in an unbound channel (99999) -> defaults to Global Scope
