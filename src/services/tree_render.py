@@ -11,7 +11,10 @@ from __future__ import annotations
 import io
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.domain.tech_tree import TechTree
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -328,15 +331,19 @@ def render_tree(
     # Compute layer spans
     layer_sizes: dict[int, int] = {}
     for d, ks in order.items():
-        layer_sizes[d] = sum(DUMMY_H if k.startswith("\x00") else NODE_H for k in ks) + max(0, len(ks) - 1) * V_GAP
-    max_layer_span = max(layer_sizes.values(), default=NODE_H)
+        if tb:
+            layer_sizes[d] = sum(DUMMY_W if k.startswith("\x00") else NODE_W for k in ks) + max(0, len(ks) - 1) * V_GAP
+        else:
+            layer_sizes[d] = sum(DUMMY_H if k.startswith("\x00") else NODE_H for k in ks) + max(0, len(ks) - 1) * V_GAP
+    max_layer_span = max(layer_sizes.values(), default=NODE_W if tb else NODE_H)
 
     # Canvas dimensions
     if tb:
-        width = PAD * 2 + max(max_layer_span, 700)
+        min_w = 850
+        width = PAD * 2 + max(max_layer_span, min_w - PAD * 2)
         height = PAD * 2 + TITLE_H + num_layers * NODE_H + max(0, num_layers - 1) * H_GAP
     else:
-        width = PAD * 2 + max(num_layers * NODE_W + max(0, num_layers - 1) * H_GAP, 800)
+        width = PAD * 2 + max(num_layers * NODE_W + max(0, num_layers - 1) * H_GAP, 850)
         height = PAD * 2 + TITLE_H + max_layer_span
 
     img = Image.new("RGB", (width, height), BG_COLOR)
@@ -359,7 +366,20 @@ def render_tree(
     locked_n = sum(1 for n in nodes if n.get("state") == "locked")
     pct_val = int((completed_n / len(nodes)) * 100) if nodes else 0
 
-    draw.text((PAD, 22), title, font=F_TITLE, fill="#ffffff")
+    # Progress bar on banner right
+    prog_w = min(240, width // 4)
+    prog_x = width - PAD - prog_w
+    prog_y = 38
+
+    # Prevent title from colliding with progress bar
+    max_title_w = prog_x - PAD - 24
+    disp_title = title
+    if draw.textlength(disp_title, font=F_TITLE) > max_title_w:
+        while disp_title and draw.textlength(disp_title + "…", font=F_TITLE) > max_title_w:
+            disp_title = disp_title[:-1]
+        disp_title = (disp_title + "…") if disp_title != title else title
+
+    draw.text((PAD, 22), disp_title, font=F_TITLE, fill="#ffffff")
     if subtitle:
         stats_text = subtitle
     else:
@@ -369,10 +389,6 @@ def render_tree(
         )
     draw.text((PAD, 62), stats_text, font=F_SUBTITLE, fill="#94a3b8")
 
-    # Progress bar on banner right
-    prog_w = min(240, width // 4)
-    prog_x = width - PAD - prog_w
-    prog_y = 38
     draw.rounded_rectangle([prog_x, prog_y, prog_x + prog_w, prog_y + 18], radius=8, fill="#1e293b")
     if pct_val > 0:
         fill_px = max(14, int(prog_w * (pct_val / 100)))
@@ -582,3 +598,55 @@ def render_tree(
     img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf
+
+
+class PillowTechTreeRenderer:
+    """Concrete adapter rendering a TechTree into an in-memory PNG BytesIO buffer using Pillow."""
+
+    def render(
+        self,
+        tree: TechTree | Any,
+        title: str = "Project Tech Tree",
+        subtitle: str | None = None,
+        mode: str = "lr",
+        **kwargs: Any,
+    ) -> io.BytesIO:
+        if hasattr(tree, "to_nodes_data"):
+            nodes, edges = tree.to_nodes_data()
+        elif isinstance(tree, tuple) and len(tree) == 2:
+            nodes, edges = tree
+        else:
+            raise TypeError(f"Expected TechTree or (nodes, edges) tuple, got {type(tree)}")
+        return render_tree(nodes, edges, title=title, subtitle=subtitle, mode=mode)
+
+
+class MermaidTechTreeRenderer:
+    """Concrete adapter formatting a TechTree into a Mermaid DAG codeblock for Discord text/threads."""
+
+    def render(
+        self,
+        tree: TechTree,
+        orientation: str = "lr",
+        **kwargs: Any,
+    ) -> str:
+        orient_tag = "TB" if orientation.lower() in ("tb", "vertical") else "LR"
+        lines = [f"graph {orient_tag}"]
+
+        # Class styles for readiness states
+        lines.append("    classDef complete fill:#0a2e1d,stroke:#57f287,stroke-width:2px,color:#f0fdf4;")
+        lines.append("    classDef active fill:#062846,stroke:#38bdf8,stroke-width:2px,color:#f0f9ff;")
+        lines.append("    classDef available fill:#102a5c,stroke:#818cf8,stroke-width:2px,color:#e0e7ff;")
+        lines.append("    classDef locked fill:#0a101f,stroke:#334155,stroke-width:1px,color:#94a3b8;")
+        lines.append("    classDef blocked fill:#3b0d0c,stroke:#ed4245,stroke-width:2px,color:#fef2f2;")
+
+        nodes, edges = tree.to_nodes_data() if hasattr(tree, "to_nodes_data") else ([], [])
+        for n in nodes:
+            key = n["key"]
+            name = n["name"].replace('"', "'")
+            state = n.get("state", "locked")
+            lines.append(f'    {key}["{key}: {name}"]:::{state}')
+
+        for src, dst in edges:
+            lines.append(f"    {src} --> {dst}")
+
+        return "\n".join(lines)

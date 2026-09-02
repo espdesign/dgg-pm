@@ -341,6 +341,7 @@ async def seed_discord_forum(
     tasks_by_index: dict[int, Task],
     task_service: TaskService,
     channel_name: str = "🌲-tech-tree-demo",
+    reset_existing: bool = False,
 ) -> None:
     """Creates the Discord Forum channel, pinned tech tree graph hub post, and task cards."""
     if not settings.DISCORD_BOT_TOKEN:
@@ -419,7 +420,25 @@ async def seed_discord_forum(
     tree_buf = await task_service.render_project_tree(guild_id, project.id, orientation="lr", member_resolver=guild)
 
     # Check if a pinned control center thread already exists
-    active_threads = await forum_channel.active_threads()
+    active_threads: list[discord.Thread] = list(getattr(forum_channel, "threads", []))
+    try:
+        guild_threads = await guild.active_threads()
+        for t in guild_threads:
+            if t.parent_id == forum_channel.id and t not in active_threads:
+                active_threads.append(t)
+    except Exception as e:
+        logger.debug(f"Failed to fetch guild active threads: {e}")
+
+    if reset_existing:
+        logger.info(f"Purging existing threads in forum channel #{forum_channel.name}...")
+        for t in list(active_threads):
+            try:
+                await t.delete()
+                logger.info(f"  Deleted old forum thread: {t.name}")
+            except Exception as e:
+                logger.debug(f"Could not delete old thread {t.name}: {e}")
+        active_threads = []
+
     hub_thread = next(
         (t for t in active_threads if "Tech Tree & Project Control Center" in t.name or "📌" in t.name),
         None,
@@ -506,6 +525,15 @@ async def seed_discord_forum(
             if blocked_tag and blocked_tag not in applied_tags and len(applied_tags) < 5:
                 applied_tags.append(blocked_tag)
 
+        # Clean up any existing thread for this task card if present
+        existing_thread = next((t for t in active_threads if t.name.startswith(f"[{fresh_task.short_id}]")), None)
+        if existing_thread:
+            try:
+                await existing_thread.delete()
+                active_threads.remove(existing_thread)
+            except Exception as e:
+                logger.debug(f"Could not delete old thread {existing_thread.name}: {e}")
+
         try:
             thread_content = build_thread_workspace_content(fresh_task)
             res = await forum_channel.create_thread(
@@ -520,13 +548,13 @@ async def seed_discord_forum(
             message = getattr(res, "message", None)
             msg_id = message.id if message else thread.id
 
-            await task_service.task_repo.update_discord_identifiers(
+            await task_service.update_discord_message_ids(
                 task_id=fresh_task.id,
-                channel_id=forum_channel.id,
-                message_id=msg_id,
-                thread_id=thread.id,
+                discord_message_id=msg_id,
+                discord_thread_id=thread.id,
             )
             logger.info(f"  Created forum card: [{fresh_task.short_id}] -> Thread #{thread.name} ({thread.id})")
+            await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"  Failed to create thread for [{fresh_task.short_id}]: {e}")
 
@@ -630,6 +658,7 @@ async def main() -> None:
             tasks_by_index=tasks_by_index,
             task_service=task_service,
             channel_name=args.channel_name,
+            reset_existing=args.reset,
         )
     else:
         logger.info("Skipping Discord forum integration (--no-discord flag set or no bot token configured).")

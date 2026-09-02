@@ -20,13 +20,18 @@ from src.domain.exceptions import (
     ValidationError,
 )
 from src.domain.models import Task, TaskHistory
+from src.domain.tech_tree import (
+    CircularDependencyError,
+    SelfDependencyError,
+    TechTree,
+    resolve_member_name,
+)
 from src.ports.repositories import ITaskRepo
 from src.ports.unit_of_work import IUnitOfWork
 from src.services.outbox_service import OutboxService
 from src.services.project_service import ProjectService
-from src.services.tree_render import render_tree
 
-__all__ = ["StaleVersionError", "TaskService", "parse_inline_dependencies"]
+__all__ = ["StaleVersionError", "TaskService", "parse_inline_dependencies", "resolve_member_name"]
 
 
 def parse_inline_dependencies(text: str | None) -> list[str]:
@@ -43,78 +48,6 @@ def parse_inline_dependencies(text: str | None) -> list[str]:
             if clean and "-" in clean and len(clean) <= 20:
                 keys.append(clean)
     return list(dict.fromkeys(keys))
-
-
-def _detect_cycle(edges: list[tuple[UUID, UUID]], new_edge: tuple[UUID, UUID]) -> bool:
-    """Checks if adding new_edge (dependent_id, prereq_id) creates a cycle in the DAG."""
-    dependent, prereq = new_edge
-    if dependent == prereq:
-        return True
-
-    adj: dict[UUID, list[UUID]] = {}
-    for src, dst in edges:
-        adj.setdefault(src, []).append(dst)
-    adj.setdefault(dependent, []).append(prereq)
-
-    visited: set[UUID] = set()
-    queue: list[UUID] = [prereq]
-    while queue:
-        curr = queue.pop(0)
-        if curr == dependent:
-            return True
-        if curr not in visited:
-            visited.add(curr)
-            queue.extend(adj.get(curr, []))
-
-
-def resolve_member_name(user_id: int | None, resolver: Any = None) -> str | None:
-    """Resolves a Discord user ID to a human-readable display name or username."""
-    if not user_id or resolver is None:
-        return None
-
-    # 1. Dictionary mapping: {user_id: name}
-    if isinstance(resolver, dict):
-        val = resolver.get(user_id)
-        if val:
-            return str(val)
-
-    # 2. Discord Guild object (has get_member)
-    if hasattr(resolver, "get_member") and not isinstance(resolver, type):
-        try:
-            member = resolver.get_member(user_id)
-            if member:
-                name = getattr(member, "display_name", None) or getattr(member, "name", None)
-                if isinstance(name, str):
-                    return name
-                elif name and not isinstance(name, type) and hasattr(name, "__str__"):
-                    return str(name)
-        except Exception:
-            pass
-
-    # 3. Discord Bot / Client object (has get_user)
-    client = getattr(resolver, "client", None) if not hasattr(resolver, "get_user") else resolver
-    if client and hasattr(client, "get_user") and not isinstance(client, type):
-        try:
-            user = client.get_user(user_id)
-            if user:
-                name = getattr(user, "display_name", None) or getattr(user, "name", None)
-                if isinstance(name, str):
-                    return name
-                elif name and not isinstance(name, type) and hasattr(name, "__str__"):
-                    return str(name)
-        except Exception:
-            pass
-
-    # 4. Custom Callable: fn(user_id) -> str
-    if callable(resolver):
-        try:
-            val = resolver(user_id)
-            if val:
-                return str(val)
-        except Exception:
-            pass
-
-    return None
 
 
 class TaskService:
@@ -663,13 +596,15 @@ class TaskService:
         if task.id == depends_on_task.id:
             raise ValidationError("A task cannot depend on itself.")
 
-        # Cycle detection
+        # Cycle detection via TechTree domain module
         guild_deps = await self.task_repo.get_all_guild_dependencies(guild_id)
-        if _detect_cycle(guild_deps, (task.id, depends_on_task.id)):
-            raise ValidationError(
-                f"Cannot add dependency: '{depends_on_short_id}' already directly or indirectly "
-                f"depends on '{task_short_id}', which would create a circular loop."
-            )
+        tree = TechTree([task, depends_on_task], guild_deps)
+        try:
+            tree.validate_edge(task.id, depends_on_task.id)
+        except SelfDependencyError as e:
+            raise ValidationError(str(e)) from e
+        except CircularDependencyError as e:
+            raise ValidationError(str(e)) from e
 
         async with self._transaction() as session:
             res = await self.task_repo.add_dependency(task.id, depends_on_task.id, session=session)
@@ -730,68 +665,31 @@ class TaskService:
 
         return prereqs, dependents
 
-    async def get_project_tree_data(
+    async def get_project_tech_tree(
         self,
         guild_id: int,
         project_id: UUID,
         member_resolver: Any = None,
-    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+    ) -> TechTree:
+        """Loads and returns an analyzed TechTree domain model for a project."""
         tasks, _ = await self.task_repo.list_tasks(
             guild_id=guild_id,
             project_id=project_id,
             include_archived=False,
             limit=500,
         )
-        if not tasks:
-            return [], []
+        task_ids = [t.id for t in tasks]
+        deps = await self.task_repo.get_dependencies_for_tasks(task_ids) if tasks else []
+        return TechTree.build(tasks, deps, member_resolver=member_resolver)
 
-        task_map = {t.id: t for t in tasks}
-        task_ids = list(task_map.keys())
-        deps = await self.task_repo.get_dependencies_for_tasks(task_ids)
-
-        prereqs_map: dict[UUID, list[UUID]] = {t.id: [] for t in tasks}
-        edges: list[tuple[str, str]] = []
-
-        for dependent_id, prereq_id in deps:
-            if dependent_id in prereqs_map and prereq_id in task_map:
-                prereqs_map[dependent_id].append(prereq_id)
-                edges.append((task_map[prereq_id].short_id, task_map[dependent_id].short_id))
-
-        nodes: list[dict[str, Any]] = []
-        for t in tasks:
-            prereq_tasks = [task_map[pid] for pid in prereqs_map[t.id] if pid in task_map]
-            all_prereqs_complete = all(p.is_completed for p in prereq_tasks)
-
-            if t.is_completed:
-                state = "complete"
-            elif t.status == TaskStatus.IN_PROGRESS:
-                state = "active"
-            elif t.metadata_json.get("blocked") is True:
-                state = "blocked"
-            elif not all_prereqs_complete:
-                state = "locked"
-            else:
-                state = "available"
-
-            assignee_name = None
-            if t.assignee_discord_id:
-                assignee_name = resolve_member_name(t.assignee_discord_id, member_resolver)
-                if not assignee_name:
-                    assignee_name = f"User {t.assignee_discord_id}"
-
-            nodes.append(
-                {
-                    "key": t.short_id,
-                    "short_id": f"[{t.short_id}]",
-                    "name": t.title,
-                    "description": t.body or "",
-                    "state": state,
-                    "assignee": assignee_name,
-                    "priority": t.priority.value,
-                }
-            )
-
-        return nodes, edges
+    async def get_project_tree_data(
+        self,
+        guild_id: int,
+        project_id: UUID,
+        member_resolver: Any = None,
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+        tree = await self.get_project_tech_tree(guild_id, project_id, member_resolver=member_resolver)
+        return tree.to_nodes_data()
 
     async def render_project_tree(
         self,
@@ -802,5 +700,5 @@ class TaskService:
     ) -> io.BytesIO:
         project = await self.project_service.get_by_id(project_id)
         project_name = project.name if project else "Project Tech Tree"
-        nodes, edges = await self.get_project_tree_data(guild_id, project_id, member_resolver=member_resolver)
-        return render_tree(nodes, edges, title=f"Tech Tree: {project_name}", mode=orientation)
+        tree = await self.get_project_tech_tree(guild_id, project_id, member_resolver=member_resolver)
+        return tree.to_png(title=f"Tech Tree: {project_name}", orientation=orientation)

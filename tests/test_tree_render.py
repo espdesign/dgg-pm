@@ -119,6 +119,28 @@ def test_render_diamond_dag():
     assert img.size[0] > 400 and img.size[1] > 200
 
 
+def test_render_vertical_mode_wide_layer():
+    # A 3-node layer in vertical (tb) mode must have canvas width fitting all cards without clipping
+    nodes = [
+        {
+            "key": f"W-{i}",
+            "short_id": f"[W-{i}]",
+            "name": f"Task {i}",
+            "description": "",
+            "state": "available",
+            "assignee": None,
+            "priority": "normal",
+        }
+        for i in range(1, 4)
+    ]
+    edges = []  # all in layer 0 (side by side in tb mode)
+
+    buf_tb = render_tree(nodes, edges, title="Wide Vertical Tree", mode="tb")
+    img_tb = Image.open(buf_tb)
+    # 3 * 320 + 2 * 36 + 2 * 48 = 1128
+    assert img_tb.width >= 1128
+
+
 @pytest.mark.asyncio
 async def test_service_render_project_tree_integration(services):
     proj_srv = services["project"]
