@@ -171,6 +171,8 @@ class TaskEditModal(discord.ui.Modal):
                 current_status=updated_task.status,
                 current_priority=updated_task.priority,
                 task_service=self.task_service,
+                current_assignee_id=updated_task.assignee_discord_id,
+                current_watchers=updated_task.watchers,
             )
 
             if interaction.message:

@@ -330,16 +330,24 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
         discord_message_id: int,
         discord_thread_id: int | None,
     ) -> None:
+        def _parse_id(val: Any) -> int | None:
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+            return None
+
         async with self._get_session() as session:
-            stmt = (
-                update(TaskTable)
-                .where(TaskTable.id == task_id)
-                .values(
-                    discord_message_id=discord_message_id,
-                    discord_thread_id=discord_thread_id,
-                    updated_at=datetime.now(UTC),
-                )
-            )
+            msg_id = _parse_id(discord_message_id)
+            th_id = _parse_id(discord_thread_id)
+
+            vals: dict[str, Any] = {
+                "discord_message_id": msg_id,
+                "discord_thread_id": th_id,
+                "updated_at": datetime.now(UTC),
+            }
+
+            stmt = update(TaskTable).where(TaskTable.id == task_id).values(**vals)
             await session.execute(stmt)
             await session.commit()
 

@@ -199,6 +199,8 @@ class TaskCog(commands.Cog):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 applied_tags = resolve_forum_tags(target_channel, task, project_name=project.name)
                 thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
@@ -238,6 +240,8 @@ class TaskCog(commands.Cog):
                         current_status=task.status,
                         current_priority=task.priority,
                         task_service=self.task_service,
+                        current_assignee_id=task.assignee_discord_id,
+                        current_watchers=watchers,
                     )
                     await thread.send(content=thread_intro.strip(), view=thread_view)
                 except Exception:
@@ -249,6 +253,8 @@ class TaskCog(commands.Cog):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 msg = await target_channel.send(embed=embed, view=view)
             else:
@@ -435,6 +441,8 @@ class TaskCog(commands.Cog):
                 current_status=task_entity.status,
                 current_priority=task_entity.priority,
                 task_service=self.task_service,
+                current_assignee_id=task_entity.assignee_discord_id,
+                current_watchers=task_entity.watchers,
             )
             msg = await interaction.channel.send(embed=embed, view=view)
             # Link newest card to task
@@ -525,6 +533,8 @@ class TaskCog(commands.Cog):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 applied_tags = resolve_forum_tags(interaction.channel, task)
                 thread_intro = f"📌 Standalone task workspace created by <@{interaction.user.id}>."
@@ -562,6 +572,8 @@ class TaskCog(commands.Cog):
                         current_status=task.status,
                         current_priority=task.priority,
                         task_service=self.task_service,
+                        current_assignee_id=task.assignee_discord_id,
+                        current_watchers=watchers,
                     )
                     await thread.send(content=thread_intro.strip(), view=thread_view)
                 except Exception:
@@ -573,6 +585,8 @@ class TaskCog(commands.Cog):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 msg = await interaction.channel.send(embed=embed, view=view)
             else:

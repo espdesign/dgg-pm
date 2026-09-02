@@ -407,6 +407,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 applied_tags = resolve_forum_tags(target_channel, task, project_name=project.name)
                 thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
@@ -442,6 +444,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                         current_status=task.status,
                         current_priority=task.priority,
                         task_service=self.task_service,
+                        current_assignee_id=task.assignee_discord_id,
+                        current_watchers=watchers,
                     )
                     await thread.send(content=thread_intro.strip(), view=thread_view)
                 except Exception:
@@ -453,6 +457,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=watchers,
                 )
                 msg = await target_channel.send(embed=embed, view=view)
             elif target_channel and hasattr(target_channel, "send"):

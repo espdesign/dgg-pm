@@ -1,16 +1,266 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import discord
 
 from src.domain.enums import PriorityLevel, TaskStatus
-from src.services.task_service import TaskService
+from src.domain.models import Task
+from src.utils.date_parser import get_due_date_from_preset
+
+if TYPE_CHECKING:
+    from src.services.auth_service import AuthService
+    from src.services.task_service import TaskService
 
 logger = logging.getLogger("dgg_pm.views.task_buttons")
 
 
+def build_task_controls_embed(task: Task) -> discord.Embed:
+    """Builds a summary embed for the interactive ephemeral task controls."""
+    prio_map = {
+        PriorityLevel.HIGH: "🔴 High Priority",
+        PriorityLevel.NORMAL: "🔵 Normal Priority",
+        PriorityLevel.LOW: "⚪ Low Priority",
+    }
+    prio_str = prio_map.get(task.priority, "🔵 Normal Priority")
+    assignee_str = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "*Unassigned*"
+    due_str = (
+        f"<t:{int(task.due_at.timestamp())}:f> (<t:{int(task.due_at.timestamp())}:R>)"
+        if task.due_at
+        else "*No due date*"
+    )
+    watchers_str = " ".join(f"<@{uid}>" for uid in task.watchers) if task.watchers else "*None*"
+
+    embed = discord.Embed(
+        title=f"⚙️ Quick Controls: [{task.short_id}] {task.title[:70]}",
+        description=(
+            "Use the dropdowns below to quickly adjust priority, assignee, due date, or watchers.\n\n"
+            f"• **Priority**: {prio_str}\n"
+            f"• **Assignee**: {assignee_str}\n"
+            f"• **Due Date**: {due_str}\n"
+            f"• **Watchers**: {watchers_str}"
+        ),
+        color=discord.Color.blue(),
+    )
+    embed.set_footer(text="Changes apply immediately to the task workspace.")
+    return embed
+
+
+class TaskQuickControlsView(discord.ui.View):
+    """Interactive ephemeral controls view for quick task adjustments on demand."""
+
+    def __init__(
+        self,
+        task: Task,
+        task_service: TaskService,
+        auth_service: AuthService | None = None,
+        bot: discord.Client | None = None,
+    ):
+        super().__init__(timeout=300)
+        self.task = task
+        self.task_service = task_service
+        self.auth_service = auth_service
+        self.bot = bot
+        self._rebuild_items()
+
+    def _rebuild_items(self) -> None:
+        self.clear_items()
+
+        # Row 0: Action / Dismiss buttons
+        done_btn = discord.ui.Button(
+            label="Done",
+            emoji="✅",
+            style=discord.ButtonStyle.success,
+            row=0,
+        )
+        done_btn.callback = self._on_done_clicked
+        self.add_item(done_btn)
+
+        if self.task.assignee_discord_id:
+            unassign_btn = discord.ui.Button(
+                label="Unassign",
+                emoji="🚫",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+            unassign_btn.callback = self._on_unassign_clicked
+            self.add_item(unassign_btn)
+
+        # Row 1: Priority Dropdown
+        priority_options = [
+            discord.SelectOption(
+                label="High Priority",
+                value="high",
+                emoji="🔴",
+                default=(self.task.priority == PriorityLevel.HIGH),
+            ),
+            discord.SelectOption(
+                label="Normal Priority",
+                value="normal",
+                emoji="🔵",
+                default=(self.task.priority == PriorityLevel.NORMAL),
+            ),
+            discord.SelectOption(
+                label="Low Priority",
+                value="low",
+                emoji="⚪",
+                default=(self.task.priority == PriorityLevel.LOW),
+            ),
+        ]
+        self.priority_select = discord.ui.Select(
+            placeholder="⚡ Change Priority...",
+            options=priority_options,
+            row=1,
+        )
+        self.priority_select.callback = self._on_priority_selected
+        self.add_item(self.priority_select)
+
+        # Row 2: Assignee User Select Picker
+        assignee_defaults = [discord.Object(id=self.task.assignee_discord_id)] if self.task.assignee_discord_id else []
+        self.assignee_select = discord.ui.UserSelect(
+            placeholder="👤 Reassign Member (or clear)...",
+            min_values=0,
+            max_values=1,
+            default_values=assignee_defaults,
+            row=2,
+        )
+        self.assignee_select.callback = self._on_assignee_selected
+        self.add_item(self.assignee_select)
+
+        # Row 3: Due Date Quick Presets Dropdown
+        due_options = [
+            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today", emoji="⏰"),
+            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow", emoji="⏰"),
+            discord.SelectOption(label="In 2 Days", value="2days", emoji="📅"),
+            discord.SelectOption(label="In 3 Days", value="3days", emoji="📅"),
+            discord.SelectOption(label="In 1 Week", value="1week", emoji="📅"),
+            discord.SelectOption(label="In 2 Weeks", value="2weeks", emoji="📅"),
+            discord.SelectOption(label="In 1 Month", value="1month", emoji="📅"),
+            discord.SelectOption(label="Clear Due Date", value="clear", emoji="❌"),
+        ]
+        self.due_select = discord.ui.Select(
+            placeholder="📅 Set Due Date (Quick Presets)...",
+            options=due_options,
+            row=3,
+        )
+        self.due_select.callback = self._on_due_selected
+        self.add_item(self.due_select)
+
+        # Row 4: Watchers User Select Picker (Multi-Select)
+        watcher_defaults = [discord.Object(id=uid) for uid in self.task.watchers] if self.task.watchers else []
+        self.watchers_select = discord.ui.UserSelect(
+            placeholder="👀 Manage Watchers / CC (Pick up to 10 or clear)...",
+            min_values=0,
+            max_values=10,
+            default_values=watcher_defaults,
+            row=4,
+        )
+        self.watchers_select.callback = self._on_watchers_selected
+        self.add_item(self.watchers_select)
+
+    async def _on_priority_selected(self, interaction: discord.Interaction) -> None:
+        val = self.priority_select.values[0]
+        new_priority = PriorityLevel(val)
+        updated_task = await self.task_service.update_priority(
+            task_id=self.task.id,
+            new_priority=new_priority,
+            actor_discord_id=interaction.user.id,
+        )
+        self.task = updated_task
+        if self.bot and hasattr(self.bot, "sync_root_task_message"):
+            await self.bot.sync_root_task_message(updated_task)
+            await self.bot.sync_task_thread(updated_task)
+        self._rebuild_items()
+        embed = build_task_controls_embed(self.task)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_assignee_selected(self, interaction: discord.Interaction) -> None:
+        if self.assignee_select.values:
+            selected_user = self.assignee_select.values[0]
+            if self.auth_service:
+                await self.auth_service.require_task_assignee_eligibility(
+                    interaction.guild, selected_user.id, self.task.project_id
+                )
+            new_assignee_id = selected_user.id
+        else:
+            new_assignee_id = None
+
+        updated_task = await self.task_service.update_assignee(
+            task_id=self.task.id,
+            new_assignee_id=new_assignee_id,
+            actor_discord_id=interaction.user.id,
+        )
+        self.task = updated_task
+        if self.bot and hasattr(self.bot, "sync_root_task_message"):
+            await self.bot.sync_root_task_message(updated_task)
+            await self.bot.sync_task_thread(updated_task)
+        self._rebuild_items()
+        embed = build_task_controls_embed(self.task)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_unassign_clicked(self, interaction: discord.Interaction) -> None:
+        updated_task = await self.task_service.update_assignee(
+            task_id=self.task.id,
+            new_assignee_id=None,
+            actor_discord_id=interaction.user.id,
+        )
+        self.task = updated_task
+        if self.bot and hasattr(self.bot, "sync_root_task_message"):
+            await self.bot.sync_root_task_message(updated_task)
+            await self.bot.sync_task_thread(updated_task)
+        self._rebuild_items()
+        embed = build_task_controls_embed(self.task)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_due_selected(self, interaction: discord.Interaction) -> None:
+        val = self.due_select.values[0]
+        due_at, is_clear = get_due_date_from_preset(val)
+        updated_task = await self.task_service.update_details(
+            task_id=self.task.id,
+            actor_discord_id=interaction.user.id,
+            due_at=due_at,
+            clear_due_at=is_clear,
+        )
+        self.task = updated_task
+        if self.bot and hasattr(self.bot, "sync_root_task_message"):
+            await self.bot.sync_root_task_message(updated_task)
+            await self.bot.sync_task_thread(updated_task)
+        self._rebuild_items()
+        embed = build_task_controls_embed(self.task)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_watchers_selected(self, interaction: discord.Interaction) -> None:
+        watchers = [u.id for u in self.watchers_select.values] if self.watchers_select.values else []
+        updated_task = await self.task_service.update_details(
+            task_id=self.task.id,
+            actor_discord_id=interaction.user.id,
+            watchers=watchers,
+        )
+        self.task = updated_task
+        if self.bot and hasattr(self.bot, "sync_root_task_message"):
+            await self.bot.sync_root_task_message(updated_task)
+            await self.bot.sync_task_thread(updated_task)
+        self._rebuild_items()
+        embed = build_task_controls_embed(self.task)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_done_clicked(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        embed = discord.Embed(
+            title=f"✅ Updated [{self.task.short_id}]",
+            description="Task changes have been saved to the workspace.",
+            color=discord.Color.green(),
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        from src.adapters.discord_bot.menu_manager import menu_manager
+
+        menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
+
+
 class TaskActionView(discord.ui.View):
-    """Persistent interactive view for task embed action buttons and select menus.
+    """Persistent interactive view for task embed action buttons.
 
     All interactions are centrally handled by DggPmBot._handle_dynamic_task_button
     via on_interaction to prevent double-acknowledgment race conditions and ensure
@@ -23,12 +273,16 @@ class TaskActionView(discord.ui.View):
         current_status: TaskStatus,
         task_service: TaskService | None = None,
         current_priority: PriorityLevel = PriorityLevel.NORMAL,
+        current_assignee_id: int | None = None,
+        current_watchers: list[int] | None = None,
     ):
         super().__init__(timeout=None)
         self.task_id = task_id
         self.task_service = task_service
         self.current_status = current_status
         self.current_priority = current_priority
+        self.current_assignee_id = current_assignee_id
+        self.current_watchers = current_watchers or []
 
         # Row 0: Primary Action Buttons
         if current_status == TaskStatus.COMPLETED:
@@ -94,91 +348,21 @@ class TaskActionView(discord.ui.View):
         )
         self.add_item(self.edit_btn)
 
+        # Row 1: Advanced Actions / Tools
         self.deps_btn = discord.ui.Button(
             label="Dependencies",
             emoji="🔗",
             style=discord.ButtonStyle.secondary,
             custom_id=f"task:deps:{task_id}",
-            row=0,
+            row=1,
         )
         self.add_item(self.deps_btn)
 
-        if current_status == TaskStatus.COMPLETED:
-            self.unassign_btn = discord.ui.Button(
-                label="Unassign",
-                emoji="🚫",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"task:unassign:{task_id}",
-                row=0,
-            )
-            self.add_item(self.unassign_btn)
-        else:
-            self.unassign_btn = None
-
-        # Row 1: Priority Dropdown
-        priority_options = [
-            discord.SelectOption(
-                label="High Priority",
-                value="high",
-                emoji="🔴",
-                default=(current_priority == PriorityLevel.HIGH),
-            ),
-            discord.SelectOption(
-                label="Normal Priority",
-                value="normal",
-                emoji="🔵",
-                default=(current_priority == PriorityLevel.NORMAL),
-            ),
-            discord.SelectOption(
-                label="Low Priority",
-                value="low",
-                emoji="⚪",
-                default=(current_priority == PriorityLevel.LOW),
-            ),
-        ]
-        self.priority_select = discord.ui.Select(
-            placeholder="⚡ Change Priority...",
-            options=priority_options,
-            custom_id=f"task:priority:{task_id}",
+        self.controls_btn = discord.ui.Button(
+            label="Quick Controls",
+            emoji="⚙️",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"task:controls:{task_id}",
             row=1,
         )
-        self.add_item(self.priority_select)
-
-        # Row 2: Assignee User Select Picker
-        self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Reassign Member...",
-            custom_id=f"task:assignee:{task_id}",
-            row=2,
-            min_values=1,
-            max_values=1,
-        )
-        self.add_item(self.assignee_select)
-
-        # Row 3: Due Date Quick Presets Dropdown
-        due_options = [
-            discord.SelectOption(label="Today (EOD 5:00 PM)", value="today", emoji="⏰"),
-            discord.SelectOption(label="Tomorrow (EOD 5:00 PM)", value="tomorrow", emoji="⏰"),
-            discord.SelectOption(label="In 2 Days", value="2days", emoji="📅"),
-            discord.SelectOption(label="In 3 Days", value="3days", emoji="📅"),
-            discord.SelectOption(label="In 1 Week", value="1week", emoji="📅"),
-            discord.SelectOption(label="In 2 Weeks", value="2weeks", emoji="📅"),
-            discord.SelectOption(label="In 1 Month", value="1month", emoji="📅"),
-            discord.SelectOption(label="Clear Due Date", value="clear", emoji="❌"),
-        ]
-        self.due_select = discord.ui.Select(
-            placeholder="📅 Set Due Date (Quick Presets)...",
-            options=due_options,
-            custom_id=f"task:due:{task_id}",
-            row=3,
-        )
-        self.add_item(self.due_select)
-
-        # Row 4: Watchers User Select Picker (Multi-Select)
-        self.watchers_select = discord.ui.UserSelect(
-            placeholder="👀 Manage Watchers / CC (Pick up to 10)...",
-            custom_id=f"task:watchers:{task_id}",
-            row=4,
-            min_values=1,
-            max_values=10,
-        )
-        self.add_item(self.watchers_select)
+        self.add_item(self.controls_btn)

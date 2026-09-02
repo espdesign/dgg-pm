@@ -6,7 +6,7 @@ import pytest
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.cogs.project_cog import ProjectCog
 from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
-from src.domain.enums import NotificationPreference
+from src.domain.enums import NotificationPreference, PriorityLevel
 
 
 def test_project_create_command_parameters():
@@ -224,17 +224,31 @@ async def test_task_action_view_and_modals(services):
         task_service=task_srv,
     )
 
-    # Check children: action buttons, priority, assignee, due select, watchers select
+    # Check children: action buttons, note, edit, deps, controls (no inline dropdown clutter)
     custom_ids = [item.custom_id for item in view.children if hasattr(item, "custom_id")]
     assert f"task:start:{task.id}" in custom_ids
     assert f"task:complete:{task.id}" in custom_ids
     assert f"task:note:{task.id}" in custom_ids
     assert f"task:edit:{task.id}" in custom_ids
     assert f"task:deps:{task.id}" in custom_ids
-    assert f"task:priority:{task.id}" in custom_ids
-    assert f"task:assignee:{task.id}" in custom_ids
-    assert f"task:due:{task.id}" in custom_ids
-    assert f"task:watchers:{task.id}" in custom_ids
+    assert f"task:controls:{task.id}" in custom_ids
+    assert f"task:priority:{task.id}" not in custom_ids
+    assert f"task:assignee:{task.id}" not in custom_ids
+    assert f"task:due:{task.id}" not in custom_ids
+    assert f"task:watchers:{task.id}" not in custom_ids
+
+    # Check TaskQuickControlsView contains the on-demand dropdowns with default_values
+    from src.adapters.discord_bot.views.task_buttons import TaskQuickControlsView
+
+    populated_task = task.model_copy(update={"assignee_discord_id": 7788, "watchers": [9901, 9902]})
+    controls_view = TaskQuickControlsView(
+        task=populated_task,
+        task_service=task_srv,
+    )
+    assert [v.id for v in controls_view.assignee_select.default_values] == [7788]
+    assert [v.id for v in controls_view.watchers_select.default_values] == [9901, 9902]
+    assert controls_view.priority_select is not None
+    assert controls_view.due_select is not None
 
     # Completed view has Reopen button
     from src.domain.enums import TaskStatus
@@ -770,3 +784,133 @@ async def test_pm_cog_menu_and_notifications(services):
     interaction.followup.send.assert_awaited_once()
     settings_embed = interaction.followup.send.call_args.kwargs["embed"]
     assert "Notification Preferences" in settings_embed.title
+
+
+@pytest.mark.asyncio
+async def test_task_quick_controls_view_callbacks(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 9988771122
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Controls Project", prefix="CTRL")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Controls Test Task",
+        creator_discord_id=1001,
+        project_id=project.id,
+        priority=PriorityLevel.LOW,
+    )
+
+    from src.adapters.discord_bot.views.task_buttons import TaskQuickControlsView, build_task_controls_embed
+
+    ctrl_embed = build_task_controls_embed(task)
+    assert "Quick Controls" in ctrl_embed.title
+    assert "Low Priority" in ctrl_embed.description
+
+    mock_bot = MagicMock()
+    mock_bot.sync_root_task_message = AsyncMock()
+    mock_bot.sync_task_thread = AsyncMock()
+
+    controls_view = TaskQuickControlsView(
+        task=task,
+        task_service=task_srv,
+        bot=mock_bot,
+    )
+
+    # Check min_values allowing clearing
+    assert controls_view.assignee_select.min_values == 0
+    assert controls_view.watchers_select.min_values == 0
+
+    # 1. Priority change
+    controls_view.priority_select._values = ["high"]
+    prio_interaction = MagicMock(spec=discord.Interaction)
+    prio_interaction.user = MagicMock(id=1001)
+    prio_interaction.response = MagicMock()
+    prio_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_priority_selected(prio_interaction)
+    prio_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.priority == PriorityLevel.HIGH
+    mock_bot.sync_root_task_message.assert_awaited_once()
+
+    # 2. Assignee change
+    mock_member = MagicMock(spec=discord.Member)
+    mock_member.id = 4001
+    controls_view.assignee_select._values = [mock_member]
+    assign_interaction = MagicMock(spec=discord.Interaction)
+    assign_interaction.guild = MagicMock(id=guild_id)
+    assign_interaction.user = MagicMock(id=1001)
+    assign_interaction.response = MagicMock()
+    assign_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_assignee_selected(assign_interaction)
+    assign_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.assignee_discord_id == 4001
+
+    # 2b. Clear Assignee directly via dropdown deselect
+    controls_view.assignee_select._values = []
+    clear_assign_interaction = MagicMock(spec=discord.Interaction)
+    clear_assign_interaction.guild = MagicMock(id=guild_id)
+    clear_assign_interaction.user = MagicMock(id=1001)
+    clear_assign_interaction.response = MagicMock()
+    clear_assign_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_assignee_selected(clear_assign_interaction)
+    clear_assign_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.assignee_discord_id is None
+
+    # 3. Unassign button
+    controls_view.task.assignee_discord_id = 4001
+    unassign_interaction = MagicMock(spec=discord.Interaction)
+    unassign_interaction.user = MagicMock(id=1001)
+    unassign_interaction.response = MagicMock()
+    unassign_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_unassign_clicked(unassign_interaction)
+    unassign_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.assignee_discord_id is None
+
+    # 4. Due date
+    controls_view.due_select._values = ["tomorrow"]
+    due_interaction = MagicMock(spec=discord.Interaction)
+    due_interaction.user = MagicMock(id=1001)
+    due_interaction.response = MagicMock()
+    due_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_due_selected(due_interaction)
+    due_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.due_at is not None
+
+    # 5. Watchers
+    mock_w = MagicMock(spec=discord.Member)
+    mock_w.id = 5001
+    controls_view.watchers_select._values = [mock_w]
+    watchers_interaction = MagicMock(spec=discord.Interaction)
+    watchers_interaction.user = MagicMock(id=1001)
+    watchers_interaction.response = MagicMock()
+    watchers_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_watchers_selected(watchers_interaction)
+    watchers_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.watchers == [5001]
+
+    # 5b. Remove watchers directly via dropdown deselect
+    controls_view.watchers_select._values = []
+    clear_watchers_interaction = MagicMock(spec=discord.Interaction)
+    clear_watchers_interaction.user = MagicMock(id=1001)
+    clear_watchers_interaction.response = MagicMock()
+    clear_watchers_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_watchers_selected(clear_watchers_interaction)
+    clear_watchers_interaction.response.edit_message.assert_awaited_once()
+    assert controls_view.task.watchers == []
+
+    # 6. Done button
+    done_interaction = MagicMock(spec=discord.Interaction)
+    done_interaction.response = MagicMock()
+    done_interaction.response.edit_message = AsyncMock()
+
+    await controls_view._on_done_clicked(done_interaction)
+    done_interaction.response.edit_message.assert_awaited_once()
+    done_embed = done_interaction.response.edit_message.call_args.kwargs["embed"]
+    assert "Updated" in done_embed.title

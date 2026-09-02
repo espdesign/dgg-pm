@@ -78,6 +78,7 @@ async def test_task_create_draft_view_interactive_pickers(services):
     await draft_view._on_assignee_selected(interaction)
     interaction.response.edit_message.assert_awaited_once()
     assert draft_view.assignee_id == 4001
+    assert [v.id for v in draft_view.assignee_select.default_values] == [4001]
     embed = interaction.response.edit_message.call_args.kwargs["embed"]
     assert "<@4001>" in embed.description
 
@@ -89,6 +90,7 @@ async def test_task_create_draft_view_interactive_pickers(services):
     await draft_view._on_unassign_clicked(unassign_interaction)
     unassign_interaction.response.edit_message.assert_awaited_once()
     assert draft_view.assignee_id is None
+    assert draft_view.assignee_select.default_values == []
     embed2 = unassign_interaction.response.edit_message.call_args.kwargs["embed"]
     assert "*Unassigned" in embed2.description
 
@@ -136,6 +138,30 @@ async def test_task_create_draft_view_interactive_pickers(services):
     await draft_view._on_watchers_selected(watchers_interaction)
     watchers_interaction.response.edit_message.assert_awaited_once()
     assert draft_view.watchers == [5001, 5002]
+    assert [v.id for v in draft_view.watchers_select.default_values] == [5001, 5002]
+
+    # 6. Test Watchers deselect / clear
+    draft_view.watchers_select._values = []
+    clear_w_interaction = MagicMock(spec=discord.Interaction)
+    clear_w_interaction.response = MagicMock()
+    clear_w_interaction.response.edit_message = AsyncMock()
+
+    await draft_view._on_watchers_selected(clear_w_interaction)
+    clear_w_interaction.response.edit_message.assert_awaited_once()
+    assert draft_view.watchers == []
+    assert draft_view.watchers_select.default_values == []
+
+    # 7. Test Assignee deselect / clear directly from dropdown
+    draft_view.assignee_id = 4001
+    draft_view.assignee_select._values = []
+    clear_a_interaction = MagicMock(spec=discord.Interaction)
+    clear_a_interaction.response = MagicMock()
+    clear_a_interaction.response.edit_message = AsyncMock()
+
+    await draft_view._on_assignee_selected(clear_a_interaction)
+    clear_a_interaction.response.edit_message.assert_awaited_once()
+    assert draft_view.assignee_id is None
+    assert draft_view.assignee_select.default_values == []
 
 
 @pytest.mark.asyncio

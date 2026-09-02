@@ -8,7 +8,11 @@ from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.hub_menu import PmHubView
-from src.adapters.discord_bot.views.task_buttons import TaskActionView
+from src.adapters.discord_bot.views.task_buttons import (
+    TaskActionView,
+    TaskQuickControlsView,
+    build_task_controls_embed,
+)
 from src.adapters.discord_bot.views.task_dependency_view import TaskDependencyView, build_dependency_embed
 from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
@@ -249,6 +253,8 @@ class DggPmBot(commands.Bot):
             current_status=updated_task.status,
             current_priority=updated_task.priority,
             task_service=self.task_service,
+            current_assignee_id=updated_task.assignee_discord_id,
+            current_watchers=updated_task.watchers,
         )
 
         # If inside a discussion thread, keep the toolbar clean without attaching duplicate embed,
@@ -341,6 +347,21 @@ class DggPmBot(commands.Bot):
                 await send_interaction_error(interaction, e, "opening task dependencies", logger, ephemeral=True)
                 return
 
+        if action == "controls":
+            try:
+                view = TaskQuickControlsView(
+                    task=task,
+                    task_service=self.task_service,
+                    auth_service=self.auth_service,
+                    bot=self,
+                )
+                embed = build_task_controls_embed(task)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                return
+            except Exception as e:
+                await send_interaction_error(interaction, e, "opening task controls", logger, ephemeral=True)
+                return
+
         if action == "unassign":
             try:
                 updated_task = await self.task_service.update_assignee(
@@ -376,24 +397,24 @@ class DggPmBot(commands.Bot):
 
         if action == "assignee":
             values = interaction.data.get("values", [])
-            if values:
-                try:
-                    new_assignee_id = int(values[0])
+            try:
+                new_assignee_id = int(values[0]) if values else None
+                if new_assignee_id and self.auth_service:
                     await self.auth_service.require_task_assignee_eligibility(
                         interaction.guild, new_assignee_id, task.project_id
                     )
-                    updated_task = await self.task_service.update_assignee(
-                        task_id=task_id,
-                        new_assignee_id=new_assignee_id,
-                        actor_discord_id=interaction.user.id,
-                    )
-                    await self._update_interaction_view(interaction, updated_task)
-                    await self.sync_root_task_message(updated_task)
-                    await self.sync_task_thread(updated_task)
-                    return
-                except Exception as e:
-                    await send_interaction_error(interaction, e, "updating task assignee", logger, ephemeral=True)
-                    return
+                updated_task = await self.task_service.update_assignee(
+                    task_id=task_id,
+                    new_assignee_id=new_assignee_id,
+                    actor_discord_id=interaction.user.id,
+                )
+                await self._update_interaction_view(interaction, updated_task)
+                await self.sync_root_task_message(updated_task)
+                await self.sync_task_thread(updated_task)
+                return
+            except Exception as e:
+                await send_interaction_error(interaction, e, "updating task assignee", logger, ephemeral=True)
+                return
 
         if action == "due":
             values = interaction.data.get("values", [])
@@ -416,7 +437,7 @@ class DggPmBot(commands.Bot):
         if action == "watchers":
             values = interaction.data.get("values", [])
             try:
-                watchers = [int(uid) for uid in values]
+                watchers = [int(uid) for uid in values] if values else []
                 updated_task = await self.task_service.update_details(
                     task_id=task_id,
                     actor_discord_id=interaction.user.id,

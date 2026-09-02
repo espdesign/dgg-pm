@@ -439,11 +439,13 @@ class TaskCreateDraftView(discord.ui.View):
         self.add_item(self.cancel_btn)
 
         # Row 1: Assignee Native Member Select Picker
+        assignee_defaults = [discord.Object(id=self.assignee_id)] if self.assignee_id else []
         self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Select Assignee Member...",
-            min_values=1,
+            placeholder="👤 Select Assignee Member (or clear)...",
+            min_values=0,
             max_values=1,
             row=1,
+            default_values=assignee_defaults,
         )
         self.assignee_select.callback = self._on_assignee_selected
         self.add_item(self.assignee_select)
@@ -498,18 +500,19 @@ class TaskCreateDraftView(discord.ui.View):
         self.add_item(self.priority_select)
 
         # Row 4: Watchers Native Member Multi-Select Picker
+        watcher_defaults = [discord.Object(id=uid) for uid in self.watchers] if self.watchers else []
         self.watchers_select = discord.ui.UserSelect(
-            placeholder="👀 Pick Watchers / CC (Optional, up to 10)...",
-            min_values=1,
+            placeholder="👀 Pick Watchers / CC (Optional, up to 10 or clear)...",
+            min_values=0,
             max_values=10,
             row=4,
+            default_values=watcher_defaults,
         )
         self.watchers_select.callback = self._on_watchers_selected
         self.add_item(self.watchers_select)
 
     async def _on_assignee_selected(self, interaction: discord.Interaction) -> None:
-        selected_user = self.assignee_select.values[0]
-        self.assignee_id = selected_user.id
+        self.assignee_id = self.assignee_select.values[0].id if self.assignee_select.values else None
         self._rebuild_items()
         embed = build_task_draft_embed(
             title=self.title,
@@ -577,7 +580,7 @@ class TaskCreateDraftView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _on_watchers_selected(self, interaction: discord.Interaction) -> None:
-        self.watchers = [u.id for u in self.watchers_select.values]
+        self.watchers = [u.id for u in self.watchers_select.values] if self.watchers_select.values else []
         self._rebuild_items()
         embed = build_task_draft_embed(
             title=self.title,
@@ -690,6 +693,8 @@ class TaskCreateDraftView(discord.ui.View):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=task.watchers,
                 )
                 applied_tags = resolve_forum_tags(
                     target_chan, task, project_name=self.project.name if self.project else None
@@ -727,6 +732,8 @@ class TaskCreateDraftView(discord.ui.View):
                         current_status=task.status,
                         current_priority=task.priority,
                         task_service=self.task_service,
+                        current_assignee_id=task.assignee_discord_id,
+                        current_watchers=task.watchers,
                     )
                     thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
                     if task.assignee_discord_id:
@@ -745,6 +752,8 @@ class TaskCreateDraftView(discord.ui.View):
                     current_status=task.status,
                     current_priority=task.priority,
                     task_service=self.task_service,
+                    current_assignee_id=task.assignee_discord_id,
+                    current_watchers=task.watchers,
                 )
                 msg = await target_chan.send(embed=embed, view=view)
                 await self.task_service.update_discord_message_ids(task.id, msg.id, target_chan.id)

@@ -559,11 +559,13 @@ class TaskMenuView(discord.ui.View):
         self.add_item(self.status_select)
 
         # Row 3: Assignee User Select Picker
+        member_defaults = [discord.Object(id=self.selected_assignee_id)] if self.selected_assignee_id else []
         self.assignee_select = discord.ui.UserSelect(
-            placeholder="👤 Filter by Assignee / Member...",
+            placeholder="👤 Filter by Assignee / Member (or clear)...",
             row=3,
-            min_values=1,
+            min_values=0,
             max_values=1,
+            default_values=member_defaults,
         )
         self.assignee_select.callback = self._on_assignee_filter_changed
         self.add_item(self.assignee_select)
@@ -732,12 +734,13 @@ class TaskMenuView(discord.ui.View):
         await self._render_filtered_board(interaction)
 
     async def _on_assignee_filter_changed(self, interaction: discord.Interaction) -> None:
-        selected_user = self.assignee_select.values[0]
-        self.selected_assignee_id = selected_user.id
+        self.selected_assignee_id = self.assignee_select.values[0].id if self.assignee_select.values else None
+        self._rebuild_items()
         await self._render_filtered_board(interaction)
 
     async def _on_clear_member_clicked(self, interaction: discord.Interaction) -> None:
         self.selected_assignee_id = None
+        self._rebuild_items()
         await self._render_filtered_board(interaction)
 
     async def _on_reset_filters_clicked(self, interaction: discord.Interaction) -> None:
