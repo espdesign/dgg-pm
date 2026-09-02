@@ -14,6 +14,7 @@ from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import (
     build_task_embed,
     build_task_history_embed,
+    build_thread_workspace_content,
 )
 from src.adapters.discord_bot.views.task_list_view import TaskListView, build_page_embed
 from src.domain.enums import PriorityLevel, TaskStatus
@@ -203,15 +204,11 @@ class TaskCog(commands.Cog):
                     current_watchers=watchers,
                 )
                 applied_tags = resolve_forum_tags(target_channel, task, project_name=project.name)
-                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                if task.assignee_discord_id:
-                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                if watchers:
-                    thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
+                thread_content = build_thread_workspace_content(task)
 
                 res = await target_channel.create_thread(
                     name=post_name,
-                    content=thread_intro,
+                    content=thread_content,
                     embed=embed,
                     view=thread_view,
                     applied_tags=applied_tags,
@@ -229,12 +226,7 @@ class TaskCog(commands.Cog):
                     thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
 
                     # Post active TaskActionView card inside the thread workspace
-                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
-                    if task.assignee_discord_id:
-                        thread_intro += f"Assignee: <@{task.assignee_discord_id}> "
-                    if watchers:
-                        thread_intro += "Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
-
+                    thread_content = build_thread_workspace_content(task)
                     thread_view = TaskActionView(
                         task_id=task.id,
                         current_status=task.status,
@@ -243,7 +235,7 @@ class TaskCog(commands.Cog):
                         current_assignee_id=task.assignee_discord_id,
                         current_watchers=watchers,
                     )
-                    await thread.send(content=thread_intro.strip(), view=thread_view)
+                    await thread.send(content=thread_content, view=thread_view)
                 except Exception:
                     pass
             elif isinstance(target_channel, discord.Thread):
@@ -537,15 +529,11 @@ class TaskCog(commands.Cog):
                     current_watchers=watchers,
                 )
                 applied_tags = resolve_forum_tags(interaction.channel, task)
-                thread_intro = f"📌 Standalone task workspace created by <@{interaction.user.id}>."
-                if task.assignee_discord_id:
-                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                if watchers:
-                    thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
+                thread_content = build_thread_workspace_content(task)
 
                 res = await interaction.channel.create_thread(
                     name=post_name,
-                    content=thread_intro,
+                    content=thread_content,
                     embed=embed,
                     view=thread_view,
                     applied_tags=applied_tags,
@@ -561,12 +549,7 @@ class TaskCog(commands.Cog):
                         thread_name = thread_name[:97] + "..."
                     thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
 
-                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>.\n"
-                    if task.assignee_discord_id:
-                        thread_intro += f"Assignee: <@{task.assignee_discord_id}> "
-                    if watchers:
-                        thread_intro += "Watchers: " + " ".join(f"<@{uid}>" for uid in watchers)
-
+                    thread_content = build_thread_workspace_content(task)
                     thread_view = TaskActionView(
                         task_id=task.id,
                         current_status=task.status,
@@ -575,7 +558,7 @@ class TaskCog(commands.Cog):
                         current_assignee_id=task.assignee_discord_id,
                         current_watchers=watchers,
                     )
-                    await thread.send(content=thread_intro.strip(), view=thread_view)
+                    await thread.send(content=thread_content, view=thread_view)
                 except Exception:
                     pass
             elif isinstance(interaction.channel, discord.Thread):

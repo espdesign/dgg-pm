@@ -266,6 +266,7 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
         task_id: UUID,
         title: str | None = None,
         body: str | None = None,
+        clear_body: bool = False,
         priority: PriorityLevel | None = None,
         assignee_discord_id: int | None = None,
         clear_assignee: bool = False,
@@ -281,7 +282,9 @@ class PostgresTaskRepo(BasePostgresRepo, ITaskRepo):
             }
             if title is not None:
                 values["title"] = title.strip()
-            if body is not None:
+            if clear_body:
+                values["body"] = None
+            elif body is not None:
                 values["body"] = body.strip() if body else None
             if priority is not None:
                 values["priority"] = priority.value

@@ -464,8 +464,13 @@ async def test_thread_workspace_content_leads_with_description(services):
     lines = content.splitlines()
     # First line is the description; assignee/priority summary follows on a separate line
     assert lines[0] == "Deploy the new API gateway and wire up monitoring dashboards."
-    assert "Assignee: <@2001>" in content
-    assert "Priority: `LOW`" in content
+    assert "**Assignee**: <@2001>" in content
+    assert "**Priority**: `Low`" in content
+
+    # Watchers are included when present
+    task.watchers = [3001, 3002]
+    content_with_watchers = build_thread_workspace_content(task)
+    assert "**Watchers**: <@3001> <@3002>" in content_with_watchers
 
     # Long descriptions are truncated safely within Discord's 2000-char limit
     task.body = "X" * 2500
@@ -476,9 +481,11 @@ async def test_thread_workspace_content_leads_with_description(services):
     # Unassigned + no description fallbacks
     task.assignee_discord_id = None
     task.body = None
+    task.watchers = []
     fallback = build_thread_workspace_content(task)
     assert fallback.startswith("*No additional description provided.*")
-    assert "Assignee: Unassigned" in fallback
+    assert "**Assignee**: *Unassigned*" in fallback
+    assert "**Priority**: `Low`" in fallback
 
 
 @pytest.mark.asyncio

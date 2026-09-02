@@ -9,7 +9,11 @@ import discord
 from src.adapters.discord_bot.error_handler import send_interaction_error
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.adapters.discord_bot.views.task_buttons import TaskActionView
-from src.adapters.discord_bot.views.task_embed import build_task_embed, get_task_jump_url
+from src.adapters.discord_bot.views.task_embed import (
+    build_task_embed,
+    build_thread_workspace_content,
+    get_task_jump_url,
+)
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Project, Task
 from src.utils.date_parser import get_due_date_from_preset, parse_natural_date
@@ -689,15 +693,11 @@ class TaskCreateDraftView(discord.ui.View):
                 applied_tags = resolve_forum_tags(
                     target_chan, task, project_name=self.project.name if self.project else None
                 )
-                thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                if task.assignee_discord_id:
-                    thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                if task.watchers:
-                    thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in task.watchers)
+                thread_content = build_thread_workspace_content(task)
 
                 res = await target_chan.create_thread(
                     name=post_name,
-                    content=thread_intro,
+                    content=thread_content,
                     embed=embed,
                     view=thread_view,
                     applied_tags=applied_tags,
@@ -725,12 +725,8 @@ class TaskCreateDraftView(discord.ui.View):
                         current_assignee_id=task.assignee_discord_id,
                         current_watchers=task.watchers,
                     )
-                    thread_intro = f"📌 Task workspace created by <@{interaction.user.id}>."
-                    if task.assignee_discord_id:
-                        thread_intro += f" Assignee: <@{task.assignee_discord_id}>"
-                    if task.watchers:
-                        thread_intro += " Watchers: " + " ".join(f"<@{uid}>" for uid in task.watchers)
-                    await thread.send(content=thread_intro, view=thread_view)
+                    thread_content = build_thread_workspace_content(task)
+                    await thread.send(content=thread_content, view=thread_view)
                     await self.task_service.update_discord_message_ids(task.id, msg.id, thread.id)
                     task = await self.task_service.get_by_id(task.id) or task
                 except Exception:

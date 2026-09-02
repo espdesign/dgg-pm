@@ -25,7 +25,10 @@ from src.adapters.discord_bot.views.forum_helpers import (  # noqa: E402
     resolve_forum_tags,
 )
 from src.adapters.discord_bot.views.task_buttons import TaskActionView  # noqa: E402
-from src.adapters.discord_bot.views.task_embed import build_task_embed  # noqa: E402
+from src.adapters.discord_bot.views.task_embed import (  # noqa: E402
+    build_task_embed,
+    build_thread_workspace_content,
+)
 from src.config import settings  # noqa: E402
 from src.domain.enums import PriorityLevel, TaskStatus  # noqa: E402
 from src.services.outbox_service import OutboxService  # noqa: E402
@@ -536,12 +539,13 @@ async def seed_discord_channels_and_tasks(guild_id: int) -> None:
                     task_service=task_service,
                 )
 
+                thread_content = build_thread_workspace_content(task)
+
                 if isinstance(target_channel, discord.ForumChannel):
                     applied_tags = resolve_forum_tags(target_channel, task)
-                    thread_intro = f"📌 Task card created by <@{bot_user_id}>."
                     res = await target_channel.create_thread(
                         name=f"[{task.short_id}] {task.title[:90]}",
-                        content=thread_intro,
+                        content=thread_content,
                         embed=embed,
                         view=thread_view,
                         applied_tags=applied_tags,
@@ -558,8 +562,7 @@ async def seed_discord_channels_and_tasks(guild_id: int) -> None:
                         name=f"[{task.short_id}] {task.title[:90]}",
                         auto_archive_duration=10080,
                     )
-                    thread_intro = f"📌 Task workspace created by <@{bot_user_id}>."
-                    await thread.send(content=thread_intro, view=thread_view)
+                    await thread.send(content=thread_content, view=thread_view)
                     await task_service.update_discord_message_ids(task.id, msg.id, thread.id)
 
                 logger.info(f"   • Posted task [{task.short_id}] '{task.title}' to #{target_channel.name}")

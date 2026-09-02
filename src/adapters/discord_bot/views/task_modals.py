@@ -141,7 +141,10 @@ class TaskEditModal(discord.ui.Modal):
             await interaction.response.send_message("❌ Task title cannot be empty.", ephemeral=True)
             return
 
-        body = self.body_input.value.strip() or None
+        body_val = self.body_input.value.strip()
+        clear_body = body_val == "" or body_val.lower() in ("clear", "none", "remove")
+        body = None if clear_body else body_val
+
         due_val = self.due_input.value.strip()
         clear_due = due_val.lower() in ("clear", "none", "remove", "null", "unset")
         due_at = None if clear_due else parse_natural_date(due_val)
@@ -160,6 +163,7 @@ class TaskEditModal(discord.ui.Modal):
                 actor_discord_id=interaction.user.id,
                 title=title,
                 body=body,
+                clear_body=clear_body,
                 due_at=due_at,
                 clear_due_at=clear_due,
                 watchers=watchers,
@@ -185,7 +189,10 @@ class TaskEditModal(discord.ui.Modal):
                 if interaction.message:
                     if isinstance(interaction.channel, discord.Thread):
                         content = build_thread_workspace_content(updated_task)
-                        await interaction.response.edit_message(content=content, embed=None, view=new_view)
+                        if isinstance(interaction.channel.parent, discord.ForumChannel):
+                            await interaction.response.edit_message(content=content, embed=new_embed, view=new_view)
+                        else:
+                            await interaction.response.edit_message(content=content, embed=None, view=new_view)
                     else:
                         await interaction.response.edit_message(embed=new_embed, view=new_view)
                 else:

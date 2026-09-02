@@ -124,11 +124,23 @@ def build_task_embed(
 
 def build_thread_workspace_content(task: Task) -> str:
     """Builds the message content for the task workspace inside a discussion thread."""
-    description = task.body or "*No additional description provided.*"
-    if len(description) > 900:
-        description = description[:897] + "..."
-    assignee_str = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "Unassigned"
-    return f"{description}\n\n*(Assignee: {assignee_str} • Priority: `{task.priority.value.upper()}`)*"
+    description = task.body.strip() if task.body and task.body.strip() else "*No additional description provided.*"
+    if len(description) > 1500:
+        description = description[:1497] + "..."
+
+    assignee_str = f"<@{task.assignee_discord_id}>" if task.assignee_discord_id else "*Unassigned*"
+    priority_str = f"`{PRIORITY_LABELS.get(task.priority, task.priority.value.title())}`"
+
+    meta_parts = [
+        f"**Assignee**: {assignee_str}",
+        f"**Priority**: {priority_str}",
+    ]
+    if task.watchers:
+        watchers_str = " ".join(f"<@{uid}>" for uid in task.watchers)
+        meta_parts.append(f"**Watchers**: {watchers_str}")
+
+    meta_line = " • ".join(meta_parts)
+    return f"{description}\n\n{meta_line}"
 
 
 def build_task_history_embed(task: Task, history: list[TaskHistory]) -> discord.Embed:

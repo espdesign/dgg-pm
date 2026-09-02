@@ -193,7 +193,11 @@ class DggPmBot(commands.Bot):
                     fresh_embed = build_task_embed(task, project_name=project_name)
                     keep_archived = task.status == TaskStatus.COMPLETED or task.is_archived
                     async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
-                        await root_msg.edit(embed=fresh_embed)
+                        if isinstance(thread.parent, discord.ForumChannel):
+                            thread_content = build_thread_workspace_content(task)
+                            await root_msg.edit(content=thread_content, embed=fresh_embed)
+                        else:
+                            await root_msg.edit(embed=fresh_embed)
         except Exception as e:
             logger.debug("Failed to sync root starter message for task %s: %s", task.short_id, e)
 
@@ -267,8 +271,13 @@ class DggPmBot(commands.Bot):
         async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
             if isinstance(interaction.channel, discord.Thread):
                 content = build_thread_workspace_content(updated_task)
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(content=content, embed=None, view=new_view)
+                if isinstance(interaction.channel.parent, discord.ForumChannel):
+                    new_embed = build_task_embed(updated_task)
+                    if not interaction.response.is_done():
+                        await interaction.response.edit_message(content=content, embed=new_embed, view=new_view)
+                else:
+                    if not interaction.response.is_done():
+                        await interaction.response.edit_message(content=content, embed=None, view=new_view)
             else:
                 # Standalone task card in channel
                 new_embed = build_task_embed(updated_task)

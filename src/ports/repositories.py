@@ -50,6 +50,7 @@ class ITaskRepo(ABC):
         task_id: UUID,
         title: str | None = None,
         body: str | None = None,
+        clear_body: bool = False,
         priority: PriorityLevel | None = None,
         assignee_discord_id: int | None = None,
         clear_assignee: bool = False,

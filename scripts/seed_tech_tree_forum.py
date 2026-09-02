@@ -41,7 +41,10 @@ from src.adapters.discord_bot.views.forum_helpers import (  # noqa: E402
     resolve_forum_tags,
 )
 from src.adapters.discord_bot.views.task_buttons import TaskActionView  # noqa: E402
-from src.adapters.discord_bot.views.task_embed import build_task_embed  # noqa: E402
+from src.adapters.discord_bot.views.task_embed import (  # noqa: E402
+    build_task_embed,
+    build_thread_workspace_content,
+)
 from src.adapters.discord_bot.views.tree_view import TechTreeViewer  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.domain.enums import PriorityLevel, TaskStatus  # noqa: E402
@@ -504,9 +507,10 @@ async def seed_discord_forum(
                 applied_tags.append(blocked_tag)
 
         try:
+            thread_content = build_thread_workspace_content(fresh_task)
             res = await forum_channel.create_thread(
                 name=f"[{fresh_task.short_id}] {fresh_task.title[:90]}",
-                content=f"📌 Task card created by <@{bot_user_id}>.",
+                content=thread_content,
                 embed=embed,
                 view=action_view,
                 applied_tags=applied_tags,

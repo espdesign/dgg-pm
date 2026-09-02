@@ -476,6 +476,7 @@ class TaskService:
         actor_discord_id: int,
         title: str | None = None,
         body: str | None = None,
+        clear_body: bool = False,
         due_at: datetime | None = None,
         clear_due_at: bool = False,
         watchers: list[int] | None = None,
@@ -487,7 +488,9 @@ class TaskService:
         changes: list[str] = []
         if title is not None and title.strip() != current_task.title:
             changes.append(f"Title: `{current_task.title}` ➔ **`{title.strip()}`**")
-        if body is not None and body.strip() != (current_task.body or ""):
+        if clear_body and current_task.body:
+            changes.append("Description removed")
+        elif body is not None and body.strip() != (current_task.body or ""):
             changes.append("Description updated")
         if clear_due_at and current_task.due_at:
             changes.append("Due date removed")
@@ -506,6 +509,7 @@ class TaskService:
                 task_id=task_id,
                 title=title,
                 body=body,
+                clear_body=clear_body,
                 due_at=due_at,
                 clear_due_at=clear_due_at,
                 watchers=watchers,
