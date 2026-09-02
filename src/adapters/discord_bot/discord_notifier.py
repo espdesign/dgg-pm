@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("dgg_pm.discord_notifier")
 
+NOTIFICATION_FOOTER = "Control notifications via /pm settings"
+
 
 class DiscordNotifier(INotificationDispatcher):
     def __init__(self, bot: discord.Client, user_service: UserService | None = None):
@@ -33,6 +35,8 @@ class DiscordNotifier(INotificationDispatcher):
     async def _send_dm(self, user_id: int, embed: discord.Embed) -> bool:
         """Helper to send a Direct Message to a Discord user."""
         try:
+            if embed and not (embed.footer and embed.footer.text):
+                embed.set_footer(text=NOTIFICATION_FOOTER)
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
             if user:
                 await user.send(embed=embed)
@@ -52,6 +56,9 @@ class DiscordNotifier(INotificationDispatcher):
         thread: discord.Thread | None = None,
         mention_text: str | None = None,
     ) -> None:
+        if embed and not (embed.footer and embed.footer.text):
+            embed.set_footer(text=NOTIFICATION_FOOTER)
+
         pref = await self._get_pref(guild_id, user_id)
         if pref == NotificationPreference.NONE:
             return
@@ -109,6 +116,7 @@ class DiscordNotifier(INotificationDispatcher):
             description=f"Your assigned task **[{short_id}] {title}** is **{label}**.",
             color=discord.Color.red() if reminder_type == "due" else discord.Color.gold(),
         )
+        embed.set_footer(text=NOTIFICATION_FOOTER)
         embed.add_field(name="Task Title", value=title, inline=True)
         if payload.get("due_at"):
             embed.add_field(name="Due Timestamp", value=payload["due_at"], inline=True)
@@ -234,6 +242,7 @@ class DiscordNotifier(INotificationDispatcher):
                 description=f"Status changed from `{old_status}` to **`{new_status}`** by <@{actor_id}>.",
                 color=discord.Color.green() if new_status == "completed" else discord.Color.blue(),
             )
+            embed.set_footer(text=NOTIFICATION_FOOTER)
             if notes:
                 embed.add_field(name="Notes", value=notes, inline=False)
 
@@ -257,15 +266,16 @@ class DiscordNotifier(INotificationDispatcher):
         assignee_id = payload.get("assignee_discord_id")
 
         thread: discord.Thread | None = None
+        is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
         # Post into thread
         if thread_id:
             try:
                 chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                 if isinstance(chan, discord.Thread):
                     thread = chan
-                    was_archived = thread.archived
+                    was_archived = getattr(thread, "archived", False)
                     await thread.send(f"📝 **Note added by <@{actor_id}>:**\n> {note}")
-                    if was_archived:
+                    if was_archived or is_completed:
                         try:
                             await thread.edit(archived=True)
                         except Exception:
@@ -285,6 +295,7 @@ class DiscordNotifier(INotificationDispatcher):
                 description=f"<@{actor_id}> added a note:\n> {note}",
                 color=discord.Color.blue(),
             )
+            embed.set_footer(text=NOTIFICATION_FOOTER)
             for uid in recipients:
                 await self._notify_user(
                     guild_id=guild_id,
@@ -299,24 +310,27 @@ class DiscordNotifier(INotificationDispatcher):
         creator_id = payload.get("creator_discord_id")
         guild_id = payload.get("guild_id")
         thread_id = payload.get("discord_thread_id")
+        watchers: list[int] = payload.get("watchers", [])
+
+        thread: discord.Thread | None = None
+        if thread_id:
+            try:
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
+            except Exception:
+                pass
+
+        short_id = payload.get("short_id", "")
+        title = payload.get("title", "")
 
         if assignee_id and assignee_id != creator_id:
-            short_id = payload.get("short_id", "")
-            title = payload.get("title", "")
             embed = discord.Embed(
                 title=f"📥 New Task Assigned: [{short_id}]",
                 description=f"<@{creator_id}> assigned you a new task: **{title}**",
                 color=discord.Color.blue(),
             )
-
-            thread: discord.Thread | None = None
-            if thread_id:
-                try:
-                    chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-                    if isinstance(chan, discord.Thread):
-                        thread = chan
-                except Exception:
-                    pass
+            embed.set_footer(text=NOTIFICATION_FOOTER)
 
             await self._notify_user(
                 guild_id=guild_id,
@@ -325,6 +339,26 @@ class DiscordNotifier(INotificationDispatcher):
                 thread=thread,
                 mention_text=f"📥 <@{assignee_id}> You have been assigned to task **[{short_id}] {title}**!",
             )
+
+        # Notify watchers added during task creation
+        watcher_recipients = set(watchers) - {creator_id}
+        if assignee_id:
+            watcher_recipients.discard(assignee_id)
+        if watcher_recipients:
+            watcher_embed = discord.Embed(
+                title=f"👀 Added as Watcher: [{short_id}]",
+                description=f"<@{creator_id}> added you as a watcher to task **{title}**.",
+                color=discord.Color.blue(),
+            )
+            watcher_embed.set_footer(text=NOTIFICATION_FOOTER)
+            for w_id in watcher_recipients:
+                await self._notify_user(
+                    guild_id=guild_id,
+                    user_id=w_id,
+                    embed=watcher_embed,
+                    thread=thread,
+                    mention_text=f"👀 <@{w_id}> You were added as a watcher on task **[{short_id}] {title}**",
+                )
 
     async def _handle_task_updated(self, payload: dict) -> None:
         short_id = payload.get("short_id", "")
@@ -345,6 +379,7 @@ class DiscordNotifier(INotificationDispatcher):
             except Exception:
                 pass
 
+        added_watchers: set[int] = set()
         if update_type == "assignee" or ("new_assignee_id" in payload or "old_assignee_id" in payload):
             new_assignee = payload.get("new_assignee_id")
             old_assignee = payload.get("old_assignee_id")
@@ -395,16 +430,19 @@ class DiscordNotifier(INotificationDispatcher):
             embed_desc = f"<@{actor_id}> updated task details:\n{change_text}"
             embed_title = f"✏️ Task Updated: [{short_id}] {title}"
             embed_color = discord.Color.blue()
-            recipients = set(watchers) | set(payload.get("old_watchers", []))
+            old_watchers = payload.get("old_watchers", [])
+            added_watchers = set(watchers) - set(old_watchers)
+            recipients = set(watchers) | set(old_watchers)
             if assignee_id:
                 recipients.add(assignee_id)
 
+        is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
         # Post to thread if available
         if thread:
             try:
-                was_archived = thread.archived
+                was_archived = getattr(thread, "archived", False)
                 await thread.send(thread_msg)
-                if was_archived:
+                if was_archived or is_completed:
                     try:
                         await thread.edit(archived=True)
                     except Exception:
@@ -420,11 +458,16 @@ class DiscordNotifier(INotificationDispatcher):
                 description=embed_desc,
                 color=embed_color,
             )
+            embed.set_footer(text=NOTIFICATION_FOOTER)
             for uid in recipients:
+                if uid in added_watchers:
+                    user_mention = f"👀 <@{uid}> You were added as a watcher on task **[{short_id}] {title}**"
+                else:
+                    user_mention = f"🔔 <@{uid}> **[{short_id}] {title}** was updated by <@{actor_id}>"
                 await self._notify_user(
                     guild_id=guild_id,
                     user_id=uid,
                     embed=embed,
                     thread=thread,
-                    mention_text=f"🔔 <@{uid}> **[{short_id}] {title}** was updated by <@{actor_id}>",
+                    mention_text=user_mention,
                 )

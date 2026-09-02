@@ -668,16 +668,6 @@ async def test_pm_hub_view_ephemeral_interactions(services):
     assert interaction.response.send_message.await_count == 2
     assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
 
-    # 4. Click My Settings -> sends ephemeral response
-    await hub_view.settings_tab.callback(interaction)
-    assert interaction.response.send_message.await_count == 3
-    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
-
-    # 5. Click Guides -> sends ephemeral response
-    await hub_view.guide_tab.callback(interaction)
-    assert interaction.response.send_message.await_count == 4
-    assert interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
-
 
 @pytest.mark.asyncio
 async def test_task_create_modal_inside_forum_thread_creates_new_forum_post(services):

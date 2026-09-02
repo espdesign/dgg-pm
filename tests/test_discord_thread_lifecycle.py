@@ -278,6 +278,238 @@ async def test_discord_notifier_rearchives_thread_on_completion():
     mock_thread.edit.assert_awaited_once_with(archived=True)
 
 
+@pytest.mark.asyncio
+async def test_discord_notifier_rearchives_thread_on_task_updated_and_notes():
+    """Verify DiscordNotifier re-archives the thread on TASK_UPDATED and TASK_NOTE_ADDED if task is completed."""
+    from src.adapters.discord_bot.discord_notifier import DiscordNotifier
+    from src.domain.enums import EventType
+    from src.domain.models import OutboxEvent
+
+    bot = MagicMock()
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 999888
+    mock_thread.parent = None
+    mock_thread.archived = False  # E.g. unarchived by message send
+    mock_thread.send = AsyncMock()
+    mock_thread.edit = AsyncMock()
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    notifier = DiscordNotifier(bot=bot)
+
+    # 1. TASK_UPDATED on completed task
+    event_update = OutboxEvent(
+        event_type=EventType.TASK_UPDATED,
+        idempotency_key="update_test_1",
+        payload={
+            "short_id": "T-1",
+            "title": "Fix bug",
+            "actor_discord_id": 1001,
+            "discord_thread_id": 999888,
+            "status": "completed",
+            "is_completed": True,
+            "update_type": "assignee",
+            "new_assignee_id": None,
+        },
+    )
+    await notifier.dispatch_event(event_update)
+    mock_thread.send.assert_awaited_once()
+    mock_thread.edit.assert_awaited_with(archived=True)
+
+    # 2. TASK_NOTE_ADDED on completed task
+    mock_thread.send.reset_mock()
+    mock_thread.edit.reset_mock()
+    event_note = OutboxEvent(
+        event_type=EventType.TASK_NOTE_ADDED,
+        idempotency_key="note_test_1",
+        payload={
+            "short_id": "T-1",
+            "title": "Fix bug",
+            "actor_discord_id": 1001,
+            "discord_thread_id": 999888,
+            "note": "Post release note",
+            "status": "completed",
+            "is_completed": True,
+        },
+    )
+    await notifier.dispatch_event(event_note)
+    mock_thread.send.assert_awaited_once()
+    mock_thread.edit.assert_awaited_with(archived=True)
+
+
+@pytest.mark.asyncio
+async def test_task_quick_controls_completed_task_unarchives_and_rearchives(services):
+    """Verify modifying a completed/archived task via Quick Controls unarchives then re-archives thread."""
+    from src.adapters.discord_bot.views.task_buttons import TaskQuickControlsView
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 99887766
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Archive Test", prefix="ARC")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Completed Task",
+        creator_discord_id=1001,
+        project_id=project.id,
+        assignee_discord_id=1002,
+    )
+    # Move to completed
+    task = await task_srv.update_status(
+        task_id=task.id,
+        new_status=TaskStatus.COMPLETED,
+        expected_version=task.version,
+        actor_discord_id=1001,
+    )
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 555666
+    mock_thread.archived = True
+    mock_thread.edit = AsyncMock()
+
+    bot = MagicMock()
+    bot.get_channel = MagicMock(return_value=mock_thread)
+    bot.sync_root_task_message = AsyncMock()
+    bot.sync_task_thread = AsyncMock()
+
+    controls_view = TaskQuickControlsView(
+        task=task,
+        task_service=task_srv,
+        bot=bot,
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.id = 1001
+    interaction.channel = mock_thread
+    interaction.response = MagicMock()
+    interaction.response.edit_message = AsyncMock()
+
+    # Click Unassign
+    await controls_view._on_unassign_clicked(interaction)
+
+    # Verify unarchive (archived=False) and re-archive (archived=True) were both called
+    edit_calls = mock_thread.edit.call_args_list
+    assert any(c.kwargs.get("archived") is False for c in edit_calls)
+    assert any(c.kwargs.get("archived") is True for c in edit_calls)
+
+    # Verify task was actually unassigned in DB
+    refreshed = await task_srv.get_by_id(task.id)
+    assert refreshed.assignee_discord_id is None
+    assert refreshed.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_task_note_modal_completed_archived_thread(services):
+    """Verify adding a note to a completed/archived task unarchives then re-archives thread."""
+    from src.adapters.discord_bot.views.task_modals import TaskNoteModal
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 11224455
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Notes Test", prefix="NOT")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Completed Task with Note",
+        creator_discord_id=1001,
+        project_id=project.id,
+    )
+    task = await task_srv.update_status(
+        task_id=task.id,
+        new_status=TaskStatus.COMPLETED,
+        expected_version=task.version,
+        actor_discord_id=1001,
+    )
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 777888
+    mock_thread.archived = True
+    mock_thread.edit = AsyncMock()
+
+    modal = TaskNoteModal(
+        task_id=task.id,
+        short_id=task.short_id,
+        task_service=task_srv,
+    )
+    modal.note_input._value = "Final post-mortem update."
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.id = 1001
+    interaction.channel = mock_thread
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    await modal.on_submit(interaction)
+
+    edit_calls = mock_thread.edit.call_args_list
+    assert any(c.kwargs.get("archived") is False for c in edit_calls)
+    assert any(c.kwargs.get("archived") is True for c in edit_calls)
+    interaction.response.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_task_edit_modal_completed_archived_thread(services):
+    """Verify editing details of a completed/archived task unarchives then re-archives thread."""
+    from src.adapters.discord_bot.views.task_modals import TaskEditModal
+
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 99112233
+
+    project = await proj_srv.create_project(guild_id=guild_id, name="Edit Test", prefix="EDT")
+    task = await task_srv.create_task(
+        guild_id=guild_id,
+        title="Completed Task Edit",
+        creator_discord_id=1001,
+        project_id=project.id,
+    )
+    task = await task_srv.update_status(
+        task_id=task.id,
+        new_status=TaskStatus.COMPLETED,
+        expected_version=task.version,
+        actor_discord_id=1001,
+    )
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 888999
+    mock_thread.archived = True
+    mock_thread.edit = AsyncMock()
+
+    modal = TaskEditModal(
+        task=task,
+        task_service=task_srv,
+    )
+    modal.title_input._value = "Updated Completed Task Title"
+    modal.body_input._value = "Updated description"
+    modal.due_input._value = "clear"
+    modal.cc_input._value = ""
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.guild = MagicMock()
+    interaction.guild.id = guild_id
+    interaction.user = MagicMock()
+    interaction.user.id = 1001
+    interaction.channel = mock_thread
+    interaction.message = MagicMock()
+    interaction.response = MagicMock()
+    interaction.response.edit_message = AsyncMock()
+    interaction.client = MagicMock()
+    interaction.client.sync_root_task_message = AsyncMock()
+    interaction.client.sync_task_thread = AsyncMock()
+
+    await modal.on_submit(interaction)
+
+    edit_calls = mock_thread.edit.call_args_list
+    assert any(c.kwargs.get("archived") is False for c in edit_calls)
+    assert any(c.kwargs.get("archived") is True for c in edit_calls)
+    interaction.response.edit_message.assert_awaited_once()
+
+
 def test_get_task_jump_url():
     """Verify get_task_jump_url generates accurate universal Discord links."""
     from src.adapters.discord_bot.views.task_embed import get_task_jump_url

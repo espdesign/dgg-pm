@@ -528,7 +528,7 @@ async def test_pm_hub_navigation(services):
     hub_view = PmHubView(proj_srv, team_srv, task_srv, user_service=user_srv)
     welcome_embed = build_hub_welcome_embed()
     assert "Control Hub" in welcome_embed.title
-    assert len(hub_view.children) == 6  # New Task, Task Board, Projects, Tech Tree, My Settings, Guides
+    assert len(hub_view.children) == 4  # New Task, Task Board, Projects, Tech Tree
 
     mock_interaction = MagicMock(spec=discord.Interaction)
     mock_interaction.guild = MagicMock()
@@ -537,15 +537,16 @@ async def test_pm_hub_navigation(services):
     mock_interaction.user.id = 123456789
     mock_interaction.user.display_name = "testuser"
     mock_interaction.channel = MagicMock()
-    mock_interaction.channel.id = 1111111111
-    mock_interaction.channel.parent_id = None
+    mock_interaction.message = MagicMock()
+    mock_interaction.message.edit = AsyncMock()
     mock_interaction.response = MagicMock()
     mock_interaction.response.send_message = AsyncMock()
     mock_interaction.response.send_modal = AsyncMock()
 
-    # Click New Task (opens modal)
+    # Click New Task (opens modal and refreshes message)
     await hub_view.new_task_btn.callback(mock_interaction)
     mock_interaction.response.send_modal.assert_awaited_once()
+    mock_interaction.message.edit.assert_awaited_once()
 
     # Switch to projects tab (ephemeral)
     await hub_view.projects_tab.callback(mock_interaction)
@@ -555,11 +556,6 @@ async def test_pm_hub_navigation(services):
     # Switch to tasks tab (ephemeral)
     await hub_view.tasks_tab.callback(mock_interaction)
     assert mock_interaction.response.send_message.await_count == 2
-    assert mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
-
-    # Switch to settings tab (ephemeral)
-    await hub_view.settings_tab.callback(mock_interaction)
-    assert mock_interaction.response.send_message.await_count == 3
     assert mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
 
 

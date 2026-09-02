@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import discord
@@ -15,6 +16,43 @@ if TYPE_CHECKING:
     from src.services.user_service import UserService
 
 logger = logging.getLogger("dgg_pm.views.forum_helpers")
+
+
+@asynccontextmanager
+async def unarchive_thread_if_needed(
+    thread: discord.Thread | None,
+    keep_archived: bool = True,
+):
+    """Context manager that temporarily unarchives an archived Discord thread to allow safe edits/interaction responses.
+
+    If `keep_archived` is True and the thread was originally archived, restores the archived state on exit.
+    """
+    if not thread or not isinstance(thread, discord.Thread) or not getattr(thread, "archived", False):
+        yield
+        return
+
+    was_archived = thread.archived
+    try:
+        if hasattr(thread, "edit"):
+            edit_res = thread.edit(archived=False)
+            if hasattr(edit_res, "__await__"):
+                await edit_res
+            thread.archived = False
+    except Exception as e:
+        logger.debug("Failed to unarchive thread %s: %s", getattr(thread, "id", None), e)
+
+    try:
+        yield
+    finally:
+        if was_archived and keep_archived:
+            try:
+                if hasattr(thread, "edit"):
+                    edit_res = thread.edit(archived=True)
+                    if hasattr(edit_res, "__await__"):
+                        await edit_res
+                    thread.archived = True
+            except Exception as e:
+                logger.debug("Failed to restore archived state for thread %s: %s", getattr(thread, "id", None), e)
 
 
 STATUS_KEYWORDS = {

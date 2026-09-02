@@ -297,6 +297,43 @@ class PmHubView(discord.ui.View):
         self.task_service = task_service
         self.user_service = user_service
 
+    async def _refresh_hub_message(
+        self,
+        interaction: discord.Interaction,
+        projects: list[Project] | None = None,
+    ) -> None:
+        msg = getattr(interaction, "message", None)
+        if not interaction.guild or not msg or not hasattr(msg, "edit"):
+            return
+        try:
+            if projects is None:
+                projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+
+            channel_id = interaction.channel.id if interaction.channel else None
+            parent_id = getattr(interaction.channel, "parent_id", None)
+            channel_ids = {cid for cid in (channel_id, parent_id) if cid}
+            channel_projects = [p for p in projects if p.discord_channel_id and p.discord_channel_id in channel_ids]
+
+            channel_obj = interaction.channel
+            if isinstance(channel_obj, discord.Thread) and channel_obj.parent:
+                channel_name = channel_obj.parent.name
+            else:
+                channel_name = getattr(channel_obj, "name", None)
+
+            updated_embed = build_hub_welcome_embed(channel_name=channel_name, bound_projects=channel_projects)
+            updated_view = PmHubView(
+                project_service=self.project_service,
+                team_service=self.team_service,
+                task_service=self.task_service,
+                user_service=self.user_service,
+            )
+
+            edit_res = interaction.message.edit(embed=updated_embed, view=updated_view)
+            if hasattr(edit_res, "__await__"):
+                await edit_res
+        except Exception as e:
+            logger.debug("Could not refresh hub message: %s", e)
+
     @discord.ui.button(
         label="New Task",
         emoji="➕",
@@ -308,6 +345,10 @@ class PmHubView(discord.ui.View):
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+
+        # Refresh pinned control hub message in case it is out of date
+        await self._refresh_hub_message(interaction, projects=projects)
+
         channel_id = interaction.channel.id if interaction.channel else None
         parent_id = getattr(interaction.channel, "parent_id", None)
         channel_ids = {cid for cid in (channel_id, parent_id) if cid}
@@ -434,6 +475,7 @@ class PmHubView(discord.ui.View):
         await menu_manager.register_menu(interaction)
 
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        await self._refresh_hub_message(interaction, projects=projects)
         channel_id = interaction.channel.id if interaction.channel else None
         parent_id = getattr(interaction.channel, "parent_id", None)
 
@@ -504,6 +546,7 @@ class PmHubView(discord.ui.View):
     async def projects_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         from src.adapters.discord_bot.menu_manager import menu_manager
 
+        await self._refresh_hub_message(interaction)
         await menu_manager.register_menu(interaction)
         view = ProjectMenuView(
             self.project_service,
@@ -525,6 +568,7 @@ class PmHubView(discord.ui.View):
         if not interaction.guild:
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
+        await self._refresh_hub_message(interaction, projects=projects)
         if not projects:
             await interaction.response.send_message("ℹ️ No active projects found in this server.", ephemeral=True)
             return
@@ -570,49 +614,6 @@ class PmHubView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="My Settings",
-        emoji="⚙️",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-        custom_id="pm_hub:settings",
-    )
-    async def settings_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        from src.adapters.discord_bot.menu_manager import menu_manager
-        from src.adapters.discord_bot.views.settings_menu import UserSettingsView, build_settings_embed
-
-        if not self.user_service or not interaction.guild:
-            await interaction.response.send_message("❌ Settings service not available.", ephemeral=True)
-            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
-            return
-        await menu_manager.register_menu(interaction)
-        current_pref = await self.user_service.get_preference(interaction.guild.id, interaction.user.id)
-        view = UserSettingsView(
-            user_service=self.user_service,
-            current_pref=current_pref,
-            project_service=self.project_service,
-            team_service=self.team_service,
-            task_service=self.task_service,
-            initial_interaction=interaction,
-        )
-        embed = build_settings_embed(interaction.user, current_pref)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
-    @discord.ui.button(
-        label="Guides",
-        emoji="📖",
-        style=discord.ButtonStyle.secondary,
-        row=1,
-        custom_id="pm_hub:guides",
-    )
-    async def guide_tab(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        from src.adapters.discord_bot.menu_manager import menu_manager
-
-        await menu_manager.register_menu(interaction)
-        embed = build_hub_welcome_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        menu_manager.schedule_toast_dismissal(interaction, delay=30.0)
-
 
 def build_hub_welcome_embed(
     channel_name: str | None = None,
@@ -634,7 +635,7 @@ def build_hub_welcome_embed(
             desc = (
                 f"> 📁 **Bound Project**: **{p.name}** (`[{p.prefix}]`)\n"
                 f"> {p.description or 'Active contributor task feed and discussion board.'}\n\n"
-                "Click any button below to manage tasks, explore dependencies, or adjust preferences."
+                "Click any button below to manage tasks, explore dependencies, or view projects."
             )
         else:
             projects_summary = "\n".join(
@@ -643,7 +644,7 @@ def build_hub_welcome_embed(
             )
             desc = (
                 f"> 📁 **Bound Projects in this Channel**:\n{projects_summary}\n\n"
-                "Click any button below to manage tasks, explore dependencies, or adjust preferences."
+                "Click any button below to manage tasks, explore dependencies, or view projects."
             )
     else:
         desc = (
@@ -670,11 +671,6 @@ def build_hub_welcome_embed(
     embed.add_field(
         name="📁 Projects Hub",
         value="Browse project settings, squads, and project leads.",
-        inline=True,
-    )
-    embed.add_field(
-        name="⚙️ My Settings",
-        value="Configure personal notification delivery preferences.",
         inline=True,
     )
     embed.set_footer(text="dgg-pm • Discord-Native Project Management")

@@ -175,7 +175,7 @@ class UserSettingsView(discord.ui.View):
             ),
             color=discord.Color.green(),
         )
-        test_embed.set_footer(text="dgg-pm • Notification Diagnostics")
+        test_embed.set_footer(text="Control notifications via /pm settings")
 
         results: list[str] = []
 

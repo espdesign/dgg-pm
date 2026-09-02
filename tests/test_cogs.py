@@ -237,6 +237,10 @@ async def test_task_action_view_and_modals(services):
     assert f"task:due:{task.id}" not in custom_ids
     assert f"task:watchers:{task.id}" not in custom_ids
 
+    # Check button layout and styles
+    assert view.edit_btn.row == 1
+    assert view.note_btn.style == discord.ButtonStyle.primary
+
     # Check TaskQuickControlsView contains the on-demand dropdowns with default_values
     from src.adapters.discord_bot.views.task_buttons import TaskQuickControlsView
 
@@ -263,7 +267,7 @@ async def test_task_action_view_and_modals(services):
     assert f"task:reopen:{task.id}" in completed_ids
     assert f"task:start:{task.id}" not in completed_ids
 
-    # In-progress view exposes a "Back to Not Started" button instead of "In Progress"
+    # In-progress view exposes a "Convert to Not Started" button instead of "In Progress"
     in_progress_view = TaskActionView(
         task_id=task.id,
         current_status=TaskStatus.IN_PROGRESS,
@@ -274,6 +278,8 @@ async def test_task_action_view_and_modals(services):
     assert f"task:notstarted:{task.id}" in in_progress_ids
     assert f"task:start:{task.id}" not in in_progress_ids
     assert f"task:complete:{task.id}" in in_progress_ids
+    assert in_progress_view.notstarted_btn.label == "Convert to Not Started"
+    assert in_progress_view.notstarted_btn.style == discord.ButtonStyle.danger
 
     # 2. Test unassign button via dynamic dispatcher
     from src.adapters.discord_bot.bot import DggPmBot

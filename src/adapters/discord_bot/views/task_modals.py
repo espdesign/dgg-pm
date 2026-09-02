@@ -8,6 +8,8 @@ from uuid import UUID
 import discord
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
+from src.adapters.discord_bot.views.forum_helpers import unarchive_thread_if_needed
+from src.domain.enums import TaskStatus
 from src.domain.models import Task
 from src.services.task_service import TaskService
 from src.utils.date_parser import parse_natural_date
@@ -55,20 +57,22 @@ class TaskNoteModal(discord.ui.Modal):
             return
 
         try:
-            if self.auth_service:
-                task = await self.task_service.get_by_id(self.task_id)
-                if task:
-                    await self.auth_service.require_task_mutation(interaction.user, task)
+            task = await self.task_service.get_by_id(self.task_id)
+            if self.auth_service and task:
+                await self.auth_service.require_task_mutation(interaction.user, task)
 
             await self.task_service.add_note(
                 task_id=self.task_id,
                 actor_discord_id=interaction.user.id,
                 note_text=note_text,
             )
-            await interaction.response.send_message(
-                f"✅ Note added to **{self.short_id}** by <@{interaction.user.id}>:\n> {note_text}",
-                ephemeral=False,
-            )
+            thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+            keep_archived = (task.status == TaskStatus.COMPLETED or task.is_archived) if task else False
+            async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+                await interaction.response.send_message(
+                    f"✅ Note added to **{self.short_id}** by <@{interaction.user.id}>:\n> {note_text}",
+                    ephemeral=False,
+                )
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"adding note to task '{self.short_id}'", logger, ephemeral=True
@@ -175,22 +179,25 @@ class TaskEditModal(discord.ui.Modal):
                 current_watchers=updated_task.watchers,
             )
 
-            if interaction.message:
-                if isinstance(interaction.channel, discord.Thread):
-                    content = build_thread_workspace_content(updated_task)
-                    await interaction.response.edit_message(content=content, embed=None, view=new_view)
+            thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+            keep_archived = updated_task.status == TaskStatus.COMPLETED or updated_task.is_archived
+            async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+                if interaction.message:
+                    if isinstance(interaction.channel, discord.Thread):
+                        content = build_thread_workspace_content(updated_task)
+                        await interaction.response.edit_message(content=content, embed=None, view=new_view)
+                    else:
+                        await interaction.response.edit_message(embed=new_embed, view=new_view)
                 else:
-                    await interaction.response.edit_message(embed=new_embed, view=new_view)
-            else:
-                await interaction.response.send_message(
-                    f"✅ Updated **[{updated_task.short_id}] {updated_task.title}**.",
-                    ephemeral=True,
-                )
+                    await interaction.response.send_message(
+                        f"✅ Updated **[{updated_task.short_id}] {updated_task.title}**.",
+                        ephemeral=True,
+                    )
 
-            if hasattr(interaction.client, "sync_root_task_message"):
-                await interaction.client.sync_root_task_message(updated_task)
-            if hasattr(interaction.client, "sync_task_thread"):
-                await interaction.client.sync_task_thread(updated_task, sync_title=True)
+                if hasattr(interaction.client, "sync_root_task_message"):
+                    await interaction.client.sync_root_task_message(updated_task)
+                if hasattr(interaction.client, "sync_task_thread"):
+                    await interaction.client.sync_task_thread(updated_task, sync_title=True, sync_archive=False)
         except Exception as e:
             await send_interaction_error(
                 interaction, e, f"updating details for task '{self.short_id}'", logger, ephemeral=True

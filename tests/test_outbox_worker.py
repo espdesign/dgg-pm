@@ -410,3 +410,123 @@ async def test_discord_notifier_task_updated_events(services):
     assert dmd_users[3001].send.await_count == 1
     assert dmd_users[3002].send.await_count == 1
     assert 9999 not in dmd_users
+
+    # Verify footer on detail update DM
+    embed_sent = dmd_users[3002].send.call_args.kwargs.get("embed")
+    assert embed_sent is not None
+    assert embed_sent.footer.text == "Control notifications via /pm settings"
+
+
+@pytest.mark.asyncio
+async def test_discord_notifier_footers_and_creation_watcher_notifications(services):
+    """Verify notification embeds have 'Control notifications via /pm settings' and task creation notifies watchers."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import discord
+
+    from src.adapters.discord_bot.discord_notifier import NOTIFICATION_FOOTER, DiscordNotifier
+    from src.domain.enums import EventType
+    from src.domain.models import OutboxEvent
+
+    user_srv = services["user"]
+    guild_id = 999222333
+
+    bot = MagicMock()
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.send = AsyncMock()
+    mock_thread.parent = None
+    mock_thread.archived = False
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    dmd_users: dict[int, MagicMock] = {}
+
+    def get_mock_user(uid: int):
+        if uid not in dmd_users:
+            u = MagicMock(spec=discord.User)
+            u.id = uid
+            u.send = AsyncMock()
+            dmd_users[uid] = u
+        return dmd_users[uid]
+
+    bot.get_user = MagicMock(side_effect=get_mock_user)
+    bot.fetch_user = AsyncMock(side_effect=get_mock_user)
+
+    notifier = DiscordNotifier(bot, user_service=user_srv)
+
+    # 1. Test TASK_CREATED: creator (5000), assignee (5001), watcher (5002)
+    evt_create = OutboxEvent(
+        event_type=EventType.TASK_CREATED,
+        idempotency_key="create_test_footer",
+        payload={
+            "task_id": "test-task-create",
+            "short_id": "TASK-201",
+            "title": "Build Architecture",
+            "guild_id": guild_id,
+            "creator_discord_id": 5000,
+            "assignee_discord_id": 5001,
+            "watchers": [5002],
+            "discord_thread_id": 888999,
+        },
+    )
+    await notifier.dispatch_event(evt_create)
+
+    # Assignee got notification with footer
+    assert dmd_users[5001].send.await_count == 1
+    assignee_embed = dmd_users[5001].send.call_args.kwargs.get("embed")
+    assert assignee_embed is not None
+    assert assignee_embed.footer.text == NOTIFICATION_FOOTER
+    assert "New Task Assigned" in assignee_embed.title
+
+    # Watcher got notification with footer
+    assert dmd_users[5002].send.await_count == 1
+    watcher_embed = dmd_users[5002].send.call_args.kwargs.get("embed")
+    assert watcher_embed is not None
+    assert watcher_embed.footer.text == NOTIFICATION_FOOTER
+    assert "Added as Watcher" in watcher_embed.title
+
+    # Creator is not notified
+    assert 5000 not in dmd_users
+
+    # 2. Test TASK_DUE_REMINDER
+    dmd_users[5001].send.reset_mock()
+    evt_reminder = OutboxEvent(
+        event_type=EventType.TASK_DUE_REMINDER,
+        idempotency_key="reminder_test_footer",
+        payload={
+            "task_id": "test-task-create",
+            "short_id": "TASK-201",
+            "title": "Build Architecture",
+            "guild_id": guild_id,
+            "assignee_discord_id": 5001,
+            "reminder_type": "due",
+            "due_at": "2026-09-01T20:00:00Z",
+        },
+    )
+    await notifier.dispatch_event(evt_reminder)
+    assert dmd_users[5001].send.await_count == 1
+    reminder_embed = dmd_users[5001].send.call_args.kwargs.get("embed")
+    assert reminder_embed is not None
+    assert reminder_embed.footer.text == NOTIFICATION_FOOTER
+
+    # 3. Test TASK_NOTE_ADDED
+    dmd_users[5001].send.reset_mock()
+    evt_note = OutboxEvent(
+        event_type=EventType.TASK_NOTE_ADDED,
+        idempotency_key="note_test_footer",
+        payload={
+            "task_id": "test-task-create",
+            "short_id": "TASK-201",
+            "title": "Build Architecture",
+            "guild_id": guild_id,
+            "actor_discord_id": 5000,
+            "assignee_discord_id": 5001,
+            "watchers": [5002],
+            "note": "Ready for review",
+            "discord_thread_id": 888999,
+        },
+    )
+    await notifier.dispatch_event(evt_note)
+    assert dmd_users[5001].send.await_count == 1
+    note_embed = dmd_users[5001].send.call_args.kwargs.get("embed")
+    assert note_embed is not None
+    assert note_embed.footer.text == NOTIFICATION_FOOTER

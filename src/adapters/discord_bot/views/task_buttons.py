@@ -6,6 +6,7 @@ from uuid import UUID
 
 import discord
 
+from src.adapters.discord_bot.views.forum_helpers import unarchive_thread_if_needed
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Task
 from src.utils.date_parser import get_due_date_from_preset
@@ -64,6 +65,18 @@ class TaskQuickControlsView(discord.ui.View):
         self.auth_service = auth_service
         self.bot = bot
         self._rebuild_items()
+
+    def _get_thread(self, interaction: discord.Interaction) -> discord.Thread | None:
+        if isinstance(interaction.channel, discord.Thread):
+            return interaction.channel
+        if self.bot and self.task.discord_thread_id:
+            try:
+                ch = self.bot.get_channel(self.task.discord_thread_id)
+                if isinstance(ch, discord.Thread):
+                    return ch
+            except Exception:
+                pass
+        return None
 
     def _rebuild_items(self) -> None:
         self.clear_items()
@@ -163,18 +176,21 @@ class TaskQuickControlsView(discord.ui.View):
     async def _on_priority_selected(self, interaction: discord.Interaction) -> None:
         val = self.priority_select.values[0]
         new_priority = PriorityLevel(val)
-        updated_task = await self.task_service.update_priority(
-            task_id=self.task.id,
-            new_priority=new_priority,
-            actor_discord_id=interaction.user.id,
-        )
-        self.task = updated_task
-        if self.bot and hasattr(self.bot, "sync_root_task_message"):
-            await self.bot.sync_root_task_message(updated_task)
-            await self.bot.sync_task_thread(updated_task)
-        self._rebuild_items()
-        embed = build_task_controls_embed(self.task)
-        await interaction.response.edit_message(embed=embed, view=self)
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            updated_task = await self.task_service.update_priority(
+                task_id=self.task.id,
+                new_priority=new_priority,
+                actor_discord_id=interaction.user.id,
+            )
+            self.task = updated_task
+            self._rebuild_items()
+            embed = build_task_controls_embed(self.task)
+            await interaction.response.edit_message(embed=embed, view=self)
+            if self.bot and hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
+                await self.bot.sync_task_thread(updated_task, sync_archive=False)
 
     async def _on_assignee_selected(self, interaction: discord.Interaction) -> None:
         if self.assignee_select.values:
@@ -187,76 +203,91 @@ class TaskQuickControlsView(discord.ui.View):
         else:
             new_assignee_id = None
 
-        updated_task = await self.task_service.update_assignee(
-            task_id=self.task.id,
-            new_assignee_id=new_assignee_id,
-            actor_discord_id=interaction.user.id,
-        )
-        self.task = updated_task
-        if self.bot and hasattr(self.bot, "sync_root_task_message"):
-            await self.bot.sync_root_task_message(updated_task)
-            await self.bot.sync_task_thread(updated_task)
-        self._rebuild_items()
-        embed = build_task_controls_embed(self.task)
-        await interaction.response.edit_message(embed=embed, view=self)
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            updated_task = await self.task_service.update_assignee(
+                task_id=self.task.id,
+                new_assignee_id=new_assignee_id,
+                actor_discord_id=interaction.user.id,
+            )
+            self.task = updated_task
+            self._rebuild_items()
+            embed = build_task_controls_embed(self.task)
+            await interaction.response.edit_message(embed=embed, view=self)
+            if self.bot and hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
+                await self.bot.sync_task_thread(updated_task, sync_archive=False)
 
     async def _on_unassign_clicked(self, interaction: discord.Interaction) -> None:
-        updated_task = await self.task_service.update_assignee(
-            task_id=self.task.id,
-            new_assignee_id=None,
-            actor_discord_id=interaction.user.id,
-        )
-        self.task = updated_task
-        if self.bot and hasattr(self.bot, "sync_root_task_message"):
-            await self.bot.sync_root_task_message(updated_task)
-            await self.bot.sync_task_thread(updated_task)
-        self._rebuild_items()
-        embed = build_task_controls_embed(self.task)
-        await interaction.response.edit_message(embed=embed, view=self)
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            updated_task = await self.task_service.update_assignee(
+                task_id=self.task.id,
+                new_assignee_id=None,
+                actor_discord_id=interaction.user.id,
+            )
+            self.task = updated_task
+            self._rebuild_items()
+            embed = build_task_controls_embed(self.task)
+            await interaction.response.edit_message(embed=embed, view=self)
+            if self.bot and hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
+                await self.bot.sync_task_thread(updated_task, sync_archive=False)
 
     async def _on_due_selected(self, interaction: discord.Interaction) -> None:
         val = self.due_select.values[0]
         due_at, is_clear = get_due_date_from_preset(val)
-        updated_task = await self.task_service.update_details(
-            task_id=self.task.id,
-            actor_discord_id=interaction.user.id,
-            due_at=due_at,
-            clear_due_at=is_clear,
-        )
-        self.task = updated_task
-        if self.bot and hasattr(self.bot, "sync_root_task_message"):
-            await self.bot.sync_root_task_message(updated_task)
-            await self.bot.sync_task_thread(updated_task)
-        self._rebuild_items()
-        embed = build_task_controls_embed(self.task)
-        await interaction.response.edit_message(embed=embed, view=self)
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            updated_task = await self.task_service.update_details(
+                task_id=self.task.id,
+                actor_discord_id=interaction.user.id,
+                due_at=due_at,
+                clear_due_at=is_clear,
+            )
+            self.task = updated_task
+            self._rebuild_items()
+            embed = build_task_controls_embed(self.task)
+            await interaction.response.edit_message(embed=embed, view=self)
+            if self.bot and hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
+                await self.bot.sync_task_thread(updated_task, sync_archive=False)
 
     async def _on_watchers_selected(self, interaction: discord.Interaction) -> None:
         watchers = [u.id for u in self.watchers_select.values] if self.watchers_select.values else []
-        updated_task = await self.task_service.update_details(
-            task_id=self.task.id,
-            actor_discord_id=interaction.user.id,
-            watchers=watchers,
-        )
-        self.task = updated_task
-        if self.bot and hasattr(self.bot, "sync_root_task_message"):
-            await self.bot.sync_root_task_message(updated_task)
-            await self.bot.sync_task_thread(updated_task)
-        self._rebuild_items()
-        embed = build_task_controls_embed(self.task)
-        await interaction.response.edit_message(embed=embed, view=self)
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            updated_task = await self.task_service.update_details(
+                task_id=self.task.id,
+                actor_discord_id=interaction.user.id,
+                watchers=watchers,
+            )
+            self.task = updated_task
+            self._rebuild_items()
+            embed = build_task_controls_embed(self.task)
+            await interaction.response.edit_message(embed=embed, view=self)
+            if self.bot and hasattr(self.bot, "sync_root_task_message"):
+                await self.bot.sync_root_task_message(updated_task)
+                await self.bot.sync_task_thread(updated_task, sync_archive=False)
 
     async def _on_done_clicked(self, interaction: discord.Interaction) -> None:
-        self.stop()
-        embed = discord.Embed(
-            title=f"✅ Updated [{self.task.short_id}]",
-            description="Task changes have been saved to the workspace.",
-            color=discord.Color.green(),
-        )
-        await interaction.response.edit_message(embed=embed, view=None)
-        from src.adapters.discord_bot.menu_manager import menu_manager
+        thread = self._get_thread(interaction)
+        keep_archived = self.task.status == TaskStatus.COMPLETED or self.task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            self.stop()
+            embed = discord.Embed(
+                title=f"✅ Updated [{self.task.short_id}]",
+                description="Task changes have been saved to the workspace.",
+                color=discord.Color.green(),
+            )
+            await interaction.response.edit_message(embed=embed, view=None)
+            from src.adapters.discord_bot.menu_manager import menu_manager
 
-        menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
+            menu_manager.schedule_toast_dismissal(interaction, delay=3.0)
 
 
 class TaskActionView(discord.ui.View):
@@ -296,9 +327,9 @@ class TaskActionView(discord.ui.View):
             self.add_item(self.reopen_btn)
         elif current_status == TaskStatus.IN_PROGRESS:
             self.notstarted_btn = discord.ui.Button(
-                label="Back to Not Started",
+                label="Convert to Not Started",
                 emoji="⏳",
-                style=discord.ButtonStyle.secondary,
+                style=discord.ButtonStyle.danger,
                 custom_id=f"task:notstarted:{task_id}",
                 row=0,
             )
@@ -333,22 +364,22 @@ class TaskActionView(discord.ui.View):
         self.note_btn = discord.ui.Button(
             label="Add Note",
             emoji="📝",
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.primary,
             custom_id=f"task:note:{task_id}",
             row=0,
         )
         self.add_item(self.note_btn)
 
+        # Row 1: Advanced Actions / Tools (Edit Details in first position)
         self.edit_btn = discord.ui.Button(
             label="Edit Details",
             emoji="✏️",
             style=discord.ButtonStyle.secondary,
             custom_id=f"task:edit:{task_id}",
-            row=0,
+            row=1,
         )
         self.add_item(self.edit_btn)
 
-        # Row 1: Advanced Actions / Tools
         self.deps_btn = discord.ui.Button(
             label="Dependencies",
             emoji="🔗",

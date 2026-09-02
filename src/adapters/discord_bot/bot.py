@@ -6,7 +6,7 @@ from discord.ext import commands
 
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags, unarchive_thread_if_needed
 from src.adapters.discord_bot.views.hub_menu import PmHubView
 from src.adapters.discord_bot.views.task_buttons import (
     TaskActionView,
@@ -166,7 +166,7 @@ class DggPmBot(commands.Bot):
                         pass
 
     async def sync_root_task_message(self, task: Task) -> None:
-        """Syncs the latest task embed to the original root starter message in the parent channel or forum post."""
+        """Syncs the starter embed of a task thread or standalone message with the latest task state."""
         if not task.discord_thread_id or not task.discord_message_id:
             return
         try:
@@ -191,7 +191,9 @@ class DggPmBot(commands.Bot):
                         if p:
                             project_name = p.name
                     fresh_embed = build_task_embed(task, project_name=project_name)
-                    await root_msg.edit(embed=fresh_embed)
+                    keep_archived = task.status == TaskStatus.COMPLETED or task.is_archived
+                    async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+                        await root_msg.edit(embed=fresh_embed)
         except Exception as e:
             logger.debug("Failed to sync root starter message for task %s: %s", task.short_id, e)
 
@@ -200,6 +202,7 @@ class DggPmBot(commands.Bot):
         task: Task,
         action: str | None = None,
         sync_title: bool = False,
+        sync_archive: bool = True,
     ) -> None:
         """Syncs the Discord thread state (applied tags, archive/unarchive, rename) for a task."""
         if not task.discord_thread_id:
@@ -229,13 +232,15 @@ class DggPmBot(commands.Bot):
                     edit_kwargs["name"] = expected_name
 
             # Archive / unarchive management
-            should_archive = action == "archive" or task.status == TaskStatus.COMPLETED or task.is_archived
-            should_unarchive = action == "unarchive" or (task.status != TaskStatus.COMPLETED and not task.is_archived)
+            if sync_archive:
+                is_done = task.status == TaskStatus.COMPLETED or task.is_archived
+                should_archive = action == "archive" or is_done
+                should_unarchive = action == "unarchive" or not is_done
 
-            if should_archive and not thread.archived:
-                edit_kwargs["archived"] = True
-            elif should_unarchive and thread.archived:
-                edit_kwargs["archived"] = False
+                if should_archive and not thread.archived:
+                    edit_kwargs["archived"] = True
+                elif should_unarchive and thread.archived:
+                    edit_kwargs["archived"] = False
 
             if edit_kwargs:
                 await thread.edit(**edit_kwargs)
@@ -257,17 +262,18 @@ class DggPmBot(commands.Bot):
             current_watchers=updated_task.watchers,
         )
 
-        # If inside a discussion thread, keep the toolbar clean without attaching duplicate embed,
-        # leading with the task description so the workspace stays readable.
-        if isinstance(interaction.channel, discord.Thread):
-            content = build_thread_workspace_content(updated_task)
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(content=content, embed=None, view=new_view)
-        else:
-            # Standalone task card in channel
-            new_embed = build_task_embed(updated_task)
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(embed=new_embed, view=new_view)
+        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
+        keep_archived = updated_task.status == TaskStatus.COMPLETED or updated_task.is_archived
+        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
+            if isinstance(interaction.channel, discord.Thread):
+                content = build_thread_workspace_content(updated_task)
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(content=content, embed=None, view=new_view)
+            else:
+                # Standalone task card in channel
+                new_embed = build_task_embed(updated_task)
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=new_embed, view=new_view)
 
     async def _handle_dynamic_task_button(
         self,
