@@ -73,11 +73,11 @@ You never need to remember or type slash commands for daily work.
 3. **Work Inside Task Post**:
    - Each task has its own forum thread post (e.g. `[MOB-1] Implement OAuth login`).
    - Use the **Interactive Action Card** buttons directly in the thread:
-     - 🔄 **Status**: Change to `🟡 In Progress` or `✅ Completed`.
-     - ⚡ **Priority**: Set to `🔴 High`, `🟡 Normal`, or `🟢 Low`.
-     - 👤 **Reassign**: Select from eligible team role holders.
-     - 📅 **Due Date**: Quick preset or natural date.
-     - 📝 **Add Note**: Record progress notes and audit events.
+     - 🚀 **1-Click Status**: `Start Task`, `In Progress`, `Complete`, `Reopen`.
+     - 📝 **Add Note**: Record progress notes and audit events in a popup modal.
+     - ✏️ **Edit Details**: Update task title, description, due date, or watchers.
+     - 🔗 **Dependencies**: Interactively link/unlink prerequisite and dependent tasks.
+     - 🎛️ **Quick Controls**: Access quick dropdowns for assigning members, setting priority (`High`, `Normal`, `Low`), changing due dates, and archiving.
 
 ---
 

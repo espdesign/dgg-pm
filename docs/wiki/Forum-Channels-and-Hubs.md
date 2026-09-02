@@ -57,17 +57,21 @@ To make forum channels completely self-sufficient:
 
 ---
 
-## 🗂️ Task Action Cards & Workspace Threads
+## 🗂️ Task Workspace Threads & Action Cards
 
 Every task created in a forum channel gets its own dedicated thread post:
 1. **Title**: `[MOB-1] Implement OAuth login`
-2. **Tags**: Automatically matches status and priority tags (e.g. `🟡 In Progress`, `🔴 High Priority`).
-3. **Embed Card**: Complete markdown description, assignee, due date, short ID, and watchers.
-4. **Interactive Action Card**:
-   - `[ ⏳ To Do ]` `[ 🟡 In Progress ]` `[ 🟢 Complete ]`
-   - `[ ⚡ Priority Dropdown ]`
-   - `[ 👤 Reassign Member Select Menu ]`
-   - `[ 📅 Quick Due Date Preset Picker ]`
-   - `[ 📝 Add Note ]` `[ ✏️ Edit Details ]`
+2. **Forum Tags**: Automatically matches status and priority tags (e.g. `🟡 In Progress`, `🔴 High Priority`).
+3. **Forum Post Content (Preview Snippet)**:
+   - Formatted Markdown task description at the top (under 1500 chars).
+   - Clean inline metadata summary:
+     `**Assignee**: @Alice • **Priority**: Normal • **Watchers**: @Bob`
+4. **Rich Embed Card**: Detailed overview, progress status, due date, timestamps, prerequisite status, and version history.
+5. **Interactive Action Card**:
+   - **Primary Actions**: `[ 🚀 Start Task / 🔄 In Progress / ✅ Complete / 🔁 Reopen ]` `[ 📝 Add Note ]`
+   - **Workspace Tools**: `[ ✏️ Edit Details ]` `[ 🔗 Dependencies ]` `[ 🎛️ Quick Controls ]`
+     - **Edit Details Modal**: Live editing of title, description, due date, and watchers.
+     - **Dependencies**: Interactive selector to link/unlink prerequisites and unlock blockers.
+     - **Quick Controls**: Member assignee picker, priority selector, due date presets, and task archiving.
 
-Updating any button instantly updates the database, updates the card embed, and synchronizes the forum tags without reloading or command typing.
+Updating any button instantly updates the database, refreshes the forum post preview snippet, updates the card embed, and synchronizes the forum tags without reloading or command typing.

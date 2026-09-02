@@ -2261,30 +2261,49 @@ class ProjectMenuView(discord.ui.View):
             await interaction.response.send_message("ℹ️ No active projects found in this server.", ephemeral=True)
             return
 
-        if len(projects) == 1:
+        from src.services.auth_service import AuthService
+
+        auth_service = AuthService(self.project_service, self.team_service)
+        accessible_projects = []
+        for p in projects:
+            if await auth_service.can_view_project(interaction.user, p.id):
+                accessible_projects.append(p)
+
+        if not accessible_projects:
+            await interaction.response.send_message(
+                "❌ You do not have permission to view any project visual graphs.\n"
+                "You must hold a project squad's Discord role, be a Project Lead, or be a server manager.",
+                ephemeral=True,
+            )
+            return
+
+        if len(accessible_projects) == 1:
+            target_proj = accessible_projects[0]
             await interaction.response.defer(ephemeral=True)
             buf = await self.task_service.render_project_tree(
                 guild_id=interaction.guild.id,
-                project_id=projects[0].id,
+                project_id=target_proj.id,
                 orientation="lr",
                 member_resolver=interaction.guild,
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(
-                title=f"🌲 Visual Graph: [{projects[0].prefix}] {projects[0].name}",
+                title=f"🌲 Visual Graph: [{target_proj.prefix}] {target_proj.name}",
                 description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
                 color=discord.Color.from_rgb(16, 152, 247),
             )
             embed.set_image(url="attachment://tech_tree.png")
             from src.adapters.discord_bot.views.tree_view import TechTreeViewer
 
-            view = TechTreeViewer(self.task_service, projects[0], current_orientation="lr")
+            view = TechTreeViewer(self.task_service, target_proj, current_orientation="lr", auth_service=auth_service)
             await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
             return
 
         from src.adapters.discord_bot.views.tree_view import TechTreeProjectSelectView
 
-        view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
+        view = TechTreeProjectSelectView(
+            self.task_service, self.project_service, accessible_projects, orientation="lr", auth_service=auth_service
+        )
         await interaction.response.send_message(
             "🌲 Choose a project to view its Visual Graph visualization:",
             view=view,

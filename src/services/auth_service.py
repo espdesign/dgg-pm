@@ -180,6 +180,53 @@ class AuthService:
                 "You must hold the project squad's Discord role, be the Project Lead, or be a server manager."
             )
 
+    async def can_view_project(self, user: discord.Member | discord.User, project_id: UUID) -> bool:
+        """Determines if a user is authorized to view a project's details, task list, or visual tech tree graph.
+
+        Authorized if:
+        1. User is a Discord Server Manager (manage_guild / administrator).
+        2. User is the designated Project Lead.
+        3. User holds the project's mapped squad Discord Role.
+        4. User holds a Discord Role for any squad mapped to the project.
+        5. If the project has NO role mapping and NO assigned squads: open to all server members.
+        """
+        if self.is_server_manager(user):
+            return True
+
+        user_id = getattr(user, "id", None)
+        project = await self.project_service.get_by_id(project_id)
+        if not project:
+            return False
+
+        if project.lead_discord_id and user_id == project.lead_discord_id:
+            return True
+
+        roles = getattr(user, "roles", [])
+        user_role_ids = {r.id for r in roles if hasattr(r, "id")}
+
+        if project.discord_role_id and project.discord_role_id in user_role_ids:
+            return True
+
+        if self.team_service:
+            teams = await self.project_service.list_teams_for_project(project_id)
+            if teams:
+                return any(team.discord_role_id in user_role_ids for team in teams)
+
+        # If project has a discord_role_id set and user didn't match it (and no teams)
+        if project.discord_role_id:
+            return False
+
+        # If project has neither direct role nor squad mappings, open to all server members
+        return True
+
+    async def require_project_view(self, user: discord.Member | discord.User, project_id: UUID) -> None:
+        """Raises PermissionDeniedError if the user cannot view the project or its visual graph."""
+        if not await self.can_view_project(user, project_id):
+            raise PermissionDeniedError(
+                "You do not have permission to view this project's visual graph. "
+                "You must hold the project squad's Discord role, be the Project Lead, or be a server manager."
+            )
+
     async def can_assign_task_to_user(
         self,
         guild: discord.Guild | None,

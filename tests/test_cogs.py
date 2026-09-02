@@ -4,25 +4,26 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.settings_cog import SettingsCog
 from src.domain.enums import NotificationPreference, PriorityLevel
 
 
 def test_project_create_command_parameters():
-    """Verify that project-create command requires both 'name' and 'channel'."""
-    cmd = ProjectCog.project_create
+    """Verify that project-create command requires 'name', 'prefix', and 'role'."""
+    cmd = PmCog.project_create
     params = {p.name: p for p in cmd.parameters}
 
     assert "name" in params
     assert params["name"].required is True
 
-    assert "channel" in params
-    assert params["channel"].required is True
+    assert "prefix" in params
+    assert params["prefix"].required is True
+
+    assert "role" in params
+    assert params["role"].required is True
 
     # Optional parameters
-    assert "prefix" in params
-    assert params["prefix"].required is False
+    assert "channel" in params
+    assert params["channel"].required is False
 
     assert "description" in params
     assert params["description"].required is False
@@ -37,7 +38,7 @@ async def test_project_create_execution(services):
     team_srv = services["team"]
     bot = MagicMock()
 
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -49,9 +50,11 @@ async def test_project_create_execution(services):
 
     mock_channel = MagicMock(spec=discord.ForumChannel)
     mock_channel.id = 123456789
+    mock_channel.guild = interaction.guild
     mock_channel.available_tags = []
     mock_role = MagicMock(spec=discord.Role)
     mock_role.id = 777111
+    mock_role.name = "Platform Squad"
     mock_lead = MagicMock(spec=discord.Member)
     mock_lead.id = 888222
 
@@ -59,10 +62,9 @@ async def test_project_create_execution(services):
         cog,
         interaction=interaction,
         name="Platform Core",
-        channel=mock_channel,
-        role=mock_role,
-        lead=mock_lead,
         prefix="PLC",
+        role=mock_role,
+        channel=mock_channel,
         description="Platform engineering",
         category="Engineering",
     )
@@ -70,13 +72,13 @@ async def test_project_create_execution(services):
     interaction.response.defer.assert_awaited_once_with(ephemeral=True)
     interaction.followup.send.assert_awaited_once()
 
-    # Check project persisted in db with bound channel id, role, and lead
+    # Check project persisted in db with bound channel id, role
     project = await proj_srv.get_by_name(9999999999, "Platform Core")
     assert project is not None
     assert project.prefix == "PLC"
     assert project.discord_channel_id == 123456789
-    assert project.discord_role_id == 777111
-    assert project.lead_discord_id == 888222
+    teams = await proj_srv.list_teams_for_project(project.id)
+    assert any(t.discord_role_id == 777111 for t in teams)
 
 
 @pytest.mark.asyncio
@@ -84,7 +86,7 @@ async def test_project_create_rejects_non_forum(services):
     proj_srv = services["project"]
     team_srv = services["team"]
     bot = MagicMock()
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -93,11 +95,15 @@ async def test_project_create_rejects_non_forum(services):
     interaction.response.send_message = AsyncMock()
 
     mock_text_channel = MagicMock(spec=discord.TextChannel)
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 777111
 
     await cog.project_create.callback(
         cog,
         interaction=interaction,
         name="Non Forum Project",
+        prefix="NFP",
+        role=mock_role,
         channel=mock_text_channel,
     )
 
@@ -112,7 +118,7 @@ async def test_project_set_role_and_lead_commands(services):
     guild_id = 9999999999
     bot = MagicMock()
 
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     project = await proj_srv.create_project(guild_id=guild_id, name="Mobile App", prefix="MOB")
 
@@ -124,32 +130,43 @@ async def test_project_set_role_and_lead_commands(services):
     interaction.followup = MagicMock()
     interaction.followup.send = AsyncMock()
 
-    # 1. Set Role
+    # 1. Map Role
     new_role = MagicMock(spec=discord.Role)
     new_role.id = 333444
-    await cog.project_set_role.callback(cog, interaction=interaction, project_name="Mobile App", role=new_role)
+    new_role.name = "Mobile Devs"
+    await cog.project_role.callback(
+        cog, interaction=interaction, project_name="Mobile App", role=new_role, action="add"
+    )
     interaction.followup.send.assert_awaited_once()
 
-    updated = await proj_srv.get_by_id(project.id)
-    assert updated.discord_role_id == 333444
+    teams = await proj_srv.list_teams_for_project(project.id)
+    assert any(t.discord_role_id == 333444 for t in teams)
 
-    # 2. Set Lead
+    # 2. Designate Lead
     interaction.followup.send.reset_mock()
+    interaction.user = MagicMock(spec=discord.Member)
+    interaction.user.guild_permissions = discord.Permissions(administrator=True)
     new_lead = MagicMock(spec=discord.Member)
     new_lead.id = 555666
-    await cog.project_set_lead.callback(cog, interaction=interaction, project_name="Mobile App", lead=new_lead)
+    new_lead.roles = [new_role]
+    await cog.project_lead.callback(
+        cog, interaction=interaction, project_name="Mobile App", user=new_lead, action="add"
+    )
     interaction.followup.send.assert_awaited_once()
 
-    updated_lead = await proj_srv.get_by_id(project.id)
-    assert updated_lead.lead_discord_id == 555666
+    team = teams[0]
+    is_lead = await team_srv.is_team_lead(team.id, 555666)
+    assert is_lead is True
 
-    # 3. Clear Lead
+    # 3. Remove Lead
     interaction.followup.send.reset_mock()
-    await cog.project_set_lead.callback(cog, interaction=interaction, project_name="Mobile App", lead=None)
+    await cog.project_lead.callback(
+        cog, interaction=interaction, project_name="Mobile App", user=new_lead, action="remove"
+    )
     interaction.followup.send.assert_awaited_once()
 
-    cleared = await proj_srv.get_by_id(project.id)
-    assert cleared.lead_discord_id is None
+    is_lead_after = await team_srv.is_team_lead(team.id, 555666)
+    assert is_lead_after is False
 
 
 @pytest.mark.asyncio
@@ -159,7 +176,7 @@ async def test_project_and_team_autocomplete(services):
     guild_id = 8888888888
     bot = MagicMock()
 
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     # Seed projects
     await proj_srv.create_project(guild_id=guild_id, name="Frontend UI", prefix="FUI")
@@ -190,11 +207,6 @@ async def test_project_and_team_autocomplete(services):
     team_choices = await cog.team_autocomplete(interaction, current="infra")
     assert len(team_choices) == 1
     assert team_choices[0].value == "Core Infra"
-
-    # 4. Archived project autocomplete
-    archived_choices = await cog.archived_project_autocomplete(interaction, current="")
-    assert len(archived_choices) == 1
-    assert archived_choices[0].value == "Legacy System"
 
 
 @pytest.mark.asyncio
@@ -529,7 +541,7 @@ async def test_dynamic_task_button_same_guild_note_modal(services):
 async def test_settings_cog_my_settings(services):
     user_srv = services["user"]
     bot = MagicMock()
-    cog = SettingsCog(
+    cog = PmCog(
         bot=bot,
         user_service=user_srv,
         project_service=services["project"],
@@ -544,17 +556,18 @@ async def test_settings_cog_my_settings(services):
     interaction.user.id = 987654321
     interaction.user.display_name = "Charlie"
     interaction.response = MagicMock()
-    interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
 
-    # 1. Run /my-settings without argument
-    await cog.my_settings.callback(cog, interaction=interaction, notify=None)
-    interaction.response.send_message.assert_awaited_once()
+    # 1. Run /pm settings without argument
+    await cog.settings.callback(cog, interaction=interaction, notify_preference=None)
+    interaction.followup.send.assert_awaited_once()
 
-    # 2. Run /my-settings with notify choice
-    choice = MagicMock()
-    choice.value = "both"
-    await cog.my_settings.callback(cog, interaction=interaction, notify=choice)
-    assert interaction.response.send_message.await_count == 2
+    # 2. Run /pm settings with notify choice
+    interaction.followup.send.reset_mock()
+    await cog.settings.callback(cog, interaction=interaction, notify_preference="both")
+    interaction.followup.send.assert_awaited_once()
 
     pref = await user_srv.get_preference(123456789, 987654321)
     assert pref == NotificationPreference.BOTH

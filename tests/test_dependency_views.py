@@ -4,8 +4,6 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.views.task_builder import DraftPrerequisiteSelectView, TaskCreateDraftView
 from src.adapters.discord_bot.views.task_dependency_view import TaskDependencyView, build_dependency_embed
 from src.adapters.discord_bot.views.tree_view import TechTreeProjectSelectView, TechTreeViewer
@@ -137,8 +135,6 @@ async def test_dependency_and_tree_cogs_slash_commands(services):
     )
 
     bot = MagicMock()
-    task_cog = TaskCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
-    proj_cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv, task_service=task_srv)
     pm_cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv, task_service=task_srv)
 
     interaction = MagicMock(spec=discord.Interaction)
@@ -151,22 +147,20 @@ async def test_dependency_and_tree_cogs_slash_commands(services):
     interaction.followup = MagicMock()
     interaction.followup.send = AsyncMock()
 
-    # 1. /task-depend
-    await task_cog.task_depend.callback(task_cog, interaction=interaction, task=t2.short_id, depends_on=t1.short_id)
+    # 1. /pm task depend
+    await pm_cog.task_depend.callback(pm_cog, interaction=interaction, task=t2.short_id, depends_on=t1.short_id)
     interaction.followup.send.assert_awaited_once()
     assert "Linked dependency" in interaction.followup.send.call_args.args[0]
 
-    # 2. /task-undepend
+    # 2. /pm task undepend
     interaction.followup.send.reset_mock()
-    await task_cog.task_undepend.callback(task_cog, interaction=interaction, task=t2.short_id, depends_on=t1.short_id)
+    await pm_cog.task_undepend.callback(pm_cog, interaction=interaction, task=t2.short_id, depends_on=t1.short_id)
     interaction.followup.send.assert_awaited_once()
     assert "Unlinked dependency" in interaction.followup.send.call_args.args[0]
 
-    # 3. /project-tree
+    # 3. /pm project tree
     interaction.followup.send.reset_mock()
-    await proj_cog.project_tree.callback(
-        proj_cog, interaction=interaction, project_name="Security Audit", orientation=None
-    )
+    await pm_cog.project_tree.callback(pm_cog, interaction=interaction, project_name="Security Audit", orientation=None)
     interaction.followup.send.assert_awaited_once()
     embed = interaction.followup.send.call_args.kwargs.get("embed")
     assert embed is not None

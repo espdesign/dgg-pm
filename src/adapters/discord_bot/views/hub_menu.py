@@ -290,12 +290,14 @@ class PmHubView(discord.ui.View):
         team_service: TeamService,
         task_service: TaskService,
         user_service: UserService | None = None,
+        auth_service: AuthService | None = None,
     ):
         super().__init__(timeout=None)
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
         self.user_service = user_service
+        self.auth_service = auth_service or AuthService(project_service, team_service)
 
     async def _refresh_hub_message(
         self,
@@ -326,6 +328,7 @@ class PmHubView(discord.ui.View):
                 team_service=self.team_service,
                 task_service=self.task_service,
                 user_service=self.user_service,
+                auth_service=self.auth_service,
             )
 
             edit_res = interaction.message.edit(embed=updated_embed, view=updated_view)
@@ -581,6 +584,15 @@ class PmHubView(discord.ui.View):
             target_project = projects[0]
 
         if target_project:
+            if self.auth_service:
+                if not await self.auth_service.can_view_project(interaction.user, target_project.id):
+                    await interaction.response.send_message(
+                        f"❌ You do not have permission to view the visual graph for **{target_project.name}**.\n"
+                        "You must hold the project squad's Discord role, be the Project Lead, or be a server manager.",
+                        ephemeral=True,
+                    )
+                    return
+
             await interaction.response.defer(ephemeral=True)
             buf = await self.task_service.render_project_tree(
                 guild_id=interaction.guild.id,
@@ -597,13 +609,31 @@ class PmHubView(discord.ui.View):
             embed.set_image(url="attachment://tech_tree.png")
             from src.adapters.discord_bot.views.tree_view import TechTreeViewer
 
-            view = TechTreeViewer(self.task_service, target_project, current_orientation="lr")
+            view = TechTreeViewer(
+                self.task_service, target_project, current_orientation="lr", auth_service=self.auth_service
+            )
             await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
             return
 
+        if self.auth_service:
+            accessible_projects = []
+            for p in projects:
+                if await self.auth_service.can_view_project(interaction.user, p.id):
+                    accessible_projects.append(p)
+            projects = accessible_projects
+            if not projects:
+                await interaction.response.send_message(
+                    "❌ You do not have permission to view any project visual graphs.\n"
+                    "You must hold a project squad's Discord role, be a Project Lead, or be a server manager.",
+                    ephemeral=True,
+                )
+                return
+
         from src.adapters.discord_bot.views.tree_view import TechTreeProjectSelectView
 
-        view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
+        view = TechTreeProjectSelectView(
+            self.task_service, self.project_service, projects, orientation="lr", auth_service=self.auth_service
+        )
         await interaction.response.send_message(
             "Choose a project to view its Visual Graph visualization:",
             view=view,

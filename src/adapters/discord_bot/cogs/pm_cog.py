@@ -51,9 +51,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
     def __init__(
         self,
         bot: commands.Bot,
-        project_service: ProjectService,
-        team_service: TeamService,
-        task_service: TaskService,
+        project_service: ProjectService | None = None,
+        team_service: TeamService | None = None,
+        task_service: TaskService | None = None,
         auth_service: AuthService | None = None,
         user_service: UserService | None = None,
     ):
@@ -61,7 +61,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         self.project_service = project_service
         self.team_service = team_service
         self.task_service = task_service
-        self.auth_service = auth_service or AuthService(project_service, team_service)
+        self.auth_service = auth_service or (
+            AuthService(project_service, team_service) if project_service and team_service else None
+        )
         self.user_service = user_service
 
     # ==========================================
@@ -1037,6 +1039,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
                 return
 
+            await self.auth_service.require_project_view(interaction.user, project.id)
+
             orient_val = orientation.value if orientation else "lr"
             buf = await self.task_service.render_project_tree(
                 guild_id=interaction.guild.id,
@@ -1054,7 +1058,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             embed.set_image(url="attachment://tech_tree.png")
             from src.adapters.discord_bot.views.tree_view import TechTreeViewer
 
-            view = TechTreeViewer(self.task_service, project, current_orientation=orient_val)
+            view = TechTreeViewer(
+                self.task_service, project, current_orientation=orient_val, auth_service=self.auth_service
+            )
             await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
         except Exception as e:
             await send_interaction_error(
@@ -1076,6 +1082,17 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 return
 
             await self.project_service.archive_project(project.id)
+
+            if hasattr(self.bot, "sync_task_thread") and self.task_service:
+                tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id, project_id=project.id, status=None, include_archived=True
+                )
+                for t in tasks:
+                    if t.discord_thread_id:
+                        try:
+                            await self.bot.sync_task_thread(t, action="archive")
+                        except Exception as te:
+                            logger.warning("Could not sync task thread on project archive for task %s: %s", t.id, te)
 
             if interaction.guild and project.discord_channel_id:
                 chan = interaction.guild.get_channel(project.discord_channel_id)
@@ -1107,12 +1124,23 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            project = await self.project_service.get_by_name(interaction.guild.id, project_name, include_archived=True)
+            project = await self.project_service.get_by_name(interaction.guild.id, project_name)
             if not project:
                 await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
                 return
 
             await self.project_service.unarchive_project(project.id)
+
+            if hasattr(self.bot, "sync_task_thread") and self.task_service:
+                tasks, _ = await self.task_service.list_tasks(
+                    guild_id=interaction.guild.id, project_id=project.id, status=None, include_archived=True
+                )
+                for t in tasks:
+                    if t.discord_thread_id:
+                        try:
+                            await self.bot.sync_task_thread(t, action="unarchive")
+                        except Exception as te:
+                            logger.warning("Could not sync task thread on project unarchive for task %s: %s", t.id, te)
 
             if interaction.guild and project.discord_channel_id:
                 chan = interaction.guild.get_channel(project.discord_channel_id)
@@ -1540,6 +1568,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 await interaction.followup.send(f"❌ Project '{project_name}' not found.", ephemeral=True)
                 return
 
+            await self.auth_service.require_project_view(interaction.user, project.id)
+
             orient_val = orientation.value if orientation else "lr"
             buf = await self.task_service.render_project_tree(
                 guild_id=interaction.guild.id,
@@ -1557,7 +1587,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             embed.set_image(url="attachment://tech_tree.png")
             from src.adapters.discord_bot.views.tree_view import TechTreeViewer
 
-            view = TechTreeViewer(self.task_service, project, current_orientation=orient_val)
+            view = TechTreeViewer(
+                self.task_service, project, current_orientation=orient_val, auth_service=self.auth_service
+            )
             await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
         except Exception as e:
             await send_interaction_error(

@@ -4,8 +4,7 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.bot import DggPmBot
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
-from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.domain.enums import TeamRoleType
 from src.domain.exceptions import PermissionDeniedError
@@ -193,10 +192,10 @@ async def test_team_lead_cog_enforcement(services):
     guild_id = 9990006
 
     bot = MagicMock()
-    team_cog = TeamCog(
+    pm_cog = PmCog(
         bot=bot,
-        team_service=team_srv,
         project_service=proj_srv,
+        team_service=team_srv,
         task_service=task_srv,
         auth_service=auth_srv,
     )
@@ -216,8 +215,8 @@ async def test_team_lead_cog_enforcement(services):
     interaction_lead.followup = MagicMock()
     interaction_lead.followup.send = AsyncMock()
 
-    await team_cog.team_lead.callback(
-        team_cog,
+    await pm_cog.team_lead.callback(
+        pm_cog,
         interaction=interaction_lead,
         action="add",
         team_name="DevOps",
@@ -238,8 +237,8 @@ async def test_team_lead_cog_enforcement(services):
     interaction_ineligible.followup = MagicMock()
     interaction_ineligible.followup.send = AsyncMock()
 
-    await team_cog.team_lead.callback(
-        team_cog,
+    await pm_cog.team_lead.callback(
+        pm_cog,
         interaction=interaction_ineligible,
         action="add",
         team_name="DevOps",
@@ -258,8 +257,8 @@ async def test_team_lead_cog_enforcement(services):
     interaction_denied.followup = MagicMock()
     interaction_denied.followup.send = AsyncMock()
 
-    await team_cog.team_lead.callback(
-        team_cog,
+    await pm_cog.team_lead.callback(
+        pm_cog,
         interaction=interaction_denied,
         action="add",
         team_name="DevOps",
@@ -278,11 +277,11 @@ async def test_task_assignment_role_eligibility_enforcement(services):
     guild_id = 9990008
 
     bot = MagicMock()
-    task_cog = TaskCog(
+    pm_cog = PmCog(
         bot=bot,
-        task_service=task_srv,
         project_service=proj_srv,
         team_service=team_srv,
+        task_service=task_srv,
         auth_service=auth_srv,
     )
 
@@ -311,8 +310,8 @@ async def test_task_assignment_role_eligibility_enforcement(services):
     interaction_ok.followup = MagicMock()
     interaction_ok.followup.send = AsyncMock()
 
-    await task_cog.task_assign.callback(
-        task_cog,
+    await pm_cog.task_assign.callback(
+        pm_cog,
         interaction=interaction_ok,
         task=task.short_id,
         assignee=eligible_member,
@@ -332,8 +331,8 @@ async def test_task_assignment_role_eligibility_enforcement(services):
     interaction_fail.followup = MagicMock()
     interaction_fail.followup.send = AsyncMock()
 
-    await task_cog.task_assign.callback(
-        task_cog,
+    await pm_cog.task_assign.callback(
+        pm_cog,
         interaction=interaction_fail,
         task=task.short_id,
         assignee=ineligible_member,
@@ -371,11 +370,11 @@ async def test_task_cog_watchers_self_service_vs_third_party(services):
     guild_id = 9990007
 
     bot = MagicMock()
-    task_cog = TaskCog(
+    pm_cog = PmCog(
         bot=bot,
-        task_service=task_srv,
         project_service=proj_srv,
         team_service=team_srv,
+        task_service=task_srv,
         auth_service=auth_srv,
     )
 
@@ -398,8 +397,8 @@ async def test_task_cog_watchers_self_service_vs_third_party(services):
     interaction_self.followup = MagicMock()
     interaction_self.followup.send = AsyncMock()
 
-    await task_cog.task_watchers.callback(
-        task_cog,
+    await pm_cog.task_watchers.callback(
+        pm_cog,
         interaction=interaction_self,
         task=task.short_id,
         action="add",
@@ -419,8 +418,8 @@ async def test_task_cog_watchers_self_service_vs_third_party(services):
     interaction_clear.followup = MagicMock()
     interaction_clear.followup.send = AsyncMock()
 
-    await task_cog.task_watchers.callback(
-        task_cog,
+    await pm_cog.task_watchers.callback(
+        pm_cog,
         interaction=interaction_clear,
         task=task.short_id,
         action="clear",
@@ -938,3 +937,93 @@ async def test_auth_service_standalone_task_permissions_option_b(services):
     await lead_view.standalone_btn.callback(bad_interaction)
     bad_interaction.response.send_message.assert_awaited_once()
     assert "Only Server Managers and Team Leads" in bad_interaction.response.send_message.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_tech_tree_visual_graph_permission_gating(services):
+    """Verify that Visual Graph / Tech Tree viewing is gated by project role, lead, or server manager."""
+    proj_srv = services["project"]
+    team_srv = services["team"]
+    task_srv = services["task"]
+    auth_srv = AuthService(proj_srv, team_srv)
+    guild_id = 9999111122
+
+    # Create project with squad role 5050 and project lead 7070
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 5050
+    mock_role.name = "Infra Squad"
+    project = await proj_srv.create_project(
+        guild_id=guild_id,
+        name="Infra Engine",
+        prefix="INF",
+        discord_role_id=5050,
+        lead_discord_id=7070,
+    )
+    # Seed a task
+    await task_srv.create_task(
+        guild_id=guild_id,
+        title="Setup K8s",
+        creator_discord_id=7070,
+        project_id=project.id,
+    )
+
+    # 1. Server Manager -> Authorized
+    admin = _make_mock_member(1001, is_admin=True)
+    assert await auth_srv.can_view_project(admin, project.id) is True
+
+    # 2. Project Lead -> Authorized
+    lead = _make_mock_member(7070)
+    assert await auth_srv.can_view_project(lead, project.id) is True
+
+    # 3. Squad Role Member -> Authorized
+    squad_member = _make_mock_member(3030, role_ids=[5050])
+    assert await auth_srv.can_view_project(squad_member, project.id) is True
+
+    # 4. Outsider / Unauthorized Member -> Denied
+    outsider = _make_mock_member(4040, role_ids=[9999])
+    assert await auth_srv.can_view_project(outsider, project.id) is False
+    with pytest.raises(PermissionDeniedError) as exc_info:
+        await auth_srv.require_project_view(outsider, project.id)
+    assert "You do not have permission to view this project's visual graph" in str(exc_info.value)
+
+    # 5. Verify PmCog /pm tree command permission enforcement
+    bot = MagicMock()
+    pm_cog = PmCog(
+        bot=bot,
+        task_service=task_srv,
+        project_service=proj_srv,
+        team_service=team_srv,
+        auth_service=auth_srv,
+    )
+
+    # Denied interaction for outsider
+    mock_guild = MagicMock(spec=discord.Guild)
+    mock_guild.id = guild_id
+    mock_guild.get_member = MagicMock(return_value=None)
+
+    interaction_denied = MagicMock(spec=discord.Interaction)
+    interaction_denied.guild = mock_guild
+    interaction_denied.user = outsider
+    interaction_denied.response = MagicMock()
+    interaction_denied.response.defer = AsyncMock()
+    interaction_denied.followup = MagicMock()
+    interaction_denied.followup.send = AsyncMock()
+
+    await pm_cog.pm_tree.callback(pm_cog, interaction=interaction_denied, project_name="Infra Engine")
+    interaction_denied.followup.send.assert_awaited_once()
+    assert "You do not have permission" in interaction_denied.followup.send.await_args.args[0]
+
+    # Allowed interaction for squad member
+    interaction_allowed = MagicMock(spec=discord.Interaction)
+    interaction_allowed.guild = mock_guild
+    interaction_allowed.user = squad_member
+    interaction_allowed.response = MagicMock()
+    interaction_allowed.response.defer = AsyncMock()
+    interaction_allowed.followup = MagicMock()
+    interaction_allowed.followup.send = AsyncMock()
+
+    await pm_cog.pm_tree.callback(pm_cog, interaction=interaction_allowed, project_name="Infra Engine")
+    interaction_allowed.followup.send.assert_awaited_once()
+    send_kwargs = interaction_allowed.followup.send.await_args.kwargs
+    assert send_kwargs.get("embed") is not None
+    assert send_kwargs.get("file") is not None

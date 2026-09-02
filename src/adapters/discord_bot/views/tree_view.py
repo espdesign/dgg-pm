@@ -9,6 +9,7 @@ import discord
 from src.domain.models import Project
 
 if TYPE_CHECKING:
+    from src.services.auth_service import AuthService
     from src.services.project_service import ProjectService
     from src.services.task_service import TaskService
 
@@ -23,11 +24,13 @@ class TechTreeViewer(discord.ui.View):
         task_service: TaskService,
         project: Project,
         current_orientation: str = "lr",
+        auth_service: AuthService | None = None,
     ):
         super().__init__(timeout=300)
         self.task_service = task_service
         self.project = project
         self.current_orientation = current_orientation
+        self.auth_service = auth_service
 
         self.lr_btn = discord.ui.Button(
             label="Horizontal View",
@@ -64,6 +67,16 @@ class TechTreeViewer(discord.ui.View):
     async def _rerender(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
             return
+
+        if self.auth_service:
+            if not await self.auth_service.can_view_project(interaction.user, self.project.id):
+                await interaction.response.send_message(
+                    "❌ You do not have permission to view this project's visual graph.\n"
+                    "You must hold the project squad's Discord role, be the Project Lead, or be a server manager.",
+                    ephemeral=True,
+                )
+                return
+
         await interaction.response.defer()
 
         buf = await self.task_service.render_project_tree(
@@ -98,12 +111,14 @@ class TechTreeProjectSelectView(discord.ui.View):
         project_service: ProjectService,
         projects: list[Project],
         orientation: str = "lr",
+        auth_service: AuthService | None = None,
     ):
         super().__init__(timeout=120)
         self.task_service = task_service
         self.project_service = project_service
         self.projects = projects
         self.orientation = orientation
+        self.auth_service = auth_service
 
         options: list[discord.SelectOption] = []
         for p in projects[:25]:
@@ -142,6 +157,15 @@ class TechTreeProjectSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Project not found.", ephemeral=True)
             return
 
+        if self.auth_service:
+            if not await self.auth_service.can_view_project(interaction.user, project.id):
+                await interaction.response.send_message(
+                    f"❌ You do not have permission to view the visual graph for **{project.name}**.\n"
+                    "You must hold the project squad's Discord role, be the Project Lead, or be a server manager.",
+                    ephemeral=True,
+                )
+                return
+
         await interaction.response.defer()
         buf = await self.task_service.render_project_tree(
             guild_id=interaction.guild.id,
@@ -157,5 +181,7 @@ class TechTreeProjectSelectView(discord.ui.View):
             color=discord.Color.from_rgb(16, 152, 247),
         )
         embed.set_image(url="attachment://tech_tree.png")
-        view = TechTreeViewer(self.task_service, project, current_orientation=self.orientation)
+        view = TechTreeViewer(
+            self.task_service, project, current_orientation=self.orientation, auth_service=self.auth_service
+        )
         await interaction.edit_original_response(embed=embed, attachments=[file], view=view)

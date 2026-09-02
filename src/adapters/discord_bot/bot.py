@@ -75,6 +75,7 @@ class DggPmBot(commands.Bot):
                 team_service=self.team_service,
                 task_service=self.task_service,
                 user_service=self.user_service,
+                auth_service=self.auth_service,
             )
         )
 

@@ -5,9 +5,7 @@ from uuid import uuid4
 import discord
 import pytest
 
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
-from src.adapters.discord_bot.cogs.team_cog import TeamCog
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error, translate_error
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.exceptions import (
@@ -194,9 +192,12 @@ async def test_service_raises_typed_exceptions(services):
 async def test_cogs_handle_service_and_unexpected_errors(services, caplog):
     """Test that cogs translate typed errors gracefully and safely sanitize unexpected exceptions."""
     bot = MagicMock(spec=discord.Client)
-    project_cog = ProjectCog(bot, services["project"], services["team"])
-    team_cog = TeamCog(bot, services["team"])
-    task_cog = TaskCog(bot, services["task"], services["project"])
+    pm_cog = PmCog(
+        bot,
+        project_service=services["project"],
+        team_service=services["team"],
+        task_service=services["task"],
+    )
 
     guild_id = 9999999999
     interaction = MagicMock(spec=discord.Interaction)
@@ -215,8 +216,10 @@ async def test_cogs_handle_service_and_unexpected_errors(services, caplog):
     mock_channel = MagicMock(spec=discord.ForumChannel)
     mock_channel.id = 12345
     mock_channel.available_tags = []
-    await project_cog.project_create.callback(
-        project_cog, interaction, name="Infra", prefix="INF2", channel=mock_channel
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 777111
+    await pm_cog.project_create.callback(
+        pm_cog, interaction, name="Infra", prefix="INF2", role=mock_role, channel=mock_channel
     )
     interaction.followup.send.assert_awaited()
     last_call_arg = interaction.followup.send.call_args[0][0]
@@ -227,14 +230,14 @@ async def test_cogs_handle_service_and_unexpected_errors(services, caplog):
     await services["team"].create_team(guild_id=guild_id, name="Blue Team", discord_role_id=5555)
     mock_role = MagicMock(spec=discord.Role)
     mock_role.id = 6666
-    await team_cog.team_create.callback(team_cog, interaction, name="Blue Team", role=mock_role)
+    await pm_cog.team_create.callback(pm_cog, interaction, role=mock_role, team_name="Blue Team")
     interaction.followup.send.assert_awaited()
     last_call_arg = interaction.followup.send.call_args[0][0]
     assert "already exists" in last_call_arg
 
     # 3. Task Cog: Status update on non-existent task
     interaction.followup.send.reset_mock()
-    await task_cog.task_status.callback(task_cog, interaction, task="NON-EXISTENT", status="completed")
+    await pm_cog.task_status.callback(pm_cog, interaction, task="NON-EXISTENT", status="completed")
     interaction.followup.send.assert_awaited()
     last_call_arg = interaction.followup.send.call_args[0][0]
     assert "not found" in last_call_arg

@@ -4,8 +4,7 @@ import discord
 import pytest
 
 from src.adapters.discord_bot.bot import DggPmBot
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
+from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.domain.enums import TaskStatus
 
 
@@ -17,11 +16,6 @@ async def test_task_create_sets_7day_auto_archive(services):
     team_srv = services["team"]
     guild_id = 1234567890
 
-    await proj_srv.create_project(guild_id=guild_id, name="Infra Core", prefix="INF")
-
-    bot = MagicMock()
-    cog = TaskCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
-
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.id = 999111
     mock_msg = MagicMock(spec=discord.Message)
@@ -32,9 +26,17 @@ async def test_task_create_sets_7day_auto_archive(services):
     mock_msg.create_thread = AsyncMock(return_value=mock_thread)
     mock_channel.send = AsyncMock(return_value=mock_msg)
 
+    await proj_srv.create_project(
+        guild_id=guild_id, name="Infra Core", prefix="INF", discord_channel_id=mock_channel.id
+    )
+
+    bot = MagicMock()
+    cog = PmCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
+
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
     interaction.guild.id = guild_id
+    interaction.guild.get_channel = MagicMock(return_value=mock_channel)
     interaction.user = MagicMock()
     interaction.user.id = 1001
     interaction.channel = mock_channel
@@ -62,14 +64,11 @@ async def test_task_create_sets_7day_auto_archive(services):
 
 @pytest.mark.asyncio
 async def test_task_standalone_creates_thread(services):
-    """Verify task-standalone creates a starter message and discussion thread in TextChannel."""
+    """Verify task creation creates a starter message and discussion thread in TextChannel."""
     proj_srv = services["project"]
     task_srv = services["task"]
     team_srv = services["team"]
     guild_id = 1234567890
-
-    bot = MagicMock()
-    cog = TaskCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
 
     mock_channel = MagicMock(spec=discord.TextChannel)
     mock_channel.id = 999111
@@ -81,9 +80,17 @@ async def test_task_standalone_creates_thread(services):
     mock_msg.create_thread = AsyncMock(return_value=mock_thread)
     mock_channel.send = AsyncMock(return_value=mock_msg)
 
+    await proj_srv.create_project(
+        guild_id=guild_id, name="Hotfix Project", prefix="HOT", discord_channel_id=mock_channel.id
+    )
+
+    bot = MagicMock()
+    cog = PmCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
+
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
     interaction.guild.id = guild_id
+    interaction.guild.get_channel = MagicMock(return_value=mock_channel)
     interaction.user = MagicMock()
     interaction.user.id = 1001
     interaction.channel = mock_channel
@@ -93,9 +100,10 @@ async def test_task_standalone_creates_thread(services):
     interaction.followup = MagicMock()
     interaction.followup.send = AsyncMock()
 
-    await cog.task_standalone.callback(
+    await cog.task_create.callback(
         cog,
         interaction=interaction,
+        project_name="Hotfix Project",
         title="Quick hotfix on production",
         assignee=None,
         due=None,
@@ -213,7 +221,7 @@ async def test_project_archive_cascade_threads(services):
     bot = MagicMock()
     bot.sync_task_thread = AsyncMock()
 
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv, task_service=task_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv, task_service=task_srv)
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()

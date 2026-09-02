@@ -6,8 +6,6 @@ import pytest
 
 from src.adapters.discord_bot.bot import DggPmBot
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
-from src.adapters.discord_bot.cogs.project_cog import ProjectCog
-from src.adapters.discord_bot.cogs.task_cog import TaskCog
 from src.adapters.discord_bot.discord_notifier import DiscordNotifier
 from src.adapters.discord_bot.views.forum_helpers import (
     ensure_pinned_hub_post,
@@ -99,7 +97,7 @@ async def test_project_create_with_forum_channel(services):
     proj_srv = services["project"]
     team_srv = services["team"]
     bot = MagicMock()
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     interaction = MagicMock(spec=discord.Interaction)
     interaction.guild = MagicMock()
@@ -111,15 +109,20 @@ async def test_project_create_with_forum_channel(services):
 
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 555444333
+    mock_forum.guild = interaction.guild
     mock_forum.available_tags = []
     mock_forum.edit = AsyncMock()
+    mock_role = MagicMock(spec=discord.Role)
+    mock_role.id = 777111
+    mock_role.name = "Sec Squad"
 
     await cog.project_create.callback(
         cog,
         interaction=interaction,
         name="Security Audit",
-        channel=mock_forum,
         prefix="SEC",
+        role=mock_role,
+        channel=mock_forum,
         description="Security pentest deliverables",
         category="Security",
     )
@@ -130,7 +133,7 @@ async def test_project_create_with_forum_channel(services):
     send_call_args = interaction.followup.send.call_args
     embed = send_call_args.kwargs.get("embed")
     assert embed is not None
-    assert "Forum Post Board" in next(f.value for f in embed.fields if f.name == "Bound Channel")
+    assert "<#555444333>" in next(f.value for f in embed.fields if f.name == "Bound Channel")
 
     project = await proj_srv.get_by_name(7777777777, "Security Audit")
     assert project is not None
@@ -158,7 +161,7 @@ async def test_task_create_in_forum_channel(services):
     )
 
     bot = MagicMock()
-    cog = TaskCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, task_service=task_srv, project_service=proj_srv, team_service=team_srv)
 
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 987654321
@@ -469,7 +472,7 @@ async def test_project_setup_forum_command(services):
     proj_srv = services["project"]
     team_srv = services["team"]
     bot = MagicMock()
-    cog = ProjectCog(bot=bot, project_service=proj_srv, team_service=team_srv)
+    cog = PmCog(bot=bot, project_service=proj_srv, team_service=team_srv)
 
     mock_forum = MagicMock(spec=discord.ForumChannel)
     mock_forum.id = 333222111
