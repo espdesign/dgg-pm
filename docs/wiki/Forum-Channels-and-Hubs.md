@@ -27,7 +27,7 @@ To make forum channels completely self-sufficient:
   - **`➕ New Task`**: Opens the interactive Task Creation Builder (Title & Description modal followed by a private Task Draft card with native Discord `UserSelect` member picker, quick due date presets, and priority selector).
   - **`👤 My Tasks`**: Launches a private personal dashboard showing assigned tasks, deadlines, and status.
   - **`📁 Projects Hub`**: Launches a private project directory workspace.
-  - **`🌲 Tech Tree`**: Renders the interactive visual dependency DAG diagram.
+  - **`🌲 Visual Graph`**: Renders the interactive visual dependency DAG diagram.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -35,7 +35,7 @@ To make forum channels completely self-sufficient:
 │  Interactive management dashboard for Mobile App.        │
 │                                                          │
 │  [ ➕ New Task ] [ 👤 My Tasks ]                         │
-│  [ 📁 Projects Hub ] [ 🌲 Tech Tree ]                    │
+│  [ 📁 Projects Hub ] [ 🌲 Visual Graph ]                 │
 └──────────────────────────┬───────────────────────────────┘
                            │ (Alice clicks [ ➕ New Task ])
                            ▼

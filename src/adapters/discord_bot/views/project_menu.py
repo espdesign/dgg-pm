@@ -2227,7 +2227,7 @@ class ProjectMenuView(discord.ui.View):
 
         if self.task_service:
             self.tech_tree_btn = discord.ui.Button(
-                label="Tech Tree",
+                label="Visual Graph",
                 emoji="🌲",
                 style=discord.ButtonStyle.secondary,
                 row=1 if self.is_server_manager else 0,
@@ -2279,7 +2279,7 @@ class ProjectMenuView(discord.ui.View):
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(
-                title=f"🌲 Tech Tree: [{projects[0].prefix}] {projects[0].name}",
+                title=f"🌲 Visual Graph: [{projects[0].prefix}] {projects[0].name}",
                 description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
                 color=discord.Color.from_rgb(16, 152, 247),
             )
@@ -2294,7 +2294,7 @@ class ProjectMenuView(discord.ui.View):
 
         view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
         await interaction.response.send_message(
-            "🌲 Choose a project to view its Tech Tree visualization:",
+            "🌲 Choose a project to view its Visual Graph visualization:",
             view=view,
             ephemeral=True,
         )

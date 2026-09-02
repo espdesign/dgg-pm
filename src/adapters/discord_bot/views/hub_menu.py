@@ -558,7 +558,7 @@ class PmHubView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(
-        label="Tech Tree",
+        label="Visual Graph",
         emoji="🌲",
         style=discord.ButtonStyle.primary,
         row=0,
@@ -594,7 +594,7 @@ class PmHubView(discord.ui.View):
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(
-                title=f"🌲 Tech Tree: [{target_project.prefix}] {target_project.name}",
+                title=f"🌲 Visual Graph: [{target_project.prefix}] {target_project.name}",
                 description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
                 color=discord.Color.from_rgb(16, 152, 247),
             )
@@ -609,7 +609,7 @@ class PmHubView(discord.ui.View):
 
         view = TechTreeProjectSelectView(self.task_service, self.project_service, projects, orientation="lr")
         await interaction.response.send_message(
-            "🌲 Choose a project to view its Tech Tree visualization:",
+            "🌲 Choose a project to view its Visual Graph visualization:",
             view=view,
             ephemeral=True,
         )
@@ -659,7 +659,7 @@ def build_hub_welcome_embed(
         inline=True,
     )
     embed.add_field(
-        name="🌲 Tech Tree",
+        name="🌲 Visual Graph",
         value="Render the visual dependency DAG diagram.",
         inline=True,
     )
