@@ -51,7 +51,6 @@ class HubTaskProjectSelectView(discord.ui.View):
                     label=f"[{p.prefix}] {p.name}"[:100],
                     value=str(p.id),
                     description=(p.description[:90] if p.description else f"Prefix: {p.prefix}"),
-                    emoji="📁",
                 )
             )
         if self.allow_standalone:
@@ -60,7 +59,6 @@ class HubTaskProjectSelectView(discord.ui.View):
                     label="Standalone Task (No Project)",
                     value="standalone",
                     description="Create an ad-hoc unlinked chore/task",
-                    emoji="📌",
                 )
             )
 
@@ -69,7 +67,7 @@ class HubTaskProjectSelectView(discord.ui.View):
         )
 
         self.select = discord.ui.Select(
-            placeholder="📁 Select Project for New Task...",
+            placeholder="Select Project for New Task...",
             options=options,
             row=0,
         )
@@ -78,7 +76,6 @@ class HubTaskProjectSelectView(discord.ui.View):
 
         self.select_button = discord.ui.Button(
             label="Select & Open Modal",
-            emoji="➕",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -87,7 +84,6 @@ class HubTaskProjectSelectView(discord.ui.View):
 
         self.cancel_button = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -128,7 +124,7 @@ class HubTaskProjectSelectView(discord.ui.View):
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         try:
             embed = discord.Embed(
-                title="🚫 Task Creation Cancelled",
+                title="Task Creation Cancelled",
                 description="The project selector was closed.",
                 color=discord.Color.dark_grey(),
             )
@@ -181,7 +177,6 @@ class HubBoardProjectSelectView(discord.ui.View):
                 label="All Projects (Global Scope)",
                 value="all",
                 description="View tasks across all projects",
-                emoji="🌐",
             )
         ]
         for p in channel_projects[:24]:
@@ -190,12 +185,11 @@ class HubBoardProjectSelectView(discord.ui.View):
                     label=f"[{p.prefix}] {p.name}"[:100],
                     value=str(p.id),
                     description=(p.description[:90] if p.description else f"Prefix: {p.prefix}"),
-                    emoji="📁",
                 )
             )
 
         self.select = discord.ui.Select(
-            placeholder="📁 Select Project Scope for Tasks...",
+            placeholder="Select Project Scope for Tasks...",
             options=options,
             row=0,
         )
@@ -204,7 +198,6 @@ class HubBoardProjectSelectView(discord.ui.View):
 
         self.cancel_button = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -214,7 +207,7 @@ class HubBoardProjectSelectView(discord.ui.View):
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         try:
             embed = discord.Embed(
-                title="🚫 Selection Cancelled",
+                title="Selection Cancelled",
                 description="The project scope selector was closed.",
                 color=discord.Color.dark_grey(),
             )

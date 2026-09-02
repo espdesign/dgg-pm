@@ -49,7 +49,7 @@ class TeamCreateModalWithName(discord.ui.Modal):
                 discord_role_id=self.selected_role.id,
             )
             embed = discord.Embed(
-                title=f"✅ Team Created: {team.name}",
+                title=f"Team Created: {team.name}",
                 description=f"Mapped to Discord role <@&{team.discord_role_id}>",
                 color=discord.Color.green(),
             )
@@ -79,7 +79,7 @@ class TeamCreateRoleSelectView(discord.ui.View):
         self._initial_interaction = initial_interaction
 
         self.role_select = discord.ui.RoleSelect(
-            placeholder="🎭 Select Discord Server Role for Team...",
+            placeholder="Select Discord Server Role for Team...",
             min_values=1,
             max_values=1,
             row=0,
@@ -89,7 +89,6 @@ class TeamCreateRoleSelectView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Team Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -151,13 +150,12 @@ class TeamAssignMemberSelectView(discord.ui.View):
                 label=t.name,
                 value=str(t.id),
                 description=f"Role: {t.discord_role_id}",
-                emoji="👥",
                 default=(i == 0),
             )
             for i, t in enumerate(teams[:25])
         ]
         self.team_select = discord.ui.Select(
-            placeholder="👥 Select Target Team...",
+            placeholder="Select Target Team...",
             options=team_options,
             min_values=1,
             max_values=1,
@@ -168,7 +166,7 @@ class TeamAssignMemberSelectView(discord.ui.View):
 
         # Row 1: Select User / Member
         self.user_select = discord.ui.UserSelect(
-            placeholder="👤 Select Discord Member...",
+            placeholder="Select Discord Member...",
             min_values=1,
             max_values=1,
             row=1,
@@ -182,24 +180,21 @@ class TeamAssignMemberSelectView(discord.ui.View):
                 label="Team Member (Regular)",
                 value="member",
                 description="Assign member to squad roster",
-                emoji="👤",
                 default=True,
             ),
             discord.SelectOption(
                 label="Team Lead (Elevated)",
                 value="lead",
                 description="Designate lead with team management permissions",
-                emoji="⭐",
             ),
             discord.SelectOption(
                 label="Remove Lead Status",
                 value="remove_lead",
                 description="Demote from Team Lead back to regular member",
-                emoji="⬇️",
             ),
         ]
         self.role_select = discord.ui.Select(
-            placeholder="🎭 Select Role Type...",
+            placeholder="Select Role Type...",
             options=role_type_options,
             min_values=1,
             max_values=1,
@@ -211,7 +206,6 @@ class TeamAssignMemberSelectView(discord.ui.View):
         # Row 3: Action Buttons
         self.confirm_btn = discord.ui.Button(
             label="Confirm Assignment",
-            emoji="✅",
             style=discord.ButtonStyle.primary,
             row=3,
         )
@@ -220,7 +214,6 @@ class TeamAssignMemberSelectView(discord.ui.View):
 
         self.cancel_btn = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=3,
         )
@@ -328,17 +321,17 @@ class TeamAssignMemberSelectView(discord.ui.View):
         try:
             if action_type == "remove_lead":
                 await self.team_service.remove_team_lead(self.selected_team_id, self.selected_user.id)
-                success_msg = f"✅ Removed Team Lead status from <@{self.selected_user.id}> for **{team.name}**."
+                success_msg = f"Removed Team Lead status from <@{self.selected_user.id}> for **{team.name}**."
             elif action_type == "lead":
                 await self.team_service.add_team_lead(self.selected_team_id, self.selected_user.id)
-                success_msg = f"⭐ Designated <@{self.selected_user.id}> as **Team Lead** for **{team.name}**."
+                success_msg = f"Designated <@{self.selected_user.id}> as **Team Lead** for **{team.name}**."
             else:
                 await self.team_service.assign_member(
                     team_id=self.selected_team_id,
                     user_discord_id=self.selected_user.id,
                     role_type=TeamRoleType.MEMBER,
                 )
-                success_msg = f"✅ Verified <@{self.selected_user.id}> as **Team Member** for **{team.name}**."
+                success_msg = f"Verified <@{self.selected_user.id}> as **Team Member** for **{team.name}**."
 
             view = TeamMenuView(
                 self.team_service,
@@ -378,12 +371,11 @@ class TeamRosterDetailView(discord.ui.View):
                 label=t.name,
                 value=str(t.id),
                 description=f"Role: {t.discord_role_id}",
-                emoji="👥",
             )
             for t in teams[:25]
         ]
         self.select = discord.ui.Select(
-            placeholder="👥 Select Team to Inspect Members...",
+            placeholder="Select Team to Inspect Members...",
             options=options,
             row=0,
         )
@@ -392,7 +384,6 @@ class TeamRosterDetailView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Team Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -426,16 +417,16 @@ class TeamRosterDetailView(discord.ui.View):
         regular = [m for m in members if m.role_type == TeamRoleType.MEMBER]
 
         embed = discord.Embed(
-            title=f"👥 Squad Roster: {team.name}",
+            title=f"Squad Roster: {team.name}",
             description=f"**Discord Role:** <@&{team.discord_role_id}>\n**Total Members:** `{len(members)}`",
             color=discord.Color.blurple(),
         )
 
-        leads_str = "\n".join(f"• ⭐ <@{m.user_discord_id}> (Team Lead)" for m in leads) or "*None assigned*"
-        embed.add_field(name=f"⭐ Team Leads ({len(leads)})", value=leads_str, inline=False)
+        leads_str = "\n".join(f"• <@{m.user_discord_id}> (Team Lead)" for m in leads) or "*None assigned*"
+        embed.add_field(name=f"Team Leads ({len(leads)})", value=leads_str, inline=False)
 
-        members_str = "\n".join(f"• 👤 <@{m.user_discord_id}>" for m in regular) or "*None assigned*"
-        embed.add_field(name=f"👤 Verified Members ({len(regular)})", value=members_str, inline=False)
+        members_str = "\n".join(f"• <@{m.user_discord_id}>" for m in regular) or "*None assigned*"
+        embed.add_field(name=f"Verified Members ({len(regular)})", value=members_str, inline=False)
 
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -498,7 +489,6 @@ class TeamMenuView(discord.ui.View):
         if self.can_create_teams:
             self.create_team_btn = discord.ui.Button(
                 label="Create Team",
-                emoji="➕",
                 style=discord.ButtonStyle.primary,
                 row=0,
             )
@@ -510,7 +500,6 @@ class TeamMenuView(discord.ui.View):
         if self.can_assign_members:
             self.assign_member_btn = discord.ui.Button(
                 label="Assign Member",
-                emoji="👤",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -522,7 +511,6 @@ class TeamMenuView(discord.ui.View):
         # Row 0: Team Roster (Always visible)
         self.list_teams_btn = discord.ui.Button(
             label="Team Roster",
-            emoji="📋",
             style=discord.ButtonStyle.secondary
             if (self.can_create_teams or self.can_assign_members)
             else discord.ButtonStyle.primary,
@@ -535,7 +523,6 @@ class TeamMenuView(discord.ui.View):
         if self.project_service and self.task_service:
             self.hub_btn = discord.ui.Button(
                 label="PM Main Menu",
-                emoji="🏠",
                 style=discord.ButtonStyle.secondary,
                 row=1 if (self.can_create_teams or self.can_assign_members) else 0,
             )
@@ -608,7 +595,7 @@ class TeamMenuView(discord.ui.View):
             initial_interaction=interaction,
         )
         embed = discord.Embed(
-            title="➕ Create New Team",
+            title="Create New Team",
             description="Select the Discord Server Role below to map to this team container:",
             color=discord.Color.blurple(),
         )
@@ -620,7 +607,7 @@ class TeamMenuView(discord.ui.View):
         teams = await self.team_service.list_teams(interaction.guild.id)
         if not teams:
             await interaction.response.send_message(
-                "👥 No teams found. Click **Create Team** to set one up first!",
+                "No teams found. Click **Create Team** to set one up first!",
                 ephemeral=True,
             )
             from src.adapters.discord_bot.menu_manager import menu_manager
@@ -635,7 +622,7 @@ class TeamMenuView(discord.ui.View):
             initial_interaction=interaction,
         )
         embed = discord.Embed(
-            title="👤 Assign Team Member",
+            title="Assign Team Member",
             description="Select a team, pick a Discord member, choose Member or Lead, and confirm:",
             color=discord.Color.blurple(),
         )
@@ -646,14 +633,14 @@ class TeamMenuView(discord.ui.View):
             return
         teams = await self.team_service.list_teams(interaction.guild.id)
         if not teams:
-            await interaction.response.send_message("👥 No teams configured in this server.", ephemeral=True)
+            await interaction.response.send_message("No teams configured in this server.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
             return
 
         embed = discord.Embed(
-            title=f"👥 Server Teams ({len(teams)})",
+            title=f"Server Teams ({len(teams)})",
             description="Select a team below to inspect assigned leads and members:",
             color=discord.Color.blurple(),
         )
@@ -662,7 +649,7 @@ class TeamMenuView(discord.ui.View):
             leads_count = sum(1 for m in members if m.role_type == TeamRoleType.LEAD)
             members_count = sum(1 for m in members if m.role_type == TeamRoleType.MEMBER)
             embed.add_field(
-                name=f"👥 {t.name}",
+                name=t.name,
                 value=f"• Role: <@&{t.discord_role_id}>\n• Leads: {leads_count} | Members: {members_count}",
                 inline=False,
             )
@@ -679,24 +666,24 @@ class TeamMenuView(discord.ui.View):
 
 def build_team_menu_embed(can_create_teams: bool = True, can_assign_members: bool = True) -> discord.Embed:
     embed = discord.Embed(
-        title="👥 Squad & Team Management Hub",
+        title="Squad & Team Management Hub",
         color=discord.Color.dark_theme(),
     )
     bullets = []
     if can_create_teams:
-        bullets.append("• **`➕ Create Team`**: Define a new team and map it to a Discord role")
+        bullets.append("• **`Create Team`**: Define a new team and map it to a Discord role")
     if can_assign_members:
-        bullets.append("• **`👤 Assign Member`**: Pick a user and assign them as a Team Member or Lead")
-    bullets.append("• **`📋 Team Roster`**: View all teams and their configured role mappings")
+        bullets.append("• **`Assign Member`**: Pick a user and assign them as a Team Member or Lead")
+    bullets.append("• **`Team Roster`**: View all teams and their configured role mappings")
 
     if can_create_teams or can_assign_members:
         desc = (
-            "> 👥 **Contributor Squads & Permission Mappings**\n"
+            "> **Contributor Squads & Permission Mappings**\n"
             "> Configure functional squads, map Discord roles, and assign team leads.\n\n" + "\n".join(bullets)
         )
     else:
         desc = (
-            "> 👥 **Server Squad Rosters**\n"
+            "> **Server Squad Rosters**\n"
             "> Inspect configured functional squads and server team rosters.\n\n" + "\n".join(bullets)
         )
 

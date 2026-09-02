@@ -6,19 +6,13 @@ from discord.ext import commands
 
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags, unarchive_thread_if_needed
+from src.adapters.discord_bot.task_workspace import DiscordTaskWorkspaceAdapter
 from src.adapters.discord_bot.views.hub_menu import PmHubView
-from src.adapters.discord_bot.views.task_buttons import (
-    TaskActionView,
-    TaskQuickControlsView,
-    build_task_controls_embed,
-)
-from src.adapters.discord_bot.views.task_dependency_view import TaskDependencyView, build_dependency_embed
-from src.adapters.discord_bot.views.task_embed import build_task_embed, build_thread_workspace_content
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Task
+from src.ports.discord_workspace import ITaskDiscordWorkspace
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
@@ -36,6 +30,7 @@ class DggPmBot(commands.Bot):
         project_service: ProjectService,
         team_service: TeamService,
         user_service: UserService | None = None,
+        workspace: ITaskDiscordWorkspace | None = None,
     ):
         intents = discord.Intents.default()
         intents.guilds = True
@@ -52,10 +47,16 @@ class DggPmBot(commands.Bot):
         self.team_service = team_service
         self.user_service = user_service
         self.auth_service = AuthService(project_service, team_service)
+        self.workspace = workspace or DiscordTaskWorkspaceAdapter(
+            bot=self,
+            task_service=task_service,
+            project_service=project_service,
+            auth_service=self.auth_service,
+        )
 
     async def setup_hook(self) -> None:
         """Invoked when bot is starting up before login."""
-        # Load unified /pm command group cog (Strategy 1)
+        # Load unified /pm command group cog
         await self.add_cog(
             PmCog(
                 self,
@@ -64,6 +65,7 @@ class DggPmBot(commands.Bot):
                 self.task_service,
                 self.auth_service,
                 self.user_service,
+                workspace=self.workspace,
             )
         )
         logger.info("Loaded Discord cog: PmCog (unified /pm namespace)")
@@ -168,39 +170,12 @@ class DggPmBot(commands.Bot):
 
     async def sync_root_task_message(self, task: Task) -> None:
         """Syncs the starter embed of a task thread or standalone message with the latest task state."""
-        if not task.discord_thread_id or not task.discord_message_id:
-            return
-        try:
-            thread = self.get_channel(task.discord_thread_id) or await self.fetch_channel(task.discord_thread_id)
-            if isinstance(thread, discord.Thread):
-                root_msg = None
-                if isinstance(thread.parent, discord.ForumChannel):
-                    try:
-                        root_msg = thread.starter_message or await thread.fetch_message(task.discord_message_id)
-                    except Exception:
-                        pass
-                elif thread.parent:
-                    try:
-                        root_msg = await thread.parent.fetch_message(task.discord_message_id)
-                    except Exception:
-                        pass
-
-                if root_msg:
-                    project_name = None
-                    if task.project_id:
-                        p = await self.project_service.get_by_id(task.project_id)
-                        if p:
-                            project_name = p.name
-                    fresh_embed = build_task_embed(task, project_name=project_name)
-                    keep_archived = task.status == TaskStatus.COMPLETED or task.is_archived
-                    async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
-                        if isinstance(thread.parent, discord.ForumChannel):
-                            thread_content = build_thread_workspace_content(task)
-                            await root_msg.edit(content=thread_content, embed=fresh_embed)
-                        else:
-                            await root_msg.edit(embed=fresh_embed)
-        except Exception as e:
-            logger.debug("Failed to sync root starter message for task %s: %s", task.short_id, e)
+        await self.workspace.sync_workspace(
+            task,
+            sync_starter_card=True,
+            sync_tags=False,
+            sync_archive=False,
+        )
 
     async def sync_task_thread(
         self,
@@ -210,47 +185,13 @@ class DggPmBot(commands.Bot):
         sync_archive: bool = True,
     ) -> None:
         """Syncs the Discord thread state (applied tags, archive/unarchive, rename) for a task."""
-        if not task.discord_thread_id:
-            return
-        try:
-            thread = self.get_channel(task.discord_thread_id) or await self.fetch_channel(task.discord_thread_id)
-            if not isinstance(thread, discord.Thread):
-                return
-
-            edit_kwargs = {}
-
-            # Sync forum tags if thread is a post inside a ForumChannel
-            if isinstance(thread.parent, discord.ForumChannel):
-                tags_to_apply = resolve_forum_tags(
-                    thread.parent,
-                    task,
-                    existing_tags=getattr(thread, "applied_tags", None),
-                )
-                edit_kwargs["applied_tags"] = tags_to_apply
-
-            # Sync title if requested and task title changed
-            if sync_title:
-                expected_name = f"[{task.short_id}] {task.title}"
-                if len(expected_name) > 100:
-                    expected_name = expected_name[:97] + "..."
-                if thread.name != expected_name:
-                    edit_kwargs["name"] = expected_name
-
-            # Archive / unarchive management
-            if sync_archive:
-                is_done = task.status == TaskStatus.COMPLETED or task.is_archived
-                should_archive = action == "archive" or is_done
-                should_unarchive = action == "unarchive" or not is_done
-
-                if should_archive and not thread.archived:
-                    edit_kwargs["archived"] = True
-                elif should_unarchive and thread.archived:
-                    edit_kwargs["archived"] = False
-
-            if edit_kwargs:
-                await thread.edit(**edit_kwargs)
-        except Exception as e:
-            logger.warning("Failed to sync thread state for task %s (%s): %s", task.short_id, task.discord_thread_id, e)
+        await self.workspace.sync_workspace(
+            task,
+            sync_title=sync_title,
+            sync_tags=True,
+            sync_archive=sync_archive,
+            sync_starter_card=False,
+        )
 
     async def _update_interaction_view(
         self,
@@ -258,32 +199,7 @@ class DggPmBot(commands.Bot):
         updated_task: Task,
     ) -> None:
         """Updates the component view on interaction message without attaching a duplicate embed in threads."""
-        new_view = TaskActionView(
-            task_id=updated_task.id,
-            current_status=updated_task.status,
-            current_priority=updated_task.priority,
-            task_service=self.task_service,
-            current_assignee_id=updated_task.assignee_discord_id,
-            current_watchers=updated_task.watchers,
-        )
-
-        thread = interaction.channel if isinstance(interaction.channel, discord.Thread) else None
-        keep_archived = updated_task.status == TaskStatus.COMPLETED or updated_task.is_archived
-        async with unarchive_thread_if_needed(thread, keep_archived=keep_archived):
-            if isinstance(interaction.channel, discord.Thread):
-                content = build_thread_workspace_content(updated_task)
-                if isinstance(interaction.channel.parent, discord.ForumChannel):
-                    new_embed = build_task_embed(updated_task)
-                    if not interaction.response.is_done():
-                        await interaction.response.edit_message(content=content, embed=new_embed, view=new_view)
-                else:
-                    if not interaction.response.is_done():
-                        await interaction.response.edit_message(content=content, embed=None, view=new_view)
-            else:
-                # Standalone task card in channel
-                new_embed = build_task_embed(updated_task)
-                if not interaction.response.is_done():
-                    await interaction.response.edit_message(embed=new_embed, view=new_view)
+        await self.workspace.refresh_action_card(interaction, updated_task)
 
     async def _handle_dynamic_task_button(
         self,
@@ -349,15 +265,14 @@ class DggPmBot(commands.Bot):
                         limit=50,
                     )
                 prerequisites, dependents = await self.task_service.get_task_dependencies(task_id)
-                view = TaskDependencyView(
-                    task_service=self.task_service,
+                await self.workspace.render_task_controls(
+                    interaction=interaction,
                     task=task,
-                    sibling_tasks=sibling_tasks,
+                    panel="dependencies",
                     prerequisites=prerequisites,
                     dependents=dependents,
+                    sibling_tasks=sibling_tasks,
                 )
-                embed = build_dependency_embed(task, prerequisites, dependents)
-                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
                 return
             except Exception as e:
                 await send_interaction_error(interaction, e, "opening task dependencies", logger, ephemeral=True)
@@ -365,14 +280,11 @@ class DggPmBot(commands.Bot):
 
         if action == "controls":
             try:
-                view = TaskQuickControlsView(
+                await self.workspace.render_task_controls(
+                    interaction=interaction,
                     task=task,
-                    task_service=self.task_service,
-                    auth_service=self.auth_service,
-                    bot=self,
+                    panel="quick_controls",
                 )
-                embed = build_task_controls_embed(task)
-                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
                 return
             except Exception as e:
                 await send_interaction_error(interaction, e, "opening task controls", logger, ephemeral=True)
@@ -385,9 +297,8 @@ class DggPmBot(commands.Bot):
                     new_assignee_id=None,
                     actor_discord_id=interaction.user.id,
                 )
-                await self._update_interaction_view(interaction, updated_task)
-                await self.sync_root_task_message(updated_task)
-                await self.sync_task_thread(updated_task)
+                await self.workspace.refresh_action_card(interaction, updated_task)
+                await self.workspace.sync_workspace(updated_task)
                 return
             except Exception as e:
                 await send_interaction_error(interaction, e, "unassigning task", logger, ephemeral=True)
@@ -403,9 +314,8 @@ class DggPmBot(commands.Bot):
                         new_priority=new_priority,
                         actor_discord_id=interaction.user.id,
                     )
-                    await self._update_interaction_view(interaction, updated_task)
-                    await self.sync_root_task_message(updated_task)
-                    await self.sync_task_thread(updated_task)
+                    await self.workspace.refresh_action_card(interaction, updated_task)
+                    await self.workspace.sync_workspace(updated_task)
                     return
                 except Exception as e:
                     await send_interaction_error(interaction, e, "updating task priority", logger, ephemeral=True)
@@ -424,9 +334,8 @@ class DggPmBot(commands.Bot):
                     new_assignee_id=new_assignee_id,
                     actor_discord_id=interaction.user.id,
                 )
-                await self._update_interaction_view(interaction, updated_task)
-                await self.sync_root_task_message(updated_task)
-                await self.sync_task_thread(updated_task)
+                await self.workspace.refresh_action_card(interaction, updated_task)
+                await self.workspace.sync_workspace(updated_task)
                 return
             except Exception as e:
                 await send_interaction_error(interaction, e, "updating task assignee", logger, ephemeral=True)
@@ -443,8 +352,8 @@ class DggPmBot(commands.Bot):
                         due_at=due_at,
                         clear_due_at=is_clear,
                     )
-                    await self._update_interaction_view(interaction, updated_task)
-                    await self.sync_root_task_message(updated_task)
+                    await self.workspace.refresh_action_card(interaction, updated_task)
+                    await self.workspace.sync_workspace(updated_task)
                     return
                 except Exception as e:
                     await send_interaction_error(interaction, e, "updating task due date", logger, ephemeral=True)
@@ -459,8 +368,8 @@ class DggPmBot(commands.Bot):
                     actor_discord_id=interaction.user.id,
                     watchers=watchers,
                 )
-                await self._update_interaction_view(interaction, updated_task)
-                await self.sync_root_task_message(updated_task)
+                await self.workspace.refresh_action_card(interaction, updated_task)
+                await self.workspace.sync_workspace(updated_task)
                 return
             except Exception as e:
                 await send_interaction_error(interaction, e, "updating task watchers", logger, ephemeral=True)
@@ -478,16 +387,14 @@ class DggPmBot(commands.Bot):
                 actor_discord_id=interaction.user.id,
                 notes=f"Status {note_action} via button",
             )
-            await self._update_interaction_view(interaction, updated_task)
-            await self.sync_root_task_message(updated_task)
-            await self.sync_task_thread(updated_task)
+            await self.workspace.refresh_action_card(interaction, updated_task)
+            await self.workspace.sync_workspace(updated_task)
 
         except StaleVersionError:
             latest_task = await self.task_service.get_by_id(task_id)
             if latest_task:
-                await self._update_interaction_view(interaction, latest_task)
-                await self.sync_root_task_message(latest_task)
-                await self.sync_task_thread(latest_task)
+                await self.workspace.refresh_action_card(interaction, latest_task)
+                await self.workspace.sync_workspace(latest_task)
                 await interaction.followup.send(
                     "⚠️ This task was already modified by another team member. The card has been refreshed.",
                     ephemeral=True,

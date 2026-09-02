@@ -11,17 +11,16 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, resolve_forum_tags, setup_forum_tags
+from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, setup_forum_tags
 from src.adapters.discord_bot.views.hub_menu import build_hub_welcome_embed
-from src.adapters.discord_bot.views.task_buttons import TaskActionView
 from src.adapters.discord_bot.views.task_embed import (
     build_task_embed,
     build_task_history_embed,
-    build_thread_workspace_content,
 )
 from src.adapters.discord_bot.views.task_list_view import TaskListView, build_page_embed
 from src.adapters.discord_bot.views.task_modals import parse_natural_date
 from src.domain.enums import NotificationPreference, PriorityLevel, TaskStatus
+from src.ports.discord_workspace import ITaskDiscordWorkspace
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -56,6 +55,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         task_service: TaskService | None = None,
         auth_service: AuthService | None = None,
         user_service: UserService | None = None,
+        workspace: ITaskDiscordWorkspace | None = None,
     ):
         self.bot = bot
         self.project_service = project_service
@@ -65,6 +65,16 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             AuthService(project_service, team_service) if project_service and team_service else None
         )
         self.user_service = user_service
+        from src.adapters.discord_bot.task_workspace import DiscordTaskWorkspaceAdapter
+
+        if workspace is not None:
+            self.workspace = workspace
+        elif isinstance(getattr(bot, "workspace", None), ITaskDiscordWorkspace):
+            self.workspace = bot.workspace
+        elif task_service and project_service:
+            self.workspace = DiscordTaskWorkspaceAdapter(bot, task_service, project_service, self.auth_service)
+        else:
+            self.workspace = getattr(bot, "workspace", None)
 
     # ==========================================
     # Autocomplete Helpers
@@ -381,101 +391,32 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 watchers=watchers,
             )
 
-            # Target channel for posting
-            target_channel = interaction.channel
-            if project.discord_channel_id:
-                chan = self.bot.get_channel(project.discord_channel_id)
-                if chan is None and hasattr(self.bot, "fetch_channel"):
-                    try:
-                        chan = await self.bot.fetch_channel(project.discord_channel_id)
-                    except Exception:
-                        chan = None
-                if isinstance(chan, (discord.TextChannel, discord.ForumChannel, discord.Thread)):
-                    target_channel = chan
-
-            if isinstance(target_channel, discord.Thread):
-                parent = getattr(target_channel, "parent", None)
-                if not parent and getattr(target_channel, "parent_id", None) and hasattr(self.bot, "get_channel"):
-                    parent = self.bot.get_channel(target_channel.parent_id)
-                if isinstance(parent, discord.ForumChannel):
-                    target_channel = parent
-
-            embed = build_task_embed(task, project_name=project.name)
-            thread = None
-            msg = None
-
-            if isinstance(target_channel, discord.ForumChannel):
-                post_name = f"[{task.short_id}] {task.title}"
-                if len(post_name) > 100:
-                    post_name = post_name[:97] + "..."
-                thread_view = TaskActionView(
-                    task_id=task.id,
-                    current_status=task.status,
-                    current_priority=task.priority,
-                    task_service=self.task_service,
-                    current_assignee_id=task.assignee_discord_id,
-                    current_watchers=watchers,
+            if self.workspace:
+                ref = await self.workspace.provision_workspace(
+                    task,
+                    project=project,
+                    target_container=interaction.channel,
+                    preferred_channel_id=interaction.channel_id,
                 )
-                applied_tags = resolve_forum_tags(target_channel, task, project_name=project.name)
-                thread_content = build_thread_workspace_content(task)
-
-                res = await target_channel.create_thread(
-                    name=post_name,
-                    content=thread_content,
-                    embed=embed,
-                    view=thread_view,
-                    applied_tags=applied_tags,
-                    auto_archive_duration=10080,
+                await self.task_service.update_discord_message_ids(
+                    task.id,
+                    discord_message_id=ref.message_id,
+                    discord_thread_id=ref.thread_id,
                 )
-                thread = getattr(res, "thread", res)
-                msg = getattr(res, "message", None)
-            elif isinstance(target_channel, discord.TextChannel):
-                msg = await target_channel.send(embed=embed)
-                try:
-                    thread_name = f"[{task.short_id}] {task.title}"
-                    if len(thread_name) > 100:
-                        thread_name = thread_name[:97] + "..."
-                    thread = await msg.create_thread(name=thread_name, auto_archive_duration=10080)
-                    thread_content = build_thread_workspace_content(task)
-                    thread_view = TaskActionView(
-                        task_id=task.id,
-                        current_status=task.status,
-                        current_priority=task.priority,
-                        task_service=self.task_service,
-                        current_assignee_id=task.assignee_discord_id,
-                        current_watchers=watchers,
+                if ref.channel_id != interaction.channel_id:
+                    await interaction.followup.send(
+                        f"✅ Created task **[{task.short_id}] {task.title}** in <#{ref.channel_id}>"
+                        + f" with thread <#{ref.thread_id}>"
                     )
-                    await thread.send(content=thread_content, view=thread_view)
-                except Exception:
-                    pass
-            elif isinstance(target_channel, discord.Thread):
-                thread = target_channel
-                view = TaskActionView(
-                    task_id=task.id,
-                    current_status=task.status,
-                    current_priority=task.priority,
-                    task_service=self.task_service,
-                    current_assignee_id=task.assignee_discord_id,
-                    current_watchers=watchers,
-                )
-                msg = await target_channel.send(embed=embed, view=view)
-            elif target_channel and hasattr(target_channel, "send"):
-                msg = await target_channel.send(embed=embed)
-
-            # Update DB with Discord IDs
-            thread_id = thread.id if thread else None
-            msg_id = msg.id if msg else 0
-            await self.task_service.update_discord_message_ids(task.id, msg_id, thread_id)
-
-            if target_channel and target_channel.id != interaction.channel_id:
-                await interaction.followup.send(
-                    f"✅ Created task **[{task.short_id}] {task.title}** in <#{target_channel.id}>"
-                    + (f" with thread <#{thread.id}>" if thread else "")
-                )
+                else:
+                    await interaction.followup.send(
+                        f"✅ Task **[{task.short_id}]** created in project **{project.name}**.",
+                        embed=build_task_embed(task, project_name=project.name),
+                    )
             else:
                 await interaction.followup.send(
                     f"✅ Task **[{task.short_id}]** created in project **{project.name}**.",
-                    embed=embed,
+                    embed=build_task_embed(task, project_name=project.name),
                 )
             from src.adapters.discord_bot.menu_manager import menu_manager
 
@@ -627,12 +568,10 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 else f"👤 Unassigned **[{updated_task.short_id}]**."
             )
             embed = build_task_embed(updated_task)
-            if hasattr(self.bot, "sync_root_task_message"):
+            if self.workspace:
+                await self.workspace.sync_workspace(updated_task)
+            elif hasattr(self.bot, "sync_root_task_message"):
                 res = self.bot.sync_root_task_message(updated_task)
-                if hasattr(res, "__await__"):
-                    await res
-            if hasattr(self.bot, "sync_task_thread"):
-                res = self.bot.sync_task_thread(updated_task)
                 if hasattr(res, "__await__"):
                     await res
 
@@ -685,12 +624,10 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
 
             msg = f"🔄 Status updated to **{new_status.value.upper()}** for **[{updated_task.short_id}]**."
             embed = build_task_embed(updated_task)
-            if hasattr(self.bot, "sync_root_task_message"):
+            if self.workspace:
+                await self.workspace.sync_workspace(updated_task)
+            elif hasattr(self.bot, "sync_root_task_message"):
                 res = self.bot.sync_root_task_message(updated_task)
-                if hasattr(res, "__await__"):
-                    await res
-            if hasattr(self.bot, "sync_task_thread"):
-                res = self.bot.sync_task_thread(updated_task)
                 if hasattr(res, "__await__"):
                     await res
 
@@ -719,7 +656,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 task_id=task_entity.id,
                 actor_discord_id=interaction.user.id,
             )
-            if updated and hasattr(self.bot, "sync_task_thread"):
+            if updated and self.workspace:
+                await self.workspace.sync_workspace(updated, sync_archive=True)
+            elif updated and hasattr(self.bot, "sync_task_thread"):
                 res = self.bot.sync_task_thread(updated, action="archive")
                 if hasattr(res, "__await__"):
                     await res
@@ -747,7 +686,9 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
                 task_id=task_entity.id,
                 actor_discord_id=interaction.user.id,
             )
-            if updated and hasattr(self.bot, "sync_task_thread"):
+            if updated and self.workspace:
+                await self.workspace.sync_workspace(updated, sync_archive=True)
+            elif updated and hasattr(self.bot, "sync_task_thread"):
                 res = self.bot.sync_task_thread(updated, action="unarchive")
                 if hasattr(res, "__await__"):
                     await res

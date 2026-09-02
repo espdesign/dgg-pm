@@ -36,19 +36,19 @@ def build_project_draft_embed(
     chan_type = "Forum Post Board" if is_forum else "Text Channel"
     chan_name = getattr(channel, "name", str(getattr(channel, "id", "channel")))
 
-    role_display = f"<@&{role.id}>" if role else "⚠️ **Required** — *Select a Squad Role below*"
+    role_display = f"<@&{role.id}>" if role else "*Public / All Members (Optional)*"
     lead_display = f"<@{lead.id}>" if lead else "*Unassigned (Optional)*"
     prefix_display = f"`{prefix}`" if prefix else "*Auto-generated*"
     cat_display = category if category else "*None*"
 
     embed = discord.Embed(
-        title=f"📁 Project Setup: {name[:90]}",
+        title=f"Project Setup: {name[:90]}",
         description=(
             "Configure the contributor squad role and optional project lead using the pickers below, "
-            "then click **`🚀 Create Project`** to initialize.\n\n"
+            "then click **`Create Project`** to initialize.\n\n"
             f"• **Bound Channel**: <#{channel.id}> (`#{chan_name}` • {chan_type})\n"
             f"• **Key Prefix**: {prefix_display}\n"
-            f"• **Squad Role (Required)**: {role_display}\n"
+            f"• **Squad Role (Optional)**: {role_display}\n"
             f"• **Project Lead (Optional)**: {lead_display}\n"
             f"• **Category**: {cat_display}"
         ),
@@ -67,7 +67,7 @@ def build_project_draft_embed(
 class ProjectCreateDraftView(discord.ui.View):
     """Interactive multi-step Project Creation Builder (Role & Lead picker).
 
-    Allows users to select a required Squad Discord Role and an optional Project Lead
+    Allows users to select an optional Squad Discord Role and an optional Project Lead
     prior to creating the project container and binding the channel/forum.
     """
 
@@ -116,9 +116,9 @@ class ProjectCreateDraftView(discord.ui.View):
     def _rebuild_items(self) -> None:
         self.clear_items()
 
-        # Row 0: Select Discord Role (Required)
+        # Row 0: Select Discord Role (Optional)
         self.role_select = discord.ui.RoleSelect(
-            placeholder="🎭 Select Squad Role (Required)...",
+            placeholder="Select Squad Role (Optional)...",
             min_values=1,
             max_values=1,
             row=0,
@@ -128,7 +128,7 @@ class ProjectCreateDraftView(discord.ui.View):
 
         # Row 1: Select Project Lead User (Optional)
         self.lead_select = discord.ui.UserSelect(
-            placeholder="👑 Select Project Lead (Optional)...",
+            placeholder="Select Project Lead (Optional)...",
             min_values=1,
             max_values=1,
             row=1,
@@ -139,17 +139,24 @@ class ProjectCreateDraftView(discord.ui.View):
         # Row 2: Action Buttons
         self.create_btn = discord.ui.Button(
             label="Create Project",
-            emoji="🚀",
             style=discord.ButtonStyle.success,
             row=2,
         )
         self.create_btn.callback = self._on_confirm_clicked
         self.add_item(self.create_btn)
 
+        if self.role:
+            self.clear_role_btn = discord.ui.Button(
+                label="Clear Squad Role",
+                style=discord.ButtonStyle.secondary,
+                row=2,
+            )
+            self.clear_role_btn.callback = self._on_clear_role_clicked
+            self.add_item(self.clear_role_btn)
+
         if self.lead:
             self.clear_lead_btn = discord.ui.Button(
                 label="Clear Lead",
-                emoji="👑",
                 style=discord.ButtonStyle.secondary,
                 row=2,
             )
@@ -158,7 +165,6 @@ class ProjectCreateDraftView(discord.ui.View):
 
         self.edit_btn = discord.ui.Button(
             label="Edit Details",
-            emoji="✏️",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -167,7 +173,6 @@ class ProjectCreateDraftView(discord.ui.View):
 
         self.cancel_btn = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.danger,
             row=2,
         )
@@ -176,6 +181,20 @@ class ProjectCreateDraftView(discord.ui.View):
 
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
         self.role = self.role_select.values[0]
+        self._rebuild_items()
+        embed = build_project_draft_embed(
+            name=self.name,
+            channel=self.channel,
+            prefix=self.prefix,
+            description=self.description,
+            category=self.category,
+            role=self.role,
+            lead=self.lead,
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_clear_role_clicked(self, interaction: discord.Interaction) -> None:
+        self.role = None
         self._rebuild_items()
         embed = build_project_draft_embed(
             name=self.name,
@@ -234,7 +253,7 @@ class ProjectCreateDraftView(discord.ui.View):
     async def _on_cancel_clicked(self, interaction: discord.Interaction) -> None:
         try:
             embed = discord.Embed(
-                title="🚫 Project Creation Cancelled",
+                title="Project Creation Cancelled",
                 description="Project draft was discarded.",
                 color=discord.Color.dark_grey(),
             )
@@ -250,17 +269,6 @@ class ProjectCreateDraftView(discord.ui.View):
             await interaction.response.send_message("❌ This action must be run in a Discord server.", ephemeral=True)
             return
 
-        if not self.role:
-            await interaction.response.send_message(
-                "❌ **Squad Role Required**: Please select a contributor Discord role "
-                "from the dropdown before creating the project.",
-                ephemeral=True,
-            )
-            from src.adapters.discord_bot.menu_manager import menu_manager
-
-            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
-            return
-
         try:
             project = await self.project_service.create_project(
                 guild_id=interaction.guild.id,
@@ -268,7 +276,7 @@ class ProjectCreateDraftView(discord.ui.View):
                 prefix=self.prefix,
                 description=self.description,
                 discord_channel_id=self.channel.id,
-                discord_role_id=self.role.id,
+                discord_role_id=self.role.id if self.role else None,
                 lead_discord_id=self.lead.id if self.lead else None,
                 category=self.category,
             )
@@ -296,13 +304,13 @@ class ProjectCreateDraftView(discord.ui.View):
                 project_name=project.name,
             )
             if hub_ok:
-                tag_note += " • 📌 Pinned Control Hub created"
+                tag_note += " • Pinned Control Hub created"
 
             lead_str = f"<@{project.lead_discord_id}>" if project.lead_discord_id else "*Unassigned*"
-            role_str = f"<@&{project.discord_role_id}>" if project.discord_role_id else "*None*"
+            role_str = f"<@&{project.discord_role_id}>" if project.discord_role_id else "*Public / All Members*"
 
             embed = discord.Embed(
-                title=f"✅ Project Created: {project.name} (`{project.prefix}`)",
+                title=f"Project Created: {project.name} (`{project.prefix}`)",
                 description=project.description or "No description provided.",
                 color=discord.Color.green(),
             )
@@ -494,7 +502,7 @@ class ProjectChannelSelectView(discord.ui.View):
         # Row 0: Channel Select dropdown (Forum channels only)
         self.channel_select = discord.ui.ChannelSelect(
             channel_types=[discord.ChannelType.forum],
-            placeholder="📢 Select target Forum channel...",
+            placeholder="Select target Forum channel...",
             min_values=1,
             max_values=1,
             row=0,
@@ -505,7 +513,6 @@ class ProjectChannelSelectView(discord.ui.View):
         # Row 1: Quick button to use current channel (if Forum)
         self.current_chan_btn = discord.ui.Button(
             label="Use Current Forum Channel",
-            emoji="📍",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -515,7 +522,6 @@ class ProjectChannelSelectView(discord.ui.View):
         # Row 1: Back button
         self.back_btn = discord.ui.Button(
             label="Back",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -648,7 +654,7 @@ def build_active_projects_embed(
 
     filter_str = f" • Filter: `{query}`" if query else ""
     embed = discord.Embed(
-        title=f"📁 Active Projects ({total_count}){filter_str}",
+        title=f"Active Projects ({total_count}){filter_str}",
         color=discord.Color.blurple(),
     )
     if not page_projects:
@@ -733,7 +739,6 @@ class ProjectActiveListView(discord.ui.View):
         # Row 0: Search, Clear, Back
         search_btn = discord.ui.Button(
             label="Search",
-            emoji="🔍",
             style=discord.ButtonStyle.primary,
             row=0,
         )
@@ -743,7 +748,6 @@ class ProjectActiveListView(discord.ui.View):
         if self.query:
             clear_btn = discord.ui.Button(
                 label="Clear Filter",
-                emoji="🔄",
                 style=discord.ButtonStyle.secondary,
                 row=0,
             )
@@ -752,7 +756,6 @@ class ProjectActiveListView(discord.ui.View):
 
         back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -855,7 +858,6 @@ class ProjectArchiveConfirmView(discord.ui.View):
 
         self.confirm_btn = discord.ui.Button(
             label="Confirm Archive",
-            emoji="📦",
             style=discord.ButtonStyle.danger,
             row=0,
         )
@@ -864,7 +866,6 @@ class ProjectArchiveConfirmView(discord.ui.View):
 
         self.cancel_btn = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -925,7 +926,7 @@ class ProjectArchiveConfirmView(discord.ui.View):
             )
             embed = build_project_menu_embed(view.is_server_manager)
             embed.description = (
-                f"📦 **Project Archived!**\n"
+                f"**Project Archived!**\n"
                 f"Project **{archived.name} (`{archived.prefix}`)** and its active tasks have been archived.\n\n"
                 + (embed.description or "")
             )
@@ -968,7 +969,6 @@ class ProjectRestoreConfirmView(discord.ui.View):
 
         self.confirm_btn = discord.ui.Button(
             label="Confirm Restore",
-            emoji="♻️",
             style=discord.ButtonStyle.success,
             row=0,
         )
@@ -977,7 +977,6 @@ class ProjectRestoreConfirmView(discord.ui.View):
 
         self.cancel_btn = discord.ui.Button(
             label="Cancel",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=0,
         )
@@ -1035,7 +1034,7 @@ class ProjectRestoreConfirmView(discord.ui.View):
             )
             embed = build_project_menu_embed(view.is_server_manager)
             embed.description = (
-                f"♻️ **Project Restored!**\n"
+                f"**Project Restored!**\n"
                 f"Project **{restored.name} (`{restored.prefix}`)** has been reactivated.\n\n"
                 + (embed.description or "")
             )
@@ -1062,9 +1061,9 @@ def build_archive_select_embed(
     total_pages: int,
     query: str = "",
 ) -> discord.Embed:
-    filter_note = f"\n🔎 **Search Filter Active:** `{query}`" if query else ""
+    filter_note = f"\n**Search Filter Active:** `{query}`" if query else ""
     embed = discord.Embed(
-        title="📦 Archive Project",
+        title="Archive Project",
         description=(
             f"Select an active project below to archive:{filter_note}\n\n"
             f"• **Available Projects:** `{total_count}`\n"
@@ -1143,12 +1142,11 @@ class ProjectArchiveSelectView(discord.ui.View):
                     label=f"{p.name} ({p.prefix})"[:100],
                     value=str(p.id),
                     description=(p.description[:90] if p.description else "Active Project"),
-                    emoji="📁",
                 )
                 for p in page_projects
             ]
             self.select = discord.ui.Select(
-                placeholder=f"📦 Select project to archive (Page {self.current_page + 1}/{total_pages})...",
+                placeholder=f"Select project to archive (Page {self.current_page + 1}/{total_pages})...",
                 options=options,
                 min_values=1,
                 max_values=1,
@@ -1160,7 +1158,6 @@ class ProjectArchiveSelectView(discord.ui.View):
         # Row 1: Search, Clear, Back
         search_btn = discord.ui.Button(
             label="Search",
-            emoji="🔍",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -1170,7 +1167,6 @@ class ProjectArchiveSelectView(discord.ui.View):
         if self.query:
             clear_btn = discord.ui.Button(
                 label="Clear Filter",
-                emoji="🔄",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -1179,7 +1175,6 @@ class ProjectArchiveSelectView(discord.ui.View):
 
         back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -1267,13 +1262,13 @@ class ProjectArchiveSelectView(discord.ui.View):
         chan_note = f"\n• **Channel:** <#{project.discord_channel_id}>" if project.discord_channel_id else ""
 
         embed = discord.Embed(
-            title="⚠️ Confirm Project Archival",
+            title="Confirm Project Archival",
             description=(
                 f"Are you sure you want to archive project **{project.name} (`{project.prefix}`)**?\n"
                 f"{chan_note}"
                 f"{task_count_note}\n"
                 "• **Discord Threads:** Associated task discussion threads will be archived.\n\n"
-                "⚠️ This will hide the project from active selectors and board views."
+                "This will hide the project from active selectors and board views."
             ),
             color=discord.Color.red(),
         )
@@ -1305,9 +1300,9 @@ def build_restore_select_embed(
     total_pages: int,
     query: str = "",
 ) -> discord.Embed:
-    filter_note = f"\n🔎 **Search Filter Active:** `{query}`" if query else ""
+    filter_note = f"\n**Search Filter Active:** `{query}`" if query else ""
     embed = discord.Embed(
-        title="♻️ Restore Project",
+        title="Restore Project",
         description=(
             f"Select an archived project below to restore:{filter_note}\n\n"
             f"• **Archived Projects Available:** `{total_count}`\n"
@@ -1386,12 +1381,11 @@ class ProjectRestoreSelectView(discord.ui.View):
                     label=f"{p.name} ({p.prefix})"[:100],
                     value=str(p.id),
                     description=(p.description[:90] if p.description else "Archived Project"),
-                    emoji="♻️",
                 )
                 for p in page_projects
             ]
             self.select = discord.ui.Select(
-                placeholder=f"♻️ Select project to restore (Page {self.current_page + 1}/{total_pages})...",
+                placeholder=f"Select project to restore (Page {self.current_page + 1}/{total_pages})...",
                 options=options,
                 min_values=1,
                 max_values=1,
@@ -1403,7 +1397,6 @@ class ProjectRestoreSelectView(discord.ui.View):
         # Row 1: Search, Clear, Back
         search_btn = discord.ui.Button(
             label="Search",
-            emoji="🔍",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -1413,7 +1406,6 @@ class ProjectRestoreSelectView(discord.ui.View):
         if self.query:
             clear_btn = discord.ui.Button(
                 label="Clear Filter",
-                emoji="🔄",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -1422,7 +1414,6 @@ class ProjectRestoreSelectView(discord.ui.View):
 
         back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -1500,7 +1491,7 @@ class ProjectRestoreSelectView(discord.ui.View):
         chan_note = f"\n• **Bound Channel:** <#{project.discord_channel_id}>" if project.discord_channel_id else ""
 
         embed = discord.Embed(
-            title="♻️ Confirm Project Restoration",
+            title="Confirm Project Restoration",
             description=(
                 f"Are you sure you want to restore project **{project.name} (`{project.prefix}`)**?\n"
                 f"{chan_note}\n"
@@ -1568,7 +1559,7 @@ class ProjectAssignTimelineModal(discord.ui.Modal):
                 timeline=timeline,
             )
             embed = discord.Embed(
-                title="✅ Team Mapped to Project",
+                title="Team Mapped to Project",
                 description=(
                     f"Successfully mapped team **{self.team.name}** (<@&{self.team.discord_role_id}>) "
                     f"to project **{self.project.name}** (`{self.project.prefix}`)."
@@ -1622,13 +1613,12 @@ class ProjectAssignTeamView(discord.ui.View):
                 label=f"{p.name} ({p.prefix})"[:100],
                 value=str(p.id),
                 description=(p.description[:50] if p.description else "Active Project"),
-                emoji="📁",
                 default=(i == 0),
             )
             for i, p in enumerate(projects[:25])
         ]
         self.proj_select = discord.ui.Select(
-            placeholder="📁 Select Project...",
+            placeholder="Select Project...",
             options=proj_options,
             min_values=1,
             max_values=1,
@@ -1643,13 +1633,12 @@ class ProjectAssignTeamView(discord.ui.View):
                 label=t.name[:100],
                 value=str(t.id),
                 description=f"Discord Role: @{t.discord_role_id}"[:50],
-                emoji="👥",
                 default=(i == 0),
             )
             for i, t in enumerate(teams[:25])
         ]
         self.team_select = discord.ui.Select(
-            placeholder="👥 Select Team...",
+            placeholder="Select Team...",
             options=team_options,
             min_values=1,
             max_values=1,
@@ -1661,7 +1650,6 @@ class ProjectAssignTeamView(discord.ui.View):
         # Row 2: Action Buttons
         self.assign_btn = discord.ui.Button(
             label="Map Team (Quick)",
-            emoji="🤝",
             style=discord.ButtonStyle.primary,
             row=2,
         )
@@ -1670,7 +1658,6 @@ class ProjectAssignTeamView(discord.ui.View):
 
         self.timeline_btn = discord.ui.Button(
             label="Set Timeline & Map...",
-            emoji="⏱️",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -1679,7 +1666,6 @@ class ProjectAssignTeamView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -1729,7 +1715,7 @@ class ProjectAssignTeamView(discord.ui.View):
                 timeline=None,
             )
             embed = discord.Embed(
-                title="✅ Team Mapped to Project",
+                title="Team Mapped to Project",
                 description=(
                     f"Successfully mapped team **{team.name}** (<@&{team.discord_role_id}>) "
                     f"to project **{proj.name}** (`{proj.prefix}`)."
@@ -1803,13 +1789,12 @@ class ProjectRoleSelectView(discord.ui.View):
                 label=f"{p.name} ({p.prefix})"[:100],
                 value=str(p.id),
                 description=(f"Role: @{p.discord_role_id}" if p.discord_role_id else "Public (No role)")[:50],
-                emoji="📁",
                 default=(i == 0),
             )
             for i, p in enumerate(projects[:25])
         ]
         self.proj_select = discord.ui.Select(
-            placeholder="📁 Select Project...",
+            placeholder="Select Project...",
             options=proj_options,
             min_values=1,
             max_values=1,
@@ -1820,7 +1805,7 @@ class ProjectRoleSelectView(discord.ui.View):
 
         # Row 1: Select Discord Role
         self.role_select = discord.ui.RoleSelect(
-            placeholder="🎭 Select Squad Discord Role...",
+            placeholder="Select Squad Discord Role...",
             min_values=1,
             max_values=1,
             row=1,
@@ -1831,7 +1816,6 @@ class ProjectRoleSelectView(discord.ui.View):
         # Row 2: Action Buttons
         self.assign_btn = discord.ui.Button(
             label="Map Squad Role",
-            emoji="🎭",
             style=discord.ButtonStyle.primary,
             row=2,
         )
@@ -1840,7 +1824,6 @@ class ProjectRoleSelectView(discord.ui.View):
 
         self.clear_btn = discord.ui.Button(
             label="Clear Role (Make Public)",
-            emoji="🌐",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -1849,7 +1832,6 @@ class ProjectRoleSelectView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -1901,7 +1883,7 @@ class ProjectRoleSelectView(discord.ui.View):
         try:
             await self.project_service.set_project_role(proj.id, self.selected_role.id)
             embed = discord.Embed(
-                title="✅ Squad Role Mapped to Project",
+                title="Squad Role Mapped to Project",
                 description=(
                     f"Mapped Discord role <@&{self.selected_role.id}> as the contributor squad for "
                     f"project **{proj.name}** (`{proj.prefix}`)."
@@ -1927,7 +1909,7 @@ class ProjectRoleSelectView(discord.ui.View):
         try:
             await self.project_service.set_project_role(proj.id, None)
             embed = discord.Embed(
-                title="🌐 Project Role Cleared",
+                title="Project Role Cleared",
                 description=(
                     f"Project **{proj.name}** (`{proj.prefix}`) is now **Public** (open to all server members)."
                 ),
@@ -1978,13 +1960,12 @@ class ProjectLeadSelectView(discord.ui.View):
                 label=f"{p.name} ({p.prefix})"[:100],
                 value=str(p.id),
                 description=(f"Lead: @{p.lead_discord_id}" if p.lead_discord_id else "Unassigned")[:50],
-                emoji="📁",
                 default=(i == 0),
             )
             for i, p in enumerate(projects[:25])
         ]
         self.proj_select = discord.ui.Select(
-            placeholder="📁 Select Project...",
+            placeholder="Select Project...",
             options=proj_options,
             min_values=1,
             max_values=1,
@@ -1995,7 +1976,7 @@ class ProjectLeadSelectView(discord.ui.View):
 
         # Row 1: Select Lead Member
         self.user_select = discord.ui.UserSelect(
-            placeholder="👑 Select Project Lead...",
+            placeholder="Select Project Lead...",
             min_values=1,
             max_values=1,
             row=1,
@@ -2006,7 +1987,6 @@ class ProjectLeadSelectView(discord.ui.View):
         # Row 2: Action Buttons
         self.assign_btn = discord.ui.Button(
             label="Designate Lead",
-            emoji="👑",
             style=discord.ButtonStyle.primary,
             row=2,
         )
@@ -2015,7 +1995,6 @@ class ProjectLeadSelectView(discord.ui.View):
 
         self.clear_btn = discord.ui.Button(
             label="Clear Lead",
-            emoji="❌",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -2024,7 +2003,6 @@ class ProjectLeadSelectView(discord.ui.View):
 
         self.back_btn = discord.ui.Button(
             label="Back to Project Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -2076,7 +2054,7 @@ class ProjectLeadSelectView(discord.ui.View):
         try:
             await self.project_service.set_project_lead(proj.id, self.selected_user.id)
             embed = discord.Embed(
-                title="👑 Project Lead Designated",
+                title="Project Lead Designated",
                 description=(
                     f"Designated <@{self.selected_user.id}> as the **Project Lead** for "
                     f"project **{proj.name}** (`{proj.prefix}`)."
@@ -2102,7 +2080,7 @@ class ProjectLeadSelectView(discord.ui.View):
         try:
             await self.project_service.set_project_lead(proj.id, None)
             embed = discord.Embed(
-                title="❌ Project Lead Cleared",
+                title="Project Lead Cleared",
                 description=f"Project **{proj.name}** (`{proj.prefix}`) has no designated Project Lead.",
                 color=discord.Color.dark_grey(),
             )
@@ -2288,7 +2266,7 @@ class ProjectMenuView(discord.ui.View):
             )
             file = discord.File(fp=buf, filename="tech_tree.png")
             embed = discord.Embed(
-                title=f"🌲 Visual Graph: [{target_proj.prefix}] {target_proj.name}",
+                title=f"Visual Graph: [{target_proj.prefix}] {target_proj.name}",
                 description="Showing dependency graph in **Horizontal (Left to Right)** layout.",
                 color=discord.Color.from_rgb(16, 152, 247),
             )
@@ -2305,7 +2283,7 @@ class ProjectMenuView(discord.ui.View):
             self.task_service, self.project_service, accessible_projects, orientation="lr", auth_service=auth_service
         )
         await interaction.response.send_message(
-            "🌲 Choose a project to view its Visual Graph visualization:",
+            "Choose a project to view its Visual Graph visualization:",
             view=view,
             ephemeral=True,
         )
@@ -2364,7 +2342,7 @@ class ProjectMenuView(discord.ui.View):
             return_to=self.return_to,
         )
         embed = discord.Embed(
-            title="📁 Create Project: Select Forum Channel",
+            title="Create Project: Select Forum Channel",
             description=(
                 "Choose a **Forum Channel** to bind as the project's task board.\n\n"
                 "Tasks become organized forum post cards with native Discord tag filtering "
@@ -2379,7 +2357,7 @@ class ProjectMenuView(discord.ui.View):
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
-            await interaction.response.send_message("📁 No active projects found in this server.", ephemeral=True)
+            await interaction.response.send_message("No active projects found in this server.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -2400,9 +2378,7 @@ class ProjectMenuView(discord.ui.View):
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
-            await interaction.response.send_message(
-                "📁 No active projects found. Create a project first!", ephemeral=True
-            )
+            await interaction.response.send_message("No active projects found. Create a project first!", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -2415,7 +2391,7 @@ class ProjectMenuView(discord.ui.View):
             initial_interaction=interaction,
         )
         embed = discord.Embed(
-            title="🎭 Map Squad Discord Role to Project",
+            title="Map Squad Discord Role to Project",
             description="Select a project and choose a Discord role as its dedicated contributor squad:",
             color=discord.Color.blurple(),
         )
@@ -2426,9 +2402,7 @@ class ProjectMenuView(discord.ui.View):
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
-            await interaction.response.send_message(
-                "📁 No active projects found. Create a project first!", ephemeral=True
-            )
+            await interaction.response.send_message("No active projects found. Create a project first!", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -2441,7 +2415,7 @@ class ProjectMenuView(discord.ui.View):
             initial_interaction=interaction,
         )
         embed = discord.Embed(
-            title="👑 Designate Project Lead",
+            title="Designate Project Lead",
             description="Select a project and designate a member as the Project Lead with management permissions:",
             color=discord.Color.gold(),
         )
@@ -2452,7 +2426,7 @@ class ProjectMenuView(discord.ui.View):
             return
         projects = await self.project_service.list_projects(interaction.guild.id, include_archived=False)
         if not projects:
-            await interaction.response.send_message("📁 No active projects available to archive.", ephemeral=True)
+            await interaction.response.send_message("No active projects available to archive.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
@@ -2475,7 +2449,7 @@ class ProjectMenuView(discord.ui.View):
         all_proj = await self.project_service.list_projects(interaction.guild.id, include_archived=True)
         archived = [p for p in all_proj if p.is_archived]
         if not archived:
-            await interaction.response.send_message("📁 No archived projects to restore.", ephemeral=True)
+            await interaction.response.send_message("No archived projects to restore.", ephemeral=True)
             from src.adapters.discord_bot.menu_manager import menu_manager
 
             menu_manager.schedule_toast_dismissal(interaction, delay=8.0)

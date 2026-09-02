@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import discord
 
 from src.adapters.discord_bot.views.forum_helpers import resolve_forum_tags
 from src.domain.enums import EventType, NotificationPreference, PriorityLevel, TaskStatus
-from src.domain.models import OutboxEvent
+from src.domain.models import OutboxEvent, Task
+from src.ports.discord_workspace import ITaskDiscordWorkspace
 from src.ports.notifier import INotificationDispatcher
 
 if TYPE_CHECKING:
@@ -19,9 +21,53 @@ NOTIFICATION_FOOTER = "Control notifications via /pm settings"
 
 
 class DiscordNotifier(INotificationDispatcher):
-    def __init__(self, bot: discord.Client, user_service: UserService | None = None):
+    def __init__(
+        self,
+        bot: discord.Client,
+        user_service: UserService | None = None,
+        workspace: ITaskDiscordWorkspace | None = None,
+    ):
         self.bot = bot
         self.user_service = user_service
+        self.workspace = workspace
+
+    def _reconstruct_task(self, payload: dict) -> Task:
+        """Reconstructs a transient Task domain model from outbox payload for workspace synchronization."""
+        try:
+            task_id = UUID(payload["task_id"]) if "task_id" in payload else UUID(int=0)
+        except (ValueError, TypeError, AttributeError):
+            task_id = UUID(int=0)
+        guild_id = int(payload.get("guild_id") or 0)
+        try:
+            project_id = UUID(payload["project_id"]) if payload.get("project_id") else None
+        except (ValueError, TypeError, AttributeError):
+            project_id = None
+        short_id = payload.get("short_id", "")
+        title = payload.get("title", "")
+        status_val = payload.get("new_status") or payload.get("status") or "notStarted"
+        status = TaskStatus(status_val) if status_val in TaskStatus._value2member_map_ else TaskStatus.NOT_STARTED
+        prio_val = payload.get("new_priority") or payload.get("priority") or "normal"
+        priority = PriorityLevel(prio_val) if prio_val in PriorityLevel._value2member_map_ else PriorityLevel.NORMAL
+        creator_id = int(payload.get("creator_discord_id") or payload.get("actor_discord_id") or 0)
+        assignee_id = payload.get("assignee_discord_id") or payload.get("new_assignee_id")
+        thread_id = payload.get("discord_thread_id")
+        msg_id = payload.get("discord_message_id")
+        watchers = payload.get("watchers") or []
+
+        return Task(
+            id=task_id,
+            guild_id=guild_id,
+            project_id=project_id,
+            short_id=short_id,
+            title=title,
+            status=status,
+            priority=priority,
+            creator_discord_id=creator_id,
+            assignee_discord_id=assignee_id,
+            watchers=watchers,
+            discord_thread_id=thread_id,
+            discord_message_id=msg_id,
+        )
 
     async def _get_pref(self, guild_id: int | None, user_id: int) -> NotificationPreference:
         if not self.user_service or not guild_id:
@@ -151,9 +197,19 @@ class DiscordNotifier(INotificationDispatcher):
         assignee_id = payload.get("assignee_discord_id")
 
         thread: discord.Thread | None = None
-        # Post update in Discord thread if available and update root starter message
-        message_id = payload.get("discord_message_id")
-        if thread_id:
+        task = self._reconstruct_task(payload)
+
+        if self.workspace and thread_id:
+            msg = f"**Status Updated:** `{old_status}` ➔ **`{new_status}`** by <@{actor_id}>"
+            if notes:
+                msg += f"\n> {notes}"
+            await self.workspace.post_activity(task, content=msg)
+            await self.workspace.sync_workspace(task)
+            chan = self.bot.get_channel(thread_id)
+            if isinstance(chan, discord.Thread):
+                thread = chan
+        elif thread_id:
+            message_id = payload.get("discord_message_id")
             try:
                 chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                 if isinstance(chan, discord.Thread):
@@ -163,7 +219,6 @@ class DiscordNotifier(INotificationDispatcher):
                         msg += f"\n> {notes}"
                     await thread.send(msg)
 
-                    # Keep the root starter message in the parent channel or forum post up-to-date
                     if message_id:
                         try:
                             root_msg = None
@@ -199,7 +254,6 @@ class DiscordNotifier(INotificationDispatcher):
                                 "Could not update root task embed in thread parent %s: %s", thread.id, edit_err
                             )
 
-                    # Forum Tag and Archive Lifecycle Synchronization
                     edit_kwargs: dict[str, object] = {}
                     if isinstance(thread.parent, discord.ForumChannel):
                         prio_val = None
@@ -215,8 +269,6 @@ class DiscordNotifier(INotificationDispatcher):
                             existing_tags=getattr(thread, "applied_tags", None),
                         )
 
-                    # Discord unarchives threads whenever a message is sent. If new status is completed,
-                    # re-archive the thread so it does not linger in the active sidebar.
                     if new_status == "completed":
                         edit_kwargs["archived"] = True
                     elif thread.archived:
@@ -266,9 +318,15 @@ class DiscordNotifier(INotificationDispatcher):
         assignee_id = payload.get("assignee_discord_id")
 
         thread: discord.Thread | None = None
-        is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
-        # Post into thread
-        if thread_id:
+        task = self._reconstruct_task(payload)
+
+        if self.workspace and thread_id:
+            await self.workspace.post_activity(task, content=f"**Note added by <@{actor_id}>:**\n> {note}")
+            chan = self.bot.get_channel(thread_id)
+            if isinstance(chan, discord.Thread):
+                thread = chan
+        elif thread_id:
+            is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
             try:
                 chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                 if isinstance(chan, discord.Thread):
@@ -370,15 +428,6 @@ class DiscordNotifier(INotificationDispatcher):
         watchers: list[int] = payload.get("watchers", [])
         assignee_id = payload.get("assignee_discord_id")
 
-        thread: discord.Thread | None = None
-        if thread_id:
-            try:
-                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-                if isinstance(chan, discord.Thread):
-                    thread = chan
-            except Exception:
-                pass
-
         added_watchers: set[int] = set()
         if update_type == "assignee" or ("new_assignee_id" in payload or "old_assignee_id" in payload):
             new_assignee = payload.get("new_assignee_id")
@@ -409,20 +458,6 @@ class DiscordNotifier(INotificationDispatcher):
             if assignee_id:
                 recipients.add(assignee_id)
 
-            if thread and isinstance(thread.parent, discord.ForumChannel):
-                try:
-                    prio_val = PriorityLevel(new_prio)
-                    edit_kwargs = {
-                        "applied_tags": resolve_forum_tags(
-                            thread.parent,
-                            priority=prio_val,
-                            existing_tags=getattr(thread, "applied_tags", None),
-                        )
-                    }
-                    await thread.edit(**edit_kwargs)
-                except Exception as err:
-                    logger.debug("Could not edit forum thread tags for priority update: %s", err)
-
         else:
             changes = payload.get("changes", [])
             change_text = "\n".join(f"• {c}" for c in changes) if changes else "Task details were updated."
@@ -436,17 +471,42 @@ class DiscordNotifier(INotificationDispatcher):
             if assignee_id:
                 recipients.add(assignee_id)
 
-        is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
-        # Post to thread if available
-        if thread:
+        thread: discord.Thread | None = None
+        task = self._reconstruct_task(payload)
+
+        if self.workspace and thread_id:
+            await self.workspace.post_activity(task, content=thread_msg)
+            await self.workspace.sync_workspace(task)
+            chan = self.bot.get_channel(thread_id)
+            if isinstance(chan, discord.Thread):
+                thread = chan
+        elif thread_id:
             try:
-                was_archived = getattr(thread, "archived", False)
-                await thread.send(thread_msg)
-                if was_archived or is_completed:
-                    try:
-                        await thread.edit(archived=True)
-                    except Exception:
-                        pass
+                chan = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                if isinstance(chan, discord.Thread):
+                    thread = chan
+                    if update_type == "priority" and isinstance(thread.parent, discord.ForumChannel):
+                        try:
+                            prio_val = PriorityLevel(payload.get("new_priority", "normal"))
+                            edit_kwargs = {
+                                "applied_tags": resolve_forum_tags(
+                                    thread.parent,
+                                    priority=prio_val,
+                                    existing_tags=getattr(thread, "applied_tags", None),
+                                )
+                            }
+                            await thread.edit(**edit_kwargs)
+                        except Exception as err:
+                            logger.debug("Could not edit forum thread tags for priority update: %s", err)
+
+                    is_completed = payload.get("status") == "completed" or payload.get("is_completed", False)
+                    was_archived = getattr(thread, "archived", False)
+                    await thread.send(thread_msg)
+                    if was_archived or is_completed:
+                        try:
+                            await thread.edit(archived=True)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.warning("Failed to post update to thread %s: %s", thread_id, e)
 

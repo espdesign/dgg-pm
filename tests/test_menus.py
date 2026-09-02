@@ -107,19 +107,7 @@ async def test_project_menu_and_modal(services):
     assert draft_view.role is None
     assert draft_view.lead is None
 
-    # 3a. Verify clicking Create Project without role is blocked
-    no_role_interaction = MagicMock(spec=discord.Interaction)
-    no_role_interaction.guild = MagicMock()
-    no_role_interaction.guild.id = guild_id
-    no_role_interaction.response = MagicMock()
-    no_role_interaction.response.send_message = AsyncMock()
-
-    await draft_view._on_confirm_clicked(no_role_interaction)
-    no_role_interaction.response.send_message.assert_awaited_once()
-    assert "Squad Role Required" in no_role_interaction.response.send_message.call_args.args[0]
-    assert await proj_srv.get_by_name(guild_id, "Cloud Infrastructure") is None
-
-    # 3b. Select Role (Required) and Lead (Optional)
+    # 3a. Select Role and Lead, test Clear Squad Role and Clear Lead buttons
     mock_squad_role = MagicMock(spec=discord.Role)
     mock_squad_role.id = 998877
     draft_view.role_select._values = [mock_squad_role]
@@ -129,6 +117,16 @@ async def test_project_menu_and_modal(services):
     role_select_inter.response.edit_message = AsyncMock()
     await draft_view._on_role_selected(role_select_inter)
     assert draft_view.role == mock_squad_role
+
+    # Test Clear Squad Role button
+    clear_role_inter = MagicMock(spec=discord.Interaction)
+    clear_role_inter.response = MagicMock()
+    clear_role_inter.response.edit_message = AsyncMock()
+    await draft_view._on_clear_role_clicked(clear_role_inter)
+    assert draft_view.role is None
+
+    # Re-assign squad role
+    draft_view.role = mock_squad_role
 
     mock_lead_member = MagicMock(spec=discord.Member)
     mock_lead_member.id = 112233
@@ -224,6 +222,27 @@ async def test_project_menu_and_modal(services):
     embed2 = confirm_inter2.response.edit_message.call_args.kwargs.get("embed")
     bound_field = next(f for f in embed2.fields if f.name == "Bound Channel")
     assert "Pinned Control Hub" in bound_field.value
+
+    # 3d. ProjectCreateDraftView creates a public project when role is None (or cleared)
+    mock_channel3 = MagicMock(spec=discord.TextChannel)
+    mock_channel3.id = 55443322
+    draft_view3 = ProjectCreateDraftView(
+        project_service=proj_srv,
+        channel=mock_channel3,
+        name="Public Community Tools",
+        prefix="PUB",
+    )
+    assert draft_view3.role is None
+    confirm_inter3 = MagicMock(spec=discord.Interaction)
+    confirm_inter3.guild = MagicMock()
+    confirm_inter3.guild.id = guild_id
+    confirm_inter3.response = MagicMock()
+    confirm_inter3.response.edit_message = AsyncMock()
+
+    await draft_view3._on_confirm_clicked(confirm_inter3)
+    pub_proj = await proj_srv.get_by_name(guild_id, "Public Community Tools")
+    assert pub_proj is not None
+    assert pub_proj.discord_role_id is None
 
     # 4. Test ProjectRoleSelectView and ProjectLeadSelectView
     from src.adapters.discord_bot.views.project_menu import ProjectLeadSelectView, ProjectRoleSelectView
@@ -1082,7 +1101,7 @@ async def test_task_menu_channel_scoping_and_global_search(services):
     assert view_channel.selected_project_id == proj_a.id
     assert view_channel.new_task_btn.label == "New Task [IOS]"
 
-    # Verify channel project is marked with "📍 (This Channel)"
+    # Verify channel project is marked with "(This Channel)"
     this_chan_option = next((opt for opt in view_channel.project_select.options if opt.value == str(proj_a.id)), None)
     assert this_chan_option is not None
     assert "(This Channel)" in this_chan_option.label
@@ -1144,7 +1163,7 @@ async def test_task_menu_channel_scoping_and_global_search(services):
     )
     # Channel project is sorted first
     assert select_view.select.options[0].value == str(proj_a.id)
-    assert "📍" in select_view.select.options[0].label
+    assert "(This Channel)" in select_view.select.options[0].label
 
     # Search in TaskSelectProjectView
     filter_interaction = MagicMock(spec=discord.Interaction)
@@ -1296,7 +1315,7 @@ async def test_project_create_draft_view_details_edit_and_cancel(services):
         category="Initial Cat",
     )
     assert "Initial Name" in draft_embed.title
-    assert "Required" in draft_embed.description
+    assert "Optional" in draft_embed.description
 
     # 1. Test Edit Details button opens modal with initial values
     edit_inter = MagicMock(spec=discord.Interaction)

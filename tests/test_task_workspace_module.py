@@ -1,0 +1,283 @@
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+import discord
+import pytest
+
+from src.adapters.discord_bot.task_workspace import DiscordTaskWorkspaceAdapter
+from src.domain.enums import PriorityLevel, TaskStatus
+from src.domain.models import Project, Task
+from src.ports.discord_workspace import TaskWorkspaceRef
+
+
+def _create_mock_forum_tag(tag_id: int, name: str) -> MagicMock:
+    tag = MagicMock(spec=discord.ForumTag)
+    tag.id = tag_id
+    tag.name = name
+    return tag
+
+
+@pytest.mark.asyncio
+async def test_provision_workspace_forum_channel(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 998877
+
+    bot = MagicMock(spec=discord.Client)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    project = Project(
+        id=uuid4(),
+        guild_id=guild_id,
+        name="Security Core",
+        prefix="SEC",
+        discord_channel_id=12345,
+    )
+
+    task = Task(
+        id=uuid4(),
+        guild_id=guild_id,
+        short_id="SEC-1",
+        title="Audit OAuth2 flow",
+        project_id=project.id,
+        status=TaskStatus.NOT_STARTED,
+        priority=PriorityLevel.HIGH,
+        creator_discord_id=1001,
+        assignee_discord_id=2001,
+        watchers=[3001],
+    )
+
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 12345
+    mock_forum.guild = MagicMock(id=guild_id)
+    tag_todo = _create_mock_forum_tag(10, "Not Started")
+    tag_high = _create_mock_forum_tag(20, "High")
+    mock_forum.available_tags = [tag_todo, tag_high]
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 555666
+    mock_thread.jump_url = "https://discord.com/channels/998877/555666"
+
+    mock_msg = MagicMock(spec=discord.Message)
+    mock_msg.id = 777888
+    mock_msg.jump_url = "https://discord.com/channels/998877/555666/777888"
+
+    res_mock = MagicMock()
+    res_mock.thread = mock_thread
+    res_mock.message = mock_msg
+    mock_forum.create_thread = AsyncMock(return_value=res_mock)
+    bot.get_channel = MagicMock(return_value=mock_forum)
+
+    ref = await adapter.provision_workspace(task, project=project)
+
+    assert isinstance(ref, TaskWorkspaceRef)
+    assert ref.thread_id == 555666
+    assert ref.message_id == 777888
+    assert ref.channel_id == 12345
+    assert ref.jump_url == mock_msg.jump_url
+
+    mock_forum.create_thread.assert_awaited_once()
+    kwargs = mock_forum.create_thread.call_args.kwargs
+    assert kwargs["name"] == "[SEC-1] Audit OAuth2 flow"
+    assert kwargs["auto_archive_duration"] == 10080
+    assert kwargs["applied_tags"] == [tag_todo, tag_high]
+    assert kwargs["embed"] is not None
+    assert kwargs["view"] is not None
+
+
+@pytest.mark.asyncio
+async def test_provision_workspace_text_channel(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+    guild_id = 998877
+
+    bot = MagicMock(spec=discord.Client)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    project = Project(
+        id=uuid4(),
+        guild_id=guild_id,
+        name="Infra Project",
+        prefix="INF",
+        discord_channel_id=222333,
+    )
+
+    task = Task(
+        id=uuid4(),
+        guild_id=guild_id,
+        short_id="INF-1",
+        title="Deploy PostgreSQL Cluster",
+        project_id=project.id,
+        status=TaskStatus.IN_PROGRESS,
+        priority=PriorityLevel.NORMAL,
+        creator_discord_id=1001,
+    )
+
+    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel.id = 222333
+    mock_channel.guild = MagicMock(id=guild_id)
+
+    mock_msg = MagicMock(spec=discord.Message)
+    mock_msg.id = 333444
+    mock_msg.jump_url = "https://discord.com/channels/998877/222333/333444"
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 444555
+    mock_thread.send = AsyncMock()
+
+    mock_msg.create_thread = AsyncMock(return_value=mock_thread)
+    mock_channel.send = AsyncMock(return_value=mock_msg)
+    bot.get_channel = MagicMock(return_value=mock_channel)
+
+    ref = await adapter.provision_workspace(task, project=project)
+
+    assert isinstance(ref, TaskWorkspaceRef)
+    assert ref.thread_id == 444555
+    assert ref.message_id == 333444
+    assert ref.channel_id == 222333
+
+    mock_channel.send.assert_awaited_once()
+    mock_msg.create_thread.assert_awaited_once_with(
+        name="[INF-1] Deploy PostgreSQL Cluster", auto_archive_duration=10080
+    )
+    mock_thread.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_provision_workspace_invalid_channel_error(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+
+    bot = MagicMock(spec=discord.Client)
+    bot.get_channel = MagicMock(return_value=None)
+    bot.fetch_channel = AsyncMock(return_value=None)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    task = Task(
+        id=uuid4(),
+        guild_id=999,
+        short_id="ERR-1",
+        title="Invalid channel test",
+        creator_discord_id=1001,
+    )
+
+    with pytest.raises(ValueError, match="Could not resolve a valid Discord"):
+        await adapter.provision_workspace(task)
+
+
+@pytest.mark.asyncio
+async def test_sync_workspace_forum_and_archive(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+
+    bot = MagicMock(spec=discord.Client)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    mock_forum = MagicMock(spec=discord.ForumChannel)
+    mock_forum.id = 11111
+    tag_done = _create_mock_forum_tag(30, "Completed")
+    mock_forum.available_tags = [tag_done]
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 888999
+    mock_thread.name = "[OLD] Old Title"
+    mock_thread.parent = mock_forum
+    mock_thread.archived = False
+    mock_thread.applied_tags = []
+    mock_thread.edit = AsyncMock()
+
+    mock_starter_msg = MagicMock(spec=discord.Message)
+    mock_starter_msg.edit = AsyncMock()
+    mock_thread.starter_message = mock_starter_msg
+
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    task = Task(
+        id=uuid4(),
+        guild_id=999,
+        short_id="AUD-10",
+        title="Completed Audit",
+        status=TaskStatus.COMPLETED,
+        priority=PriorityLevel.LOW,
+        creator_discord_id=1001,
+        discord_thread_id=888999,
+        discord_message_id=777111,
+    )
+
+    ok = await adapter.sync_workspace(task, sync_title=True, sync_tags=True, sync_archive=True, sync_starter_card=True)
+    assert ok is True
+
+    mock_starter_msg.edit.assert_awaited_once()
+    mock_thread.edit.assert_awaited_once()
+    edit_kwargs = mock_thread.edit.call_args.kwargs
+    assert edit_kwargs.get("name") == "[AUD-10] Completed Audit"
+    assert edit_kwargs.get("archived") is True
+    assert edit_kwargs.get("applied_tags") == [tag_done]
+
+
+@pytest.mark.asyncio
+async def test_post_activity_in_thread(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+
+    bot = MagicMock(spec=discord.Client)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    mock_thread = MagicMock(spec=discord.Thread)
+    mock_thread.id = 444111
+    mock_thread.archived = True
+    mock_thread.send = AsyncMock(return_value=MagicMock(spec=discord.Message))
+    mock_thread.edit = AsyncMock()
+    bot.get_channel = MagicMock(return_value=mock_thread)
+
+    task = Task(
+        id=uuid4(),
+        guild_id=999,
+        short_id="NOTE-1",
+        title="Note testing",
+        status=TaskStatus.COMPLETED,
+        creator_discord_id=1001,
+        discord_thread_id=444111,
+    )
+
+    msg = await adapter.post_activity(task, content="Audit note text", rearchive_if_completed=True)
+    assert msg is not None
+    mock_thread.send.assert_awaited_once_with(content="Audit note text", embed=None)
+
+
+@pytest.mark.asyncio
+async def test_render_task_controls_panels(services):
+    proj_srv = services["project"]
+    task_srv = services["task"]
+
+    bot = MagicMock(spec=discord.Client)
+    adapter = DiscordTaskWorkspaceAdapter(bot, task_service=task_srv, project_service=proj_srv)
+
+    task = Task(
+        id=uuid4(),
+        guild_id=999,
+        short_id="CTRL-1",
+        title="Control panel test",
+        creator_discord_id=1001,
+    )
+
+    interaction = MagicMock(spec=discord.Interaction)
+    interaction.response = MagicMock()
+    interaction.response.send_message = AsyncMock()
+
+    # Quick Controls
+    await adapter.render_task_controls(interaction, task, panel="quick_controls")
+    interaction.response.send_message.assert_awaited_once()
+    assert interaction.response.send_message.call_args.kwargs["ephemeral"] is True
+
+    # Dependencies
+    interaction.response.send_message.reset_mock()
+    await adapter.render_task_controls(
+        interaction, task, panel="dependencies", prerequisites=[], dependents=[], sibling_tasks=[]
+    )
+    interaction.response.send_message.assert_awaited_once()
+
+    # History
+    interaction.response.send_message.reset_mock()
+    await adapter.render_task_controls(interaction, task, panel="history", history=[])
+    interaction.response.send_message.assert_awaited_once()

@@ -126,7 +126,7 @@ class TaskSelectProjectView(discord.ui.View):
             options = []
             for p in page_projects:
                 is_this_chan = bool(p.discord_channel_id and p.discord_channel_id in channel_ids)
-                chan_tag = " 📍 (This Channel)" if is_this_chan else ""
+                chan_tag = " (This Channel)" if is_this_chan else ""
                 options.append(
                     discord.SelectOption(
                         label=f"{p.name} ({p.prefix}){chan_tag}"[:100],
@@ -136,11 +136,10 @@ class TaskSelectProjectView(discord.ui.View):
                             if p.discord_channel_id
                             else (p.description[:90] if p.description else "Project Container")
                         ),
-                        emoji="📍" if is_this_chan else "📁",
                     )
                 )
             self.select = discord.ui.Select(
-                placeholder=f"📁 Select Project (Page {self.current_page + 1}/{total_pages})...",
+                placeholder=f"Select Project (Page {self.current_page + 1}/{total_pages})...",
                 options=options,
                 row=0,
             )
@@ -150,7 +149,6 @@ class TaskSelectProjectView(discord.ui.View):
         # Row 1: Search, Clear, Back
         search_btn = discord.ui.Button(
             label="Search Projects",
-            emoji="🔍",
             style=discord.ButtonStyle.primary,
             row=1,
         )
@@ -160,7 +158,6 @@ class TaskSelectProjectView(discord.ui.View):
         if self.query:
             clear_btn = discord.ui.Button(
                 label="Clear Filter",
-                emoji="🔄",
                 style=discord.ButtonStyle.secondary,
                 row=1,
             )
@@ -169,7 +166,6 @@ class TaskSelectProjectView(discord.ui.View):
 
         back_btn = discord.ui.Button(
             label="Back to Task Menu",
-            emoji="⬅️",
             style=discord.ButtonStyle.secondary,
             row=1,
         )
@@ -207,7 +203,7 @@ class TaskSelectProjectView(discord.ui.View):
         self._rebuild_items()
         filter_note = f" (Filter: `{self.query}`)" if self.query else ""
         embed = discord.Embed(
-            title=f"📁 Select Project Container{filter_note}",
+            title=f"Select Project Container{filter_note}",
             description="Choose which active project to create the task inside:",
             color=discord.Color.blurple(),
         )
