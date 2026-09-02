@@ -20,7 +20,11 @@ from src.adapters.discord_bot.views.task_embed import (
 from src.adapters.discord_bot.views.task_list_view import TaskListView, build_page_embed
 from src.adapters.discord_bot.views.task_modals import parse_natural_date
 from src.domain.enums import NotificationPreference, PriorityLevel, TaskStatus
-from src.ports.discord_workspace import ITaskDiscordWorkspace
+from src.ports.discord_workspace import (
+    IProjectDiscordWorkspace,
+    ITaskDiscordWorkspace,
+    ProjectProvisionSpec,
+)
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
@@ -56,6 +60,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         auth_service: AuthService | None = None,
         user_service: UserService | None = None,
         workspace: ITaskDiscordWorkspace | None = None,
+        project_workspace: IProjectDiscordWorkspace | None = None,
     ):
         self.bot = bot
         self.project_service = project_service
@@ -65,6 +70,7 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             AuthService(project_service, team_service) if project_service and team_service else None
         )
         self.user_service = user_service
+        from src.adapters.discord_bot.project_workspace import DiscordProjectWorkspaceAdapter
         from src.adapters.discord_bot.task_workspace import DiscordTaskWorkspaceAdapter
 
         if workspace is not None:
@@ -75,6 +81,22 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             self.workspace = DiscordTaskWorkspaceAdapter(bot, task_service, project_service, self.auth_service)
         else:
             self.workspace = getattr(bot, "workspace", None)
+
+        if project_workspace is not None:
+            self.project_workspace = project_workspace
+        elif isinstance(getattr(bot, "project_workspace", None), IProjectDiscordWorkspace):
+            self.project_workspace = bot.project_workspace
+        elif project_service:
+            self.project_workspace = DiscordProjectWorkspaceAdapter(
+                bot,
+                project_service,
+                team_service,
+                task_service,
+                user_service,
+                self.auth_service,
+            )
+        else:
+            self.project_workspace = getattr(bot, "project_workspace", None)
 
     # ==========================================
     # Autocomplete Helpers
@@ -879,36 +901,22 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            channel_id = channel.id if channel else None
-            project = await self.project_service.create_project(
-                guild_id=interaction.guild.id,
-                name=name,
-                prefix=prefix,
-                description=description,
-                discord_channel_id=channel_id,
-                category=category,
+            ref = await self.project_workspace.provision_project(
+                ProjectProvisionSpec(
+                    guild_id=interaction.guild.id,
+                    name=name,
+                    prefix=prefix,
+                    role=role,
+                    channel=channel,
+                    description=description,
+                    category=category,
+                )
             )
-
-            # Automatically create/retrieve team for role and map it to project
-            team = await self.team_service.get_or_create_team_for_role(
-                guild_id=interaction.guild.id,
-                role_id=role.id,
-                role_name=role.name,
-            )
-            await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
+            project = ref.project
 
             hub_note = ""
-            if channel:
-                hub_ok, _hub_status = await ensure_pinned_hub_post(
-                    channel=channel,
-                    project_service=self.project_service,
-                    team_service=self.team_service,
-                    task_service=self.task_service,
-                    user_service=self.user_service,
-                    project_name=project.name,
-                )
-                if hub_ok:
-                    hub_note = " • 📌 Pinned Control Hub created"
+            if ref.channel_id:
+                hub_note = " • 📌 Pinned Control Hub created"
 
             embed = discord.Embed(
                 title=f"📁 Project Created: {project.name} (`{project.prefix}`)",

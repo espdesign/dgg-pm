@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
+from uuid import UUID
 
 import discord
 
-from src.domain.models import Project, Task, TaskHistory
+from src.domain.models import Project, Task, TaskHistory, Team
 
 TaskControlPanel = Literal["quick_controls", "dependencies", "history"]
 
@@ -161,4 +162,73 @@ class ITaskDiscordWorkspace(Protocol):
             history: Audit history entries (for history panel).
             sibling_tasks: Sibling project tasks (for dependency selector dropdown).
         """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectProvisionSpec:
+    """Input specification for provisioning a Project and its Discord Workspace."""
+
+    guild_id: int
+    name: str
+    prefix: str | None = None
+    role: discord.Role | int | None = None
+    channel: discord.abc.GuildChannel | int | None = None
+    lead_discord_id: int | None = None
+    description: str | None = None
+    category: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectWorkspaceRef:
+    """Immutable result reference describing the fully provisioned Project and Discord presence."""
+
+    project: Project
+    team: Team | None = None
+    channel_id: int | None = None
+    control_hub_thread_id: int | None = None
+    control_hub_message_id: int | None = None
+    tags_created: int = 0
+    jump_url: str | None = None
+    warnings: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class IProjectDiscordWorkspace(Protocol):
+    """Deep interface for Project Workspace lifecycle, Squad role binding, and Control Hub provisioning.
+
+    Invariants:
+      - Channel Type Invariant: Projects bound to Discord must target a Forum Channel
+        (or validated Text Channel fallback). Non-matching channel types (e.g. threads or voice)
+        are rejected before mutating persistent state.
+      - Squad 1:1 Mapping Invariant: When a Squad role is provided, a Team domain entity is
+        atomically created/retrieved and mapped 1:1 to the Project in local persistence.
+      - Single Control Hub Invariant: Exactly one pinned Control Hub exists per Forum Channel.
+        Projects bound to that channel share the unified Control Hub post.
+      - Tag Boundary Invariant: Standard PM tags (Status, Priority, Unassigned) and per-project
+        tags are applied idempotently without exceeding Discord's 20-tag limit.
+      - Fault-Tolerant Degradation: Persistent DB state is prioritized. Non-fatal Discord API
+        warnings (e.g. pin limit reached) are returned in `warnings` without rolling back DB state.
+    """
+
+    async def provision_project(self, spec: ProjectProvisionSpec) -> ProjectWorkspaceRef:
+        """Atomically provisions a Project, Squad role binding, Forum tags, and pinned Control Hub."""
+        ...
+
+    async def sync_control_hub(
+        self,
+        channel: discord.abc.GuildChannel | int,
+        *,
+        project_id: UUID | None = None,
+        guild_id: int | None = None,
+    ) -> ProjectWorkspaceRef | None:
+        """Synchronizes or repairs the pinned Control Hub post and standard tags in a channel."""
+        ...
+
+    async def rebind_channel(
+        self,
+        project_id: UUID,
+        new_channel: discord.abc.GuildChannel | int | None,
+    ) -> ProjectWorkspaceRef:
+        """Migrates a Project to a new channel, updating DB links, tags, and Control Hubs."""
         ...

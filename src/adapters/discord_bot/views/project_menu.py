@@ -9,9 +9,11 @@ from uuid import UUID
 import discord
 
 from src.adapters.discord_bot.error_handler import send_interaction_error
-from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post, ensure_project_tag, setup_forum_tags
+from src.adapters.discord_bot.project_workspace import DiscordProjectWorkspaceAdapter
+from src.adapters.discord_bot.views.forum_helpers import ensure_pinned_hub_post
 from src.domain.enums import TaskStatus
 from src.domain.models import Project, Team
+from src.ports.discord_workspace import IProjectDiscordWorkspace, ProjectProvisionSpec
 from src.services.project_service import ProjectService
 from src.services.task_service import TaskService
 from src.services.team_service import TeamService
@@ -85,6 +87,7 @@ class ProjectCreateDraftView(discord.ui.View):
         task_service: TaskService | None = None,
         user_service: Any = None,
         initial_interaction: discord.Interaction | None = None,
+        project_workspace: IProjectDiscordWorkspace | None = None,
     ):
         super().__init__(timeout=300)
         self.project_service = project_service
@@ -99,6 +102,18 @@ class ProjectCreateDraftView(discord.ui.View):
         self.task_service = task_service
         self.user_service = user_service
         self._initial_interaction = initial_interaction
+        client = getattr(initial_interaction, "client", None)
+        client_workspace = getattr(client, "project_workspace", None)
+        if isinstance(client_workspace, IProjectDiscordWorkspace):
+            self.project_workspace = client_workspace
+        else:
+            self.project_workspace = project_workspace or DiscordProjectWorkspaceAdapter(
+                client,
+                project_service,
+                team_service,
+                task_service,
+                user_service,
+            )
 
         self._rebuild_items()
 
@@ -270,40 +285,27 @@ class ProjectCreateDraftView(discord.ui.View):
             return
 
         try:
-            project = await self.project_service.create_project(
-                guild_id=interaction.guild.id,
-                name=self.name,
-                prefix=self.prefix,
-                description=self.description,
-                discord_channel_id=self.channel.id,
-                discord_role_id=self.role.id if self.role else None,
-                lead_discord_id=self.lead.id if self.lead else None,
-                category=self.category,
+            ref = await self.project_workspace.provision_project(
+                ProjectProvisionSpec(
+                    guild_id=interaction.guild.id,
+                    name=self.name,
+                    prefix=self.prefix,
+                    description=self.description,
+                    channel=self.channel,
+                    role=self.role,
+                    lead_discord_id=self.lead.id if self.lead else None,
+                    category=self.category,
+                )
             )
+            project = ref.project
 
             is_forum = isinstance(self.channel, discord.ForumChannel)
             chan_type_label = "Forum Post Board" if is_forum else "Text Channel"
             tag_note = ""
 
-            if is_forum:
-                tags_added, _total_tags, tag_err = await setup_forum_tags(self.channel)
-                if tags_added > 0:
-                    tag_note = f" • Setup {tags_added} PM tags"
-                elif tag_err:
-                    tag_note = f" • ⚠️ {tag_err}"
-                proj_tag_err = await ensure_project_tag(self.channel, project.name)
-                if proj_tag_err:
-                    tag_note += f" • ⚠️ {proj_tag_err}"
-
-            hub_ok, _hub_status = await ensure_pinned_hub_post(
-                channel=self.channel,
-                project_service=self.project_service,
-                team_service=self.team_service,
-                task_service=self.task_service,
-                user_service=self.user_service,
-                project_name=project.name,
-            )
-            if hub_ok:
+            if ref.tags_created > 0:
+                tag_note = f" • Setup {ref.tags_created} PM tags"
+            if ref.control_hub_thread_id or ref.channel_id:
                 tag_note += " • Pinned Control Hub created"
 
             lead_str = f"<@{project.lead_discord_id}>" if project.lead_discord_id else "*Unassigned*"

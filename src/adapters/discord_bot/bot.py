@@ -6,13 +6,14 @@ from discord.ext import commands
 
 from src.adapters.discord_bot.cogs.pm_cog import PmCog
 from src.adapters.discord_bot.error_handler import send_interaction_error
+from src.adapters.discord_bot.project_workspace import DiscordProjectWorkspaceAdapter
 from src.adapters.discord_bot.task_workspace import DiscordTaskWorkspaceAdapter
 from src.adapters.discord_bot.views.hub_menu import PmHubView
 from src.adapters.discord_bot.views.task_modals import TaskEditModal, TaskNoteModal
 from src.config import settings
 from src.domain.enums import PriorityLevel, TaskStatus
 from src.domain.models import Task
-from src.ports.discord_workspace import ITaskDiscordWorkspace
+from src.ports.discord_workspace import IProjectDiscordWorkspace, ITaskDiscordWorkspace
 from src.services.auth_service import AuthService
 from src.services.project_service import ProjectService
 from src.services.task_service import StaleVersionError, TaskService
@@ -31,6 +32,7 @@ class DggPmBot(commands.Bot):
         team_service: TeamService,
         user_service: UserService | None = None,
         workspace: ITaskDiscordWorkspace | None = None,
+        project_workspace: IProjectDiscordWorkspace | None = None,
     ):
         intents = discord.Intents.default()
         intents.guilds = True
@@ -53,6 +55,14 @@ class DggPmBot(commands.Bot):
             project_service=project_service,
             auth_service=self.auth_service,
         )
+        self.project_workspace = project_workspace or DiscordProjectWorkspaceAdapter(
+            bot=self,
+            project_service=project_service,
+            team_service=team_service,
+            task_service=task_service,
+            user_service=user_service,
+            auth_service=self.auth_service,
+        )
 
     async def setup_hook(self) -> None:
         """Invoked when bot is starting up before login."""
@@ -66,6 +76,7 @@ class DggPmBot(commands.Bot):
                 self.auth_service,
                 self.user_service,
                 workspace=self.workspace,
+                project_workspace=self.project_workspace,
             )
         )
         logger.info("Loaded Discord cog: PmCog (unified /pm namespace)")

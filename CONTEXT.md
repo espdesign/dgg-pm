@@ -20,6 +20,10 @@ _Avoid_: Team, group, department, user group
 
 ### Discord Workspaces & Interaction
 
+**Project Workspace**:
+The Discord presence and channel environment bound to a Project, comprising a Forum Channel (or Text Channel) configured with standardized PM tags, Squad role permissions, and a pinned Control Hub.
+_Avoid_: Project channel, board, server section
+
 **Thread Workspace**:
 A dedicated Discord thread (within a Forum Channel or Text Channel) provisioned automatically for a Task to house discussion, activity logs, and status controls.
 _Avoid_: Comment thread, channel, topic
