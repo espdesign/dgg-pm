@@ -9,7 +9,7 @@ from uuid import UUID
 import discord
 
 from src.domain.exceptions import PermissionDeniedError
-from src.domain.models import Task
+from src.domain.models import Project, Task
 
 if TYPE_CHECKING:
     from src.services.project_service import ProjectService
@@ -47,6 +47,19 @@ class AuthService:
         user_id = getattr(user, "id", None)
         return bool(user_id and user_id == project.lead_discord_id)
 
+    async def get_project_role_ids(self, project: Project | None) -> set[int]:
+        """Resolves all mapped Discord role IDs for a project across direct squad roles and mapped teams."""
+        if not project:
+            return set()
+        role_ids = set(project.discord_role_ids)
+        if project.discord_role_id:
+            role_ids.add(project.discord_role_id)
+        if self.team_service:
+            teams = await self.project_service.list_teams_for_project(project.id)
+            for t in teams:
+                role_ids.add(t.discord_role_id)
+        return role_ids
+
     async def can_mutate_task(self, user: discord.Member | discord.User, task: Task) -> bool:
         """Determines if a user is authorized to edit, reassign, update status, archive, or add notes to a task.
 
@@ -55,8 +68,7 @@ class AuthService:
         2. User is the task assignee.
         3. User is the task creator.
         4. User is the designated Project Lead for the task's project.
-        5. User holds the project's mapped squad Discord Role.
-        6. For legacy mapped teams: User holds a Discord Role mapped to any Team assigned to the project.
+        5. User holds any of the project's mapped squad Discord Roles.
         """
         # 1. Server Manager bypass
         if self.is_server_manager(user):
@@ -78,21 +90,12 @@ class AuthService:
             if project:
                 if project.lead_discord_id and user_id == project.lead_discord_id:
                     return True
-                if project.discord_role_id:
+                project_roles = await self.get_project_role_ids(project)
+                if project_roles:
                     roles = getattr(user, "roles", [])
                     user_role_ids = {r.id for r in roles if hasattr(r, "id")}
-                    if project.discord_role_id in user_role_ids:
+                    if any(rid in user_role_ids for rid in project_roles):
                         return True
-
-            # Legacy team fallback
-            if self.team_service:
-                teams = await self.project_service.list_teams_for_project(task.project_id)
-                if teams:
-                    roles = getattr(user, "roles", [])
-                    if roles:
-                        user_role_ids = {r.id for r in roles if hasattr(r, "id")}
-                        if any(team.discord_role_id in user_role_ids for team in teams):
-                            return True
 
         return False
 
@@ -145,21 +148,13 @@ class AuthService:
         if project.lead_discord_id and user_id == project.lead_discord_id:
             return True
 
-        if project.discord_role_id:
+        project_roles = await self.get_project_role_ids(project)
+        if project_roles:
             roles = getattr(user, "roles", [])
             user_role_ids = {r.id for r in roles if hasattr(r, "id")}
-            return project.discord_role_id in user_role_ids
+            return any(rid in user_role_ids for rid in project_roles)
 
-        # Legacy team fallback
-        if self.team_service:
-            teams = await self.project_service.list_teams_for_project(project_id)
-            if teams:
-                roles = getattr(user, "roles", [])
-                if roles:
-                    user_role_ids = {r.id for r in roles if hasattr(r, "id")}
-                    return any(team.discord_role_id in user_role_ids for team in teams)
-
-        # If project has no role and no legacy teams, open to all server members
+        # If project has no squad roles mapped, open to all server members
         return True
 
     async def require_task_creation(
@@ -186,9 +181,8 @@ class AuthService:
         Authorized if:
         1. User is a Discord Server Manager (manage_guild / administrator).
         2. User is the designated Project Lead.
-        3. User holds the project's mapped squad Discord Role.
-        4. User holds a Discord Role for any squad mapped to the project.
-        5. If the project has NO role mapping and NO assigned squads: open to all server members.
+        3. User holds any of the project's mapped squad Discord Roles.
+        4. If the project has NO role mapping and NO assigned squads: open to all server members.
         """
         if self.is_server_manager(user):
             return True
@@ -201,22 +195,13 @@ class AuthService:
         if project.lead_discord_id and user_id == project.lead_discord_id:
             return True
 
-        roles = getattr(user, "roles", [])
-        user_role_ids = {r.id for r in roles if hasattr(r, "id")}
+        project_roles = await self.get_project_role_ids(project)
+        if project_roles:
+            roles = getattr(user, "roles", [])
+            user_role_ids = {r.id for r in roles if hasattr(r, "id")}
+            return any(rid in user_role_ids for rid in project_roles)
 
-        if project.discord_role_id and project.discord_role_id in user_role_ids:
-            return True
-
-        if self.team_service:
-            teams = await self.project_service.list_teams_for_project(project_id)
-            if teams:
-                return any(team.discord_role_id in user_role_ids for team in teams)
-
-        # If project has a discord_role_id set and user didn't match it (and no teams)
-        if project.discord_role_id:
-            return False
-
-        # If project has neither direct role nor squad mappings, open to all server members
+        # If project has no squad roles mapped, open to all server members
         return True
 
     async def require_project_view(self, user: discord.Member | discord.User, project_id: UUID) -> None:
@@ -238,9 +223,8 @@ class AuthService:
         - If target_user is None (unassigning): always eligible (True).
         - If standalone task (project_id is None): any guild member is eligible.
         - If target_user is the Project Lead: always eligible.
-        - If project has a mapped squad role: target user must hold that Discord role.
-        - If project has assigned legacy teams: target user must hold at least one mapped team's role.
-        - If project has no mapped role / teams: any guild member is eligible.
+        - If project has mapped squad roles: target user must hold at least one of those Discord roles.
+        - If project has no mapped roles / squads: any guild member is eligible.
         """
         if target_user is None or not project_id:
             return True
@@ -262,17 +246,11 @@ class AuthService:
         if not member:
             return False
 
-        roles = getattr(member, "roles", [])
-        user_role_ids = {r.id for r in roles if hasattr(r, "id")}
-
-        if project.discord_role_id:
-            return project.discord_role_id in user_role_ids
-
-        # Legacy team fallback
-        if self.team_service:
-            teams = await self.project_service.list_teams_for_project(project_id)
-            if teams:
-                return any(team.discord_role_id in user_role_ids for team in teams)
+        project_roles = await self.get_project_role_ids(project)
+        if project_roles:
+            roles = getattr(member, "roles", [])
+            user_role_ids = {r.id for r in roles if hasattr(r, "id")}
+            return any(rid in user_role_ids for rid in project_roles)
 
         return True
 

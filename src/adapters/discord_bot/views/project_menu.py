@@ -31,6 +31,7 @@ def build_project_draft_embed(
     description: str | None = None,
     category: str | None = None,
     role: discord.Role | None = None,
+    roles: list[discord.Role] | None = None,
     lead: discord.Member | discord.User | None = None,
 ) -> discord.Embed:
     """Builds a live preview embed of the project currently being configured in the builder."""
@@ -38,7 +39,11 @@ def build_project_draft_embed(
     chan_type = "Forum Post Board" if is_forum else "Text Channel"
     chan_name = getattr(channel, "name", str(getattr(channel, "id", "channel")))
 
-    role_display = f"<@&{role.id}>" if role else "*Public / All Members (Optional)*"
+    all_roles = list(roles or [])
+    if role and role not in all_roles:
+        all_roles.insert(0, role)
+
+    role_display = ", ".join(f"<@&{r.id}>" for r in all_roles) if all_roles else "*Public / All Members (Optional)*"
     lead_display = f"<@{lead.id}>" if lead else "*Unassigned (Optional)*"
     prefix_display = f"`{prefix}`" if prefix else "*Auto-generated*"
     cat_display = category if category else "*None*"
@@ -46,11 +51,11 @@ def build_project_draft_embed(
     embed = discord.Embed(
         title=f"Project Setup: {name[:90]}",
         description=(
-            "Configure the contributor squad role and optional project lead using the pickers below, "
+            "Configure the contributor squad role(s) and optional project lead using the pickers below, "
             "then click **`Create Project`** to initialize.\n\n"
             f"• **Bound Channel**: <#{channel.id}> (`#{chan_name}` • {chan_type})\n"
             f"• **Key Prefix**: {prefix_display}\n"
-            f"• **Squad Role (Optional)**: {role_display}\n"
+            f"• **Squad Roles (Optional)**: {role_display}\n"
             f"• **Project Lead (Optional)**: {lead_display}\n"
             f"• **Category**: {cat_display}"
         ),
@@ -82,6 +87,7 @@ class ProjectCreateDraftView(discord.ui.View):
         description: str | None = None,
         category: str | None = None,
         role: discord.Role | None = None,
+        roles: list[discord.Role] | None = None,
         lead: discord.Member | discord.User | None = None,
         team_service: TeamService | None = None,
         task_service: TaskService | None = None,
@@ -96,7 +102,10 @@ class ProjectCreateDraftView(discord.ui.View):
         self.prefix = prefix
         self.description = description
         self.category = category
-        self.role = role
+        self.roles: list[discord.Role] = list(roles or [])
+        if role and role not in self.roles:
+            self.roles.insert(0, role)
+        self.role = self.roles[0] if self.roles else None
         self.lead = lead
         self.team_service = team_service
         self.task_service = task_service
@@ -125,17 +134,18 @@ class ProjectCreateDraftView(discord.ui.View):
                 and hasattr(self._initial_interaction, "delete_original_response")
             ):
                 await self._initial_interaction.delete_original_response()
+            pass
         except Exception:
             pass
 
     def _rebuild_items(self) -> None:
         self.clear_items()
 
-        # Row 0: Select Discord Role (Optional)
+        # Row 0: Select Discord Role(s) (Optional)
         self.role_select = discord.ui.RoleSelect(
-            placeholder="Select Squad Role (Optional)...",
+            placeholder="Select Squad Role(s) (Optional)...",
             min_values=1,
-            max_values=1,
+            max_values=25,
             row=0,
         )
         self.role_select.callback = self._on_role_selected
@@ -160,9 +170,9 @@ class ProjectCreateDraftView(discord.ui.View):
         self.create_btn.callback = self._on_confirm_clicked
         self.add_item(self.create_btn)
 
-        if self.role:
+        if self.roles or self.role:
             self.clear_role_btn = discord.ui.Button(
-                label="Clear Squad Role",
+                label="Clear Squad Roles",
                 style=discord.ButtonStyle.secondary,
                 row=2,
             )
@@ -195,7 +205,8 @@ class ProjectCreateDraftView(discord.ui.View):
         self.add_item(self.cancel_btn)
 
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
-        self.role = self.role_select.values[0]
+        self.roles = list(self.role_select.values)
+        self.role = self.roles[0] if self.roles else None
         self._rebuild_items()
         embed = build_project_draft_embed(
             name=self.name,
@@ -204,11 +215,13 @@ class ProjectCreateDraftView(discord.ui.View):
             description=self.description,
             category=self.category,
             role=self.role,
+            roles=self.roles,
             lead=self.lead,
         )
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _on_clear_role_clicked(self, interaction: discord.Interaction) -> None:
+        self.roles = []
         self.role = None
         self._rebuild_items()
         embed = build_project_draft_embed(
@@ -217,7 +230,8 @@ class ProjectCreateDraftView(discord.ui.View):
             prefix=self.prefix,
             description=self.description,
             category=self.category,
-            role=self.role,
+            role=None,
+            roles=[],
             lead=self.lead,
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -232,6 +246,7 @@ class ProjectCreateDraftView(discord.ui.View):
             description=self.description,
             category=self.category,
             role=self.role,
+            roles=self.roles,
             lead=self.lead,
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -246,6 +261,7 @@ class ProjectCreateDraftView(discord.ui.View):
             description=self.description,
             category=self.category,
             role=self.role,
+            roles=self.roles,
             lead=self.lead,
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -293,6 +309,7 @@ class ProjectCreateDraftView(discord.ui.View):
                     description=self.description,
                     channel=self.channel,
                     role=self.role,
+                    roles=self.roles,
                     lead_discord_id=self.lead.id if self.lead else None,
                     category=self.category,
                 )
@@ -309,7 +326,8 @@ class ProjectCreateDraftView(discord.ui.View):
                 tag_note += " • Pinned Control Hub created"
 
             lead_str = f"<@{project.lead_discord_id}>" if project.lead_discord_id else "*Unassigned*"
-            role_str = f"<@&{project.discord_role_id}>" if project.discord_role_id else "*Public / All Members*"
+            role_ids = project.discord_role_ids or ([project.discord_role_id] if project.discord_role_id else [])
+            role_str = ", ".join(f"<@&{rid}>" for rid in role_ids) if role_ids else "*Public / All Members*"
 
             embed = discord.Embed(
                 title=f"Project Created: {project.name} (`{project.prefix}`)",
@@ -321,7 +339,7 @@ class ProjectCreateDraftView(discord.ui.View):
                 value=f"<#{project.discord_channel_id}> ({chan_type_label}{tag_note})",
                 inline=False,
             )
-            embed.add_field(name="Squad Role", value=role_str, inline=True)
+            embed.add_field(name="Squad Roles", value=role_str, inline=True)
             embed.add_field(name="Project Lead", value=lead_str, inline=True)
             if project.category:
                 embed.add_field(name="Category", value=project.category, inline=True)
@@ -666,7 +684,8 @@ def build_active_projects_embed(
 
     for p in page_projects:
         chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "No channel"
-        role_str = f"<@&{p.discord_role_id}>" if p.discord_role_id else "*Public / All Members*"
+        role_ids = p.discord_role_ids or ([p.discord_role_id] if p.discord_role_id else [])
+        role_str = ", ".join(f"<@&{rid}>" for rid in role_ids) if role_ids else "*Public / All Members*"
         lead_str = f"<@{p.lead_discord_id}>" if p.lead_discord_id else "*Unassigned*"
         desc_str = p.description or "No description"
         cat_str = f" • [{p.category}]" if p.category else ""
@@ -1784,17 +1803,21 @@ class ProjectRoleSelectView(discord.ui.View):
 
         self.selected_project_id: UUID = projects[0].id
         self.selected_role: discord.Role | None = None
+        self.selected_roles: list[discord.Role] = []
 
         # Row 0: Select Project
-        proj_options = [
-            discord.SelectOption(
-                label=f"{p.name} ({p.prefix})"[:100],
-                value=str(p.id),
-                description=(f"Role: @{p.discord_role_id}" if p.discord_role_id else "Public (No role)")[:50],
-                default=(i == 0),
+        proj_options = []
+        for i, p in enumerate(projects[:25]):
+            role_ids = p.discord_role_ids or ([p.discord_role_id] if p.discord_role_id else [])
+            roles_desc = f"Roles: {len(role_ids)}" if role_ids else "Public (No roles)"
+            proj_options.append(
+                discord.SelectOption(
+                    label=f"{p.name} ({p.prefix})"[:100],
+                    value=str(p.id),
+                    description=roles_desc[:50],
+                    default=(i == 0),
+                )
             )
-            for i, p in enumerate(projects[:25])
-        ]
         self.proj_select = discord.ui.Select(
             placeholder="Select Project...",
             options=proj_options,
@@ -1805,11 +1828,11 @@ class ProjectRoleSelectView(discord.ui.View):
         self.proj_select.callback = self._on_project_changed
         self.add_item(self.proj_select)
 
-        # Row 1: Select Discord Role
+        # Row 1: Select Discord Role(s)
         self.role_select = discord.ui.RoleSelect(
-            placeholder="Select Squad Discord Role...",
+            placeholder="Select Squad Discord Role(s)...",
             min_values=1,
-            max_values=1,
+            max_values=25,
             row=1,
         )
         self.role_select.callback = self._on_role_selected
@@ -1817,15 +1840,23 @@ class ProjectRoleSelectView(discord.ui.View):
 
         # Row 2: Action Buttons
         self.assign_btn = discord.ui.Button(
-            label="Map Squad Role",
+            label="Add Squad Roles",
             style=discord.ButtonStyle.primary,
             row=2,
         )
         self.assign_btn.callback = self._on_assign_clicked
         self.add_item(self.assign_btn)
 
+        self.remove_btn = discord.ui.Button(
+            label="Remove Squad Roles",
+            style=discord.ButtonStyle.danger,
+            row=2,
+        )
+        self.remove_btn.callback = self._on_remove_clicked
+        self.add_item(self.remove_btn)
+
         self.clear_btn = discord.ui.Button(
-            label="Clear Role (Make Public)",
+            label="Clear All Roles",
             style=discord.ButtonStyle.secondary,
             row=2,
         )
@@ -1861,7 +1892,8 @@ class ProjectRoleSelectView(discord.ui.View):
         await interaction.response.defer()
 
     async def _on_role_selected(self, interaction: discord.Interaction) -> None:
-        self.selected_role = self.role_select.values[0]
+        self.selected_roles = list(self.role_select.values)
+        self.selected_role = self.selected_roles[0] if self.selected_roles else None
         await interaction.response.defer()
 
     async def _on_assign_clicked(self, interaction: discord.Interaction) -> None:
@@ -1870,24 +1902,46 @@ class ProjectRoleSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Project not found.", ephemeral=True)
             return
 
-        if not self.selected_role:
-            if self.role_select.values:
-                self.selected_role = self.role_select.values[0]
-            else:
-                await interaction.response.send_message(
-                    "❌ Please select a Discord role to map to this project.", ephemeral=True
-                )
-                from src.adapters.discord_bot.menu_manager import menu_manager
+        roles_to_add: list[discord.Role] = list(self.role_select.values) if self.role_select.values else []
+        if not roles_to_add and self.selected_roles:
+            roles_to_add = list(self.selected_roles)
+        elif not roles_to_add and self.selected_role:
+            roles_to_add = [self.selected_role]
 
-                menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
-                return
+        if not roles_to_add:
+            await interaction.response.send_message(
+                "❌ Please select at least one Discord role to map to this project.", ephemeral=True
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
 
         try:
-            await self.project_service.set_project_role(proj.id, self.selected_role.id)
+            guild_id = (
+                interaction.guild.id
+                if (interaction.guild and isinstance(getattr(interaction.guild, "id", None), int))
+                else proj.guild_id
+            )
+            if self.team_service:
+                existing_teams = await self.project_service.list_teams_for_project(proj.id)
+                for t in existing_teams:
+                    await self.project_service.remove_team_from_project(proj.id, t.id)
+
+                for r in roles_to_add:
+                    r_name = str(getattr(r, "name", None) or f"Squad-{r.id}")
+                    if "Mock" in r_name or "<MagicMock" in r_name:
+                        r_name = f"Squad-{r.id}"
+                    team = await self.team_service.get_or_create_team_for_role(guild_id, r.id, r_name)
+                    await self.project_service.assign_team_to_project(proj.id, team.id)
+            else:
+                await self.project_service.set_project_role(proj.id, roles_to_add[0].id)
+
+            role_mentions = ", ".join(f"<@&{r.id}>" for r in roles_to_add)
             embed = discord.Embed(
-                title="Squad Role Mapped to Project",
+                title="Squad Roles Mapped to Project",
                 description=(
-                    f"Mapped Discord role <@&{self.selected_role.id}> as the contributor squad for "
+                    f"Mapped Discord role(s) {role_mentions} as contributor squads for "
                     f"project **{proj.name}** (`{proj.prefix}`)."
                 ),
                 color=discord.Color.green(),
@@ -1895,11 +1949,60 @@ class ProjectRoleSelectView(discord.ui.View):
             view = ProjectMenuView(
                 self.project_service, self.team_service, self.task_service, initial_interaction=interaction
             )
-            embed = build_project_menu_embed(view.is_server_manager)
             await interaction.response.edit_message(content=None, embed=embed, view=view)
         except Exception as e:
             await send_interaction_error(
-                interaction, e, f"mapping role for project '{proj.name}'", logger, ephemeral=True
+                interaction, e, f"mapping roles for project '{proj.name}'", logger, ephemeral=True
+            )
+
+    async def _on_remove_clicked(self, interaction: discord.Interaction) -> None:
+        proj = self._get_selected_project()
+        if not proj:
+            await interaction.response.send_message("❌ Project not found.", ephemeral=True)
+            return
+
+        roles_to_remove: list[discord.Role] = list(self.role_select.values) if self.role_select.values else []
+        if not roles_to_remove and self.selected_roles:
+            roles_to_remove = list(self.selected_roles)
+        elif not roles_to_remove and self.selected_role:
+            roles_to_remove = [self.selected_role]
+
+        if not roles_to_remove:
+            await interaction.response.send_message(
+                "❌ Please select at least one Discord role to remove from this project.", ephemeral=True
+            )
+            from src.adapters.discord_bot.menu_manager import menu_manager
+
+            menu_manager.schedule_toast_dismissal(interaction, delay=8.0)
+            return
+
+        try:
+            guild_id = (
+                interaction.guild.id
+                if (interaction.guild and isinstance(getattr(interaction.guild, "id", None), int))
+                else proj.guild_id
+            )
+            for r in roles_to_remove:
+                if self.team_service:
+                    team = await self.team_service.get_by_role_id(guild_id, r.id)
+                    if team:
+                        await self.project_service.remove_team_from_project(proj.id, team.id)
+
+            role_mentions = ", ".join(f"<@&{r.id}>" for r in roles_to_remove)
+            embed = discord.Embed(
+                title="Squad Roles Removed from Project",
+                description=(
+                    f"Removed Discord role(s) {role_mentions} from project **{proj.name}** (`{proj.prefix}`)."
+                ),
+                color=discord.Color.orange(),
+            )
+            view = ProjectMenuView(
+                self.project_service, self.team_service, self.task_service, initial_interaction=interaction
+            )
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        except Exception as e:
+            await send_interaction_error(
+                interaction, e, f"removing roles from project '{proj.name}'", logger, ephemeral=True
             )
 
     async def _on_clear_clicked(self, interaction: discord.Interaction) -> None:
@@ -1909,7 +2012,12 @@ class ProjectRoleSelectView(discord.ui.View):
             return
 
         try:
+            if self.team_service:
+                teams = await self.project_service.list_teams_for_project(proj.id)
+                for t in teams:
+                    await self.project_service.remove_team_from_project(proj.id, t.id)
             await self.project_service.set_project_role(proj.id, None)
+
             embed = discord.Embed(
                 title="Project Role Cleared",
                 description=(

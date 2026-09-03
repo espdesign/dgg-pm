@@ -31,7 +31,6 @@ class ProjectTable(Base):
     next_task_number = Column(Integer, nullable=False, default=1)
     description = Column(Text, nullable=True)
     discord_channel_id = Column(BigInteger, nullable=True, index=True)
-    discord_role_id = Column(BigInteger, nullable=True, index=True)
     lead_discord_id = Column(BigInteger, nullable=True, index=True)
     category = Column(String(100), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
@@ -44,7 +43,7 @@ class ProjectTable(Base):
     )
 
     tasks = relationship("TaskTable", back_populates="project", cascade="all, delete-orphan")
-    teams = relationship("ProjectTeamTable", back_populates="project", cascade="all, delete-orphan")
+    teams = relationship("ProjectTeamTable", back_populates="project", cascade="all, delete-orphan", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("guild_id", "name", name="uq_project_guild_name"),
@@ -87,7 +86,7 @@ class ProjectTeamTable(Base):
     timeline = Column(String(100), nullable=True)
 
     project = relationship("ProjectTable", back_populates="teams")
-    team = relationship("TeamTable", back_populates="projects")
+    team = relationship("TeamTable", back_populates="projects", lazy="selectin")
 
 
 class TaskTable(Base):

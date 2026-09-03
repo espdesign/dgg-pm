@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.domain.enums import (
     EventType,
@@ -76,12 +76,28 @@ class Project(DomainModel):
     next_task_number: int = 1
     description: str | None = None
     discord_channel_id: int | None = None
-    discord_role_id: int | None = None
+    discord_role_ids: list[int] = Field(default_factory=list)
     lead_discord_id: int | None = None
     category: str | None = None
     archived_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_legacy_role_id(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            legacy_role = data.get("discord_role_id")
+            role_ids = list(data.get("discord_role_ids") or [])
+            if legacy_role and legacy_role not in role_ids:
+                role_ids.insert(0, legacy_role)
+            data["discord_role_ids"] = role_ids
+        return data
+
+    @property
+    def discord_role_id(self) -> int | None:
+        """Primary squad Discord role for backward compatibility."""
+        return self.discord_role_ids[0] if self.discord_role_ids else None
 
     @property
     def is_archived(self) -> bool:

@@ -112,16 +112,19 @@ class DiscordProjectWorkspaceAdapter(IProjectDiscordWorkspace):
             validated_channel.id if validated_channel else (spec.channel if isinstance(spec.channel, int) else None)
         )
 
-        # Resolve role ID and name
-        role_id: int | None = None
-        role_name: str | None = None
-        if spec.role is not None:
-            if isinstance(spec.role, discord.Role):
-                role_id = spec.role.id
-                role_name = spec.role.name
-            elif isinstance(spec.role, int):
-                role_id = spec.role
-                role_name = f"Squad-{spec.role}"
+        # Resolve all roles
+        spec_roles: list[discord.Role | int] = list(spec.roles or [])
+        if spec.role is not None and spec.role not in spec_roles:
+            spec_roles.insert(0, spec.role)
+
+        role_info_list: list[tuple[int, str]] = []
+        for r in spec_roles:
+            if isinstance(r, discord.Role):
+                role_info_list.append((r.id, r.name))
+            elif isinstance(r, int):
+                role_info_list.append((r, f"Squad-{r}"))
+
+        role_ids = [rid for rid, _ in role_info_list]
 
         # 1. Persist Project in Database
         project = await self.project_service.create_project(
@@ -130,23 +133,26 @@ class DiscordProjectWorkspaceAdapter(IProjectDiscordWorkspace):
             prefix=spec.prefix,
             description=spec.description,
             discord_channel_id=channel_id,
-            discord_role_id=role_id,
+            discord_role_ids=role_ids,
             lead_discord_id=spec.lead_discord_id,
             category=spec.category,
         )
 
         # 2. 1:1 Squad Role Mapping
         team: Team | None = None
-        if role_id and self.team_service:
-            try:
-                team = await self.team_service.get_or_create_team_for_role(
-                    guild_id=spec.guild_id,
-                    role_id=role_id,
-                    role_name=role_name or f"Squad-{role_id}",
-                )
-                await self.project_service.assign_team_to_project(project_id=project.id, team_id=team.id)
-            except Exception as e:
-                logger.warning("Failed to map squad team for project %s: %s", project.id, e)
+        if self.team_service:
+            for rid, rname in role_info_list:
+                try:
+                    t = await self.team_service.get_or_create_team_for_role(
+                        guild_id=spec.guild_id,
+                        role_id=rid,
+                        role_name=rname,
+                    )
+                    await self.project_service.assign_team_to_project(project_id=project.id, team_id=t.id)
+                    if team is None:
+                        team = t
+                except Exception as e:
+                    logger.warning("Failed to map squad team %s for project %s: %s", rid, project.id, e)
 
         # 3. Discord Workspace Tag Setup and Control Hub Mounting
         tags_created = 0

@@ -321,7 +321,8 @@ class PmDashboardView(discord.ui.View):
                 lines = []
                 for p in projects[:15]:
                     chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "*No channel bound*"
-                    role_str = f"<@&{p.discord_role_id}>" if p.discord_role_id else "*No squad role*"
+                    role_ids = p.discord_role_ids or ([p.discord_role_id] if p.discord_role_id else [])
+                    role_str = ", ".join(f"<@&{rid}>" for rid in role_ids) if role_ids else "*No squad role*"
                     lead_str = f"<@{p.lead_discord_id}>" if p.lead_discord_id else "*No lead*"
                     lines.append(
                         f"• **[{p.prefix}] {p.name}**\n  Channel: {chan_str} | Squad: {role_str} | Lead: {lead_str}"

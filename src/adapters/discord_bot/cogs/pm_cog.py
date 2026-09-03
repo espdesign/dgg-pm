@@ -877,6 +877,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         name="Project Name (e.g. Mobile App)",
         prefix="Short uppercase task prefix (e.g. MOB)",
         role="Discord server role representing the squad working on this project",
+        role_2="Optional second Discord server role representing another squad",
+        role_3="Optional third Discord server role representing another squad",
         channel="Discord Forum Channel to bind for tasks",
         description="Optional markdown project overview",
         category="Optional organizational category",
@@ -888,6 +890,8 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
         name: str,
         prefix: str,
         role: discord.Role,
+        role_2: discord.Role | None = None,
+        role_3: discord.Role | None = None,
         channel: discord.ForumChannel | None = None,
         description: str | None = None,
         category: str | None = None,
@@ -901,12 +905,14 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             return
         await interaction.response.defer(ephemeral=True)
         try:
+            roles = [r for r in [role, role_2, role_3] if r is not None]
             ref = await self.project_workspace.provision_project(
                 ProjectProvisionSpec(
                     guild_id=interaction.guild.id,
                     name=name,
                     prefix=prefix,
                     role=role,
+                    roles=roles,
                     channel=channel,
                     description=description,
                     category=category,
@@ -918,13 +924,14 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             if ref.channel_id:
                 hub_note = " • 📌 Pinned Control Hub created"
 
+            role_mentions = ", ".join(f"<@&{r.id}>" for r in roles)
             embed = discord.Embed(
                 title=f"📁 Project Created: {project.name} (`{project.prefix}`)",
                 description=project.description or "*No description provided.*",
                 color=discord.Color.blue(),
             )
             embed.add_field(name="Task ID Prefix", value=f"`{project.prefix}-#`", inline=True)
-            embed.add_field(name="Assigned Squad", value=f"<@&{role.id}>", inline=True)
+            embed.add_field(name="Assigned Squad(s)", value=role_mentions, inline=True)
             if project.discord_channel_id:
                 embed.add_field(name="Bound Channel", value=f"<#{project.discord_channel_id}>{hub_note}", inline=True)
 
@@ -949,9 +956,11 @@ class PmCog(commands.GroupCog, group_name="pm", group_description="DGG-PM Projec
             embed = discord.Embed(title="📁 Server Projects", color=discord.Color.blue())
             for p in projects:
                 chan_str = f"<#{p.discord_channel_id}>" if p.discord_channel_id else "*No channel bound*"
+                role_ids = p.discord_role_ids or ([p.discord_role_id] if p.discord_role_id else [])
+                role_str = ", ".join(f"<@&{rid}>" for rid in role_ids) if role_ids else "*No squad role*"
                 embed.add_field(
                     name=f"**{p.name}** (`{p.prefix}`)",
-                    value=f"Channel: {chan_str}\nStatus: Active",
+                    value=f"Channel: {chan_str}\nSquads: {role_str}\nStatus: Active",
                     inline=False,
                 )
             await interaction.followup.send(embed=embed)

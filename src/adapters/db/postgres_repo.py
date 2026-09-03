@@ -101,6 +101,15 @@ def _to_domain_task(row: TaskTable) -> Task:
 
 
 def _to_domain_project(row: ProjectTable) -> Project:
+    role_ids: list[int] = []
+    teams = getattr(row, "teams", []) or []
+    for pt in teams:
+        team = getattr(pt, "team", None)
+        if team and getattr(team, "discord_role_id", None) is not None:
+            rid = team.discord_role_id
+            if rid not in role_ids:
+                role_ids.append(rid)
+
     return Project(
         id=row.id,
         guild_id=row.guild_id,
@@ -109,7 +118,7 @@ def _to_domain_project(row: ProjectTable) -> Project:
         next_task_number=row.next_task_number,
         description=row.description,
         discord_channel_id=row.discord_channel_id,
-        discord_role_id=row.discord_role_id,
+        discord_role_ids=role_ids,
         lead_discord_id=row.lead_discord_id,
         category=row.category,
         archived_at=row.archived_at,
@@ -585,7 +594,6 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
                 next_task_number=project.next_task_number,
                 description=project.description,
                 discord_channel_id=project.discord_channel_id,
-                discord_role_id=project.discord_role_id,
                 lead_discord_id=project.lead_discord_id,
                 category=project.category,
                 archived_at=project.archived_at,
@@ -593,6 +601,26 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
                 updated_at=project.updated_at,
             )
             session.add(row)
+
+            # Map any initial squads/roles passed in project.discord_role_ids
+            for rid in project.discord_role_ids:
+                team_stmt = select(TeamTable).where(
+                    TeamTable.guild_id == project.guild_id,
+                    TeamTable.discord_role_id == rid,
+                )
+                team_res = await session.execute(team_stmt)
+                team_row = team_res.scalar_one_or_none()
+                if not team_row:
+                    team_row = TeamTable(
+                        guild_id=project.guild_id,
+                        name=f"Squad-{rid}",
+                        discord_role_id=rid,
+                    )
+                    session.add(team_row)
+                    await session.flush()
+                pt_row = ProjectTeamTable(project_id=project.id, team_id=team_row.id)
+                session.add(pt_row)
+
             await session.commit()
             return project
 
@@ -708,18 +736,37 @@ class PostgresProjectRepo(BasePostgresRepo, IProjectRepo):
 
     async def update_role_id(self, project_id: UUID, discord_role_id: int | None) -> Project | None:
         async with self._get_session() as session:
-            stmt = (
-                update(ProjectTable)
-                .where(ProjectTable.id == project_id)
-                .values(discord_role_id=discord_role_id, updated_at=datetime.now(UTC))
-                .returning(ProjectTable)
-            )
-            res = await session.execute(stmt)
-            row = res.scalar_one_or_none()
-            if not row:
+            proj_stmt = select(ProjectTable).where(ProjectTable.id == project_id)
+            res = await session.execute(proj_stmt)
+            proj_row = res.scalar_one_or_none()
+            if not proj_row:
                 return None
+
+            del_stmt = delete(ProjectTeamTable).where(ProjectTeamTable.project_id == project_id)
+            await session.execute(del_stmt)
+
+            if discord_role_id is not None:
+                team_stmt = select(TeamTable).where(
+                    TeamTable.guild_id == proj_row.guild_id,
+                    TeamTable.discord_role_id == discord_role_id,
+                )
+                team_res = await session.execute(team_stmt)
+                team_row = team_res.scalar_one_or_none()
+                if not team_row:
+                    team_row = TeamTable(
+                        guild_id=proj_row.guild_id,
+                        name=f"Squad-{discord_role_id}",
+                        discord_role_id=discord_role_id,
+                    )
+                    session.add(team_row)
+                    await session.flush()
+
+                pt_row = ProjectTeamTable(project_id=project_id, team_id=team_row.id)
+                await session.merge(pt_row)
+
+            proj_row.updated_at = datetime.now(UTC)
             await session.commit()
-            return _to_domain_project(row)
+            return await self.get_by_id(project_id)
 
     async def update_lead_id(self, project_id: UUID, lead_discord_id: int | None) -> Project | None:
         async with self._get_session() as session:

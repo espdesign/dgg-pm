@@ -173,6 +173,7 @@ class ProjectProvisionSpec:
     name: str
     prefix: str | None = None
     role: discord.Role | int | None = None
+    roles: list[discord.Role | int] | None = None
     channel: discord.abc.GuildChannel | int | None = None
     lead_discord_id: int | None = None
     description: str | None = None

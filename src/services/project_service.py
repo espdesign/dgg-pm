@@ -33,6 +33,7 @@ class ProjectService:
         description: str | None = None,
         discord_channel_id: int | None = None,
         discord_role_id: int | None = None,
+        discord_role_ids: list[int] | None = None,
         lead_discord_id: int | None = None,
         category: str | None = None,
     ) -> Project:
@@ -48,6 +49,10 @@ class ProjectService:
                 f"Project prefix '{assigned_prefix}' is already in use by project '{existing_prefix.name}'."
             )
 
+        role_ids = list(discord_role_ids or [])
+        if discord_role_id and discord_role_id not in role_ids:
+            role_ids.insert(0, discord_role_id)
+
         project = Project(
             guild_id=guild_id,
             name=name.strip(),
@@ -55,7 +60,7 @@ class ProjectService:
             next_task_number=1,
             description=description.strip() if description else None,
             discord_channel_id=discord_channel_id,
-            discord_role_id=discord_role_id,
+            discord_role_ids=role_ids,
             lead_discord_id=lead_discord_id,
             category=category.strip() if category else None,
         )
